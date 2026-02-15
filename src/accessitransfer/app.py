@@ -445,8 +445,15 @@ class MainFrame(wx.Frame):
         if not self._client or not self._client.connected:
             return
         try:
+            self._update_status("Loading...", self._client.cwd)
+            wx.Yield()
             self._remote_files = self._client.list_dir()
             self._apply_sort(self._remote_files)
+            # Insert ".." entry at the top to navigate to parent
+            if self._client.cwd != "/":
+                parent_path = str(PurePosixPath(self._client.cwd).parent)
+                parent_entry = RemoteFile(name="..", path=parent_path, is_dir=True)
+                self._remote_files.insert(0, parent_entry)
             self._populate_file_list(
                 self.remote_file_list,
                 self._get_visible_files(self._remote_files, self._remote_filter_text),
@@ -458,12 +465,18 @@ class MainFrame(wx.Frame):
             if self._settings.display.announce_file_count:
                 self._announce(f"{self._client.cwd}: {count} items")
         except Exception as e:
+            self._update_status("Connected", self._client.cwd)
             wx.MessageBox(f"Failed to list directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
+            # Insert ".." entry at the top to navigate to parent
+            parent_path = str(Path(self._local_cwd).parent)
+            if parent_path != self._local_cwd:
+                parent_entry = RemoteFile(name="..", path=parent_path, is_dir=True)
+                self._local_files.insert(0, parent_entry)
             self._populate_file_list(
                 self.local_file_list,
                 self._get_visible_files(self._local_files, self._local_filter_text),
@@ -483,7 +496,7 @@ class MainFrame(wx.Frame):
 
     def _get_visible_files(self, files: list[RemoteFile], filter_text: str) -> list[RemoteFile]:
         if not self._settings.display.show_hidden_files:
-            files = [f for f in files if not f.name.startswith(".")]
+            files = [f for f in files if f.name == ".." or not f.name.startswith(".")]
         if filter_text:
             pattern = filter_text.lower()
             files = [f for f in files if pattern in f.name.lower()]
@@ -591,9 +604,11 @@ class MainFrame(wx.Frame):
             return
         if f.is_dir:
             try:
+                self._announce(f"Opening {f.name}...")
                 self._client.chdir(f.path)
                 self._refresh_remote_files()
             except Exception as e:
+                logger.exception("Failed to open remote directory %s", f.path)
                 wx.MessageBox(
                     f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                 )
