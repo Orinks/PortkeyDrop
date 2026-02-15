@@ -639,8 +639,16 @@ class MainFrame(wx.Frame):
 
     def _on_remote_item_activated(self, event: wx.ListEvent) -> None:
         f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not f:
+            logger.warning("Remote item activated but no file selected (index: %s)", event.GetIndex())
             return
+        if not self._client:
+            logger.warning("Remote item activated but no client")
+            return
+        logger.info(
+            "Remote item activated: name=%r, is_dir=%s, path=%r",
+            f.name, f.is_dir, f.path,
+        )
         if f.is_dir:
             try:
                 self._announce(f"Opening {f.name}...")
@@ -652,6 +660,7 @@ class MainFrame(wx.Frame):
                     f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                 )
         else:
+            self._announce(f"{f.name} detected as file, not directory")
             self._on_download(None)
 
     def _on_local_item_activated(self, event: wx.ListEvent) -> None:

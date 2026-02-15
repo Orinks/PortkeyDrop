@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 
 
 def main() -> None:
     """Launch AccessiTransfer."""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        filename="accessitransfer.log",
+    )
     try:
         import wx  # noqa: F401
 

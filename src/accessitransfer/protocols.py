@@ -379,6 +379,13 @@ class SFTPClient(TransferClient):
             is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
             if not is_dir and hasattr(attr, "longname") and attr.longname.startswith("d"):
                 is_dir = True
+            logger.debug(
+                "listdir entry: %s st_mode=%s is_dir=%s longname=%r",
+                attr.filename,
+                oct(attr.st_mode) if attr.st_mode is not None else None,
+                is_dir,
+                getattr(attr, "longname", None),
+            )
             modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
             perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
             full_path = f"{target.rstrip('/')}/{attr.filename}"
