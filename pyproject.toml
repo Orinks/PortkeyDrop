@@ -1,0 +1,52 @@
+[project]
+name = "accessitransfer"
+version = "0.1.0"
+description = "Accessible file transfer client for screen reader users"
+requires-python = ">=3.11"
+dependencies = [
+    "paramiko>=3.0",
+    "keyring>=25.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "wxPython>=4.2",
+    "prismatoid",
+]
+webdav = [
+    "webdavclient3>=3.14",
+]
+
+[project.scripts]
+accessitransfer = "accessitransfer.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/accessitransfer"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/accessitransfer"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
+    "ruff>=0.15.0",
+]
