@@ -385,6 +385,9 @@ class MainFrame(wx.Frame):
             self._update_title()
             self._announce(f"Connected to {info.host}")
             self._refresh_remote_files()
+            self._toolbar_panel.Hide()
+            self.GetSizer().Layout()
+            self.local_file_list.SetFocus()
         except Exception as e:
             wx.MessageBox(f"Connection failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
             self._client = None
@@ -401,6 +404,10 @@ class MainFrame(wx.Frame):
         self.remote_path_bar.SetValue("/")
         self._update_status("Disconnected", "")
         self._update_title()
+        if not self._toolbar_panel.IsShown():
+            self._toolbar_panel.Show()
+            self.GetSizer().Layout()
+            self.tb_host.SetFocus()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
         self.Close()
