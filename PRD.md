@@ -4,7 +4,7 @@
 AccessiTransfer is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via FTP, SFTP, FTPS, SCP, and WebDAV. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
 
 ## Why This Exists
-Existing file transfer clients (FileZilla, WinSCP, Cyberduck) have dual-pane layouts that are difficult to navigate with screen readers. They rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. AccessiTransfer takes a single-pane, list-based approach where every action is keyboard-accessible and every state change is announced.
+Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. AccessiTransfer uses a dual-pane layout with properly labeled standard ListCtrl panes ("Local Files" / "Remote Files") that screen readers like NVDA and JAWS handle naturally. Each pane is a standard list control with SetName(), so screen readers announce which pane has focus. Every action is keyboard-accessible and every state change is announced.
 
 ## Supported Protocols
 1. **SFTP** (SSH File Transfer Protocol) - Primary, most secure, most common
@@ -23,16 +23,19 @@ Existing file transfer clients (FileZilla, WinSCP, Cyberduck) have dual-pane lay
 - Automatic protocol detection from URL schemes
 
 ### File Browser
-- Single-pane file list (not dual-pane like FileZilla)
-- Navigate remote files with arrow keys
+- Dual-pane layout: Local Files (left) and Remote Files (right)
+- Each pane is a labeled wx.ListCtrl — screen readers announce "Local Files" or "Remote Files" on focus
+- Tab switches between panes
+- Navigate files with arrow keys in either pane
 - File details announced: name, size, type, modified date, permissions
-- Breadcrumb path bar showing current directory
-- Go to parent directory (Backspace)
-- Quick search/filter within current directory (type to filter)
+- Path bar above each pane showing current directory
+- Go to parent directory (Backspace) in whichever pane has focus
+- Quick search/filter within current directory (Ctrl+F)
+- Local pane starts at user's home directory
 
 ### Transfer Operations
-- Upload files/folders (from local file picker dialog)
-- Download files/folders (to local directory picker)
+- Upload selected local file(s) to current remote directory (Ctrl+U, no file picker needed)
+- Download selected remote file(s) to current local directory (Ctrl+D, no save-as dialog needed)
 - Transfer queue with progress announcements
 - Resume interrupted transfers
 - Batch transfers (select multiple files)

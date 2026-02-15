@@ -16,6 +16,13 @@ from accessitransfer.dialogs.transfer import (
     TransferManager,
     create_transfer_dialog,
 )
+from accessitransfer.local_files import (
+    delete_local,
+    list_local_dir,
+    mkdir_local,
+    parent_local,
+    rename_local,
+)
 from accessitransfer.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
 from accessitransfer.settings import load_settings, save_settings
 from accessitransfer.sites import SiteManager
@@ -46,25 +53,29 @@ ID_SETTINGS = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
-    """Main application window."""
+    """Main application window with dual-pane file browser."""
 
     def __init__(self) -> None:
-        super().__init__(None, title="AccessiTransfer", size=(800, 600))
+        super().__init__(None, title="AccessiTransfer", size=(1000, 600))
         self.SetName("AccessiTransfer Main Window")
 
         self._client = None
-        self._files: list[RemoteFile] = []
+        self._remote_files: list[RemoteFile] = []
+        self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
-        self._filter_text = ""
+        self._remote_filter_text = ""
+        self._local_filter_text = ""
+        self._local_cwd = str(Path.home())
 
         self._build_menu()
         self._build_toolbar()
-        self._build_file_list()
+        self._build_dual_pane()
         self._build_status_bar()
         self._bind_events()
         self._update_title()
+        self._refresh_local_files()
 
     def _build_menu(self) -> None:
         menubar = wx.MenuBar()
@@ -87,8 +98,8 @@ class MainFrame(wx.Frame):
 
         # Transfer menu
         transfer_menu = wx.Menu()
-        transfer_menu.Append(ID_UPLOAD, "&Upload...\tCtrl+U", "Upload file")
-        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected file")
+        transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
+        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
         transfer_menu.AppendSeparator()
         transfer_menu.Append(ID_TRANSFER_QUEUE, "&Transfer Queue...\tCtrl+T", "Show transfer queue")
         menubar.Append(transfer_menu, "&Transfer")
@@ -171,19 +182,68 @@ class MainFrame(wx.Frame):
         # Update port on protocol change
         self.tb_protocol.Bind(wx.EVT_CHOICE, self._on_toolbar_protocol_change)
 
-    def _build_file_list(self) -> None:
-        self.file_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.file_list.SetName("Remote Files")
-        self.file_list.InsertColumn(0, "Name", width=250)
-        self.file_list.InsertColumn(1, "Size", width=100)
-        self.file_list.InsertColumn(2, "Type", width=80)
-        self.file_list.InsertColumn(3, "Modified", width=150)
-        self.file_list.InsertColumn(4, "Permissions", width=120)
+    def _build_dual_pane(self) -> None:
+        pane_container = wx.Panel(self)
 
-        # Layout
+        # --- Local pane (left) ---
+        local_panel = wx.Panel(pane_container)
+        local_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        local_label = wx.StaticText(local_panel, label="Local Files")
+        local_sizer.Add(local_label, 0, wx.LEFT | wx.TOP, 4)
+
+        self.local_path_bar = wx.TextCtrl(
+            local_panel, value=self._local_cwd, style=wx.TE_PROCESS_ENTER
+        )
+        self.local_path_bar.SetName("Local Path")
+        local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
+
+        self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.local_file_list.SetName("Local Files")
+        self.local_file_list.InsertColumn(0, "Name", width=200)
+        self.local_file_list.InsertColumn(1, "Size", width=80)
+        self.local_file_list.InsertColumn(2, "Type", width=70)
+        self.local_file_list.InsertColumn(3, "Modified", width=130)
+        self.local_file_list.InsertColumn(4, "Permissions", width=100)
+        local_sizer.Add(self.local_file_list, 1, wx.EXPAND)
+        local_panel.SetSizer(local_sizer)
+
+        # --- Remote pane (right) ---
+        remote_panel = wx.Panel(pane_container)
+        remote_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        remote_label = wx.StaticText(remote_panel, label="Remote Files")
+        remote_sizer.Add(remote_label, 0, wx.LEFT | wx.TOP, 4)
+
+        self.remote_path_bar = wx.TextCtrl(remote_panel, value="/", style=wx.TE_PROCESS_ENTER)
+        self.remote_path_bar.SetName("Remote Path")
+        remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
+
+        self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.remote_file_list.SetName("Remote Files")
+        self.remote_file_list.InsertColumn(0, "Name", width=200)
+        self.remote_file_list.InsertColumn(1, "Size", width=80)
+        self.remote_file_list.InsertColumn(2, "Type", width=70)
+        self.remote_file_list.InsertColumn(3, "Modified", width=130)
+        self.remote_file_list.InsertColumn(4, "Permissions", width=100)
+        remote_sizer.Add(self.remote_file_list, 1, wx.EXPAND)
+        remote_panel.SetSizer(remote_sizer)
+
+        # Side-by-side layout
+        h_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        h_sizer.Add(local_panel, 1, wx.EXPAND | wx.ALL, 2)
+        h_sizer.Add(remote_panel, 1, wx.EXPAND | wx.ALL, 2)
+        pane_container.SetSizer(h_sizer)
+
+        self._pane_container = pane_container
+
+        # For backward compat: file_list points to remote
+        self.file_list = self.remote_file_list
+
+        # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         main_sizer.Add(self._toolbar_panel, 0, wx.EXPAND)
-        main_sizer.Add(self.file_list, 1, wx.EXPAND)
+        main_sizer.Add(pane_container, 1, wx.EXPAND)
         self.SetSizer(main_sizer)
 
     def _build_status_bar(self) -> None:
@@ -200,6 +260,25 @@ class MainFrame(wx.Frame):
             self.SetTitle(f"AccessiTransfer - {self._client.cwd}")
         else:
             self.SetTitle("AccessiTransfer")
+
+    def _is_local_focused(self) -> bool:
+        """Return True if the local pane currently has focus."""
+        focused = self.FindFocus()
+        return focused is self.local_file_list
+
+    def _is_remote_focused(self) -> bool:
+        """Return True if the remote pane currently has focus."""
+        focused = self.FindFocus()
+        return focused is self.remote_file_list
+
+    def _get_focused_file_list(self) -> wx.ListCtrl | None:
+        """Return whichever file list has focus, or None."""
+        focused = self.FindFocus()
+        if focused is self.local_file_list:
+            return self.local_file_list
+        if focused is self.remote_file_list:
+            return self.remote_file_list
+        return None
 
     def _bind_events(self) -> None:
         # Menu events
@@ -228,18 +307,24 @@ class MainFrame(wx.Frame):
         # Toolbar connect button
         self.tb_connect_btn.Bind(wx.EVT_BUTTON, self._on_connect_toolbar)
 
-        # File list events
-        self.file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_item_activated)
+        # File list events - remote
+        self.remote_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_remote_item_activated)
+        self.remote_file_list.Bind(wx.EVT_KEY_DOWN, self._on_remote_file_list_key)
 
-        # Keyboard shortcuts for file list
-        self.file_list.Bind(wx.EVT_KEY_DOWN, self._on_file_list_key)
+        # File list events - local
+        self.local_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_local_item_activated)
+        self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
 
-        # Transfer updates (no specific event binding needed)
+        # Path bar enter
+        self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
+        self.remote_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_remote_path_enter)
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
         defaults = {"sftp": "22", "ftp": "21", "ftps": "990"}
         self.tb_port.SetValue(defaults.get(proto, "22"))
+
+    # --- Connection ---
 
     def _on_connect_toolbar(self, event: wx.CommandEvent) -> None:
         proto_map = {"sftp": Protocol.SFTP, "ftp": Protocol.FTP, "ftps": Protocol.FTPS}
@@ -280,7 +365,7 @@ class MainFrame(wx.Frame):
             self._update_status("Connected", self._client.cwd)
             self._update_title()
             self._announce(f"Connected to {info.host}")
-            self._refresh_files()
+            self._refresh_remote_files()
         except Exception as e:
             wx.MessageBox(f"Connection failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
             self._client = None
@@ -292,42 +377,93 @@ class MainFrame(wx.Frame):
             except Exception:
                 pass
             self._client = None
-        self._files = []
-        self.file_list.DeleteAllItems()
+        self._remote_files = []
+        self.remote_file_list.DeleteAllItems()
+        self.remote_path_bar.SetValue("/")
         self._update_status("Disconnected", "")
         self._update_title()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
         self.Close()
 
-    def _on_refresh(self, event: wx.CommandEvent) -> None:
-        self._refresh_files()
+    # --- Path bar events ---
 
-    def _refresh_files(self) -> None:
+    def _on_local_path_enter(self, event: wx.CommandEvent) -> None:
+        path = self.local_path_bar.GetValue().strip()
+        if path and Path(path).is_dir():
+            self._local_cwd = str(Path(path).resolve())
+            self._refresh_local_files()
+        else:
+            wx.MessageBox("Invalid directory path.", "Error", wx.OK | wx.ICON_ERROR, self)
+
+    def _on_remote_path_enter(self, event: wx.CommandEvent) -> None:
+        if not self._client or not self._client.connected:
+            return
+        path = self.remote_path_bar.GetValue().strip()
+        if path:
+            try:
+                self._client.chdir(path)
+                self._refresh_remote_files()
+            except Exception as e:
+                wx.MessageBox(f"Failed to navigate: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
+
+    # --- Refresh ---
+
+    def _on_refresh(self, event: wx.CommandEvent) -> None:
+        if self._is_local_focused():
+            self._refresh_local_files()
+        else:
+            self._refresh_remote_files()
+
+    def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
             return
         try:
-            self._files = self._client.list_dir()
-            self._apply_sort()
-            self._populate_file_list()
+            self._remote_files = self._client.list_dir()
+            self._apply_sort(self._remote_files)
+            self._populate_file_list(
+                self.remote_file_list,
+                self._get_visible_files(self._remote_files, self._remote_filter_text),
+            )
             self._update_status("Connected", self._client.cwd)
+            self.remote_path_bar.SetValue(self._client.cwd)
             self._update_title()
-            count = len(self._get_visible_files())
+            count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
             if self._settings.display.announce_file_count:
                 self._announce(f"{self._client.cwd}: {count} items")
         except Exception as e:
             wx.MessageBox(f"Failed to list directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
-    def _get_visible_files(self) -> list[RemoteFile]:
-        files = self._files
+    def _refresh_local_files(self) -> None:
+        try:
+            self._local_files = list_local_dir(self._local_cwd)
+            self._apply_sort(self._local_files)
+            self._populate_file_list(
+                self.local_file_list,
+                self._get_visible_files(self._local_files, self._local_filter_text),
+            )
+            self.local_path_bar.SetValue(self._local_cwd)
+            count = len(self._get_visible_files(self._local_files, self._local_filter_text))
+            if self._settings.display.announce_file_count:
+                self._announce(f"{self._local_cwd}: {count} items")
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
+            )
+
+    # Keep _refresh_files for backward compat (calls remote refresh)
+    def _refresh_files(self) -> None:
+        self._refresh_remote_files()
+
+    def _get_visible_files(self, files: list[RemoteFile], filter_text: str) -> list[RemoteFile]:
         if not self._settings.display.show_hidden_files:
             files = [f for f in files if not f.name.startswith(".")]
-        if self._filter_text:
-            pattern = self._filter_text.lower()
+        if filter_text:
+            pattern = filter_text.lower()
             files = [f for f in files if pattern in f.name.lower()]
         return files
 
-    def _apply_sort(self) -> None:
+    def _apply_sort(self, files: list[RemoteFile]) -> None:
         key_map = {
             "name": lambda f: (not f.is_dir, f.name.lower()),
             "size": lambda f: (not f.is_dir, f.size),
@@ -335,51 +471,102 @@ class MainFrame(wx.Frame):
             "modified": lambda f: (not f.is_dir, f.modified or ""),
         }
         key_fn = key_map.get(self._settings.display.sort_by, key_map["name"])
-        self._files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
+        files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
 
-    def _populate_file_list(self) -> None:
-        self.file_list.DeleteAllItems()
-        for f in self._get_visible_files():
-            idx = self.file_list.InsertItem(self.file_list.GetItemCount(), f.name)
-            self.file_list.SetItem(idx, 1, f.display_size)
-            self.file_list.SetItem(idx, 2, "Directory" if f.is_dir else "File")
-            self.file_list.SetItem(idx, 3, f.display_modified)
-            self.file_list.SetItem(idx, 4, f.permissions)
+    def _populate_file_list(self, list_ctrl: wx.ListCtrl, files: list[RemoteFile]) -> None:
+        list_ctrl.DeleteAllItems()
+        for f in files:
+            idx = list_ctrl.InsertItem(list_ctrl.GetItemCount(), f.name)
+            list_ctrl.SetItem(idx, 1, f.display_size)
+            list_ctrl.SetItem(idx, 2, "Directory" if f.is_dir else "File")
+            list_ctrl.SetItem(idx, 3, f.display_modified)
+            list_ctrl.SetItem(idx, 4, f.permissions)
 
     def _on_toggle_hidden(self, event: wx.CommandEvent) -> None:
         self._settings.display.show_hidden_files = event.IsChecked()
-        self._populate_file_list()
+        self._populate_file_list(
+            self.remote_file_list,
+            self._get_visible_files(self._remote_files, self._remote_filter_text),
+        )
+        self._populate_file_list(
+            self.local_file_list,
+            self._get_visible_files(self._local_files, self._local_filter_text),
+        )
 
     def _sort_by(self, field: str) -> None:
         self._settings.display.sort_by = field
-        self._apply_sort()
-        self._populate_file_list()
+        self._apply_sort(self._remote_files)
+        self._apply_sort(self._local_files)
+        self._populate_file_list(
+            self.remote_file_list,
+            self._get_visible_files(self._remote_files, self._remote_filter_text),
+        )
+        self._populate_file_list(
+            self.local_file_list,
+            self._get_visible_files(self._local_files, self._local_filter_text),
+        )
 
     def _on_filter(self, event: wx.CommandEvent) -> None:
-        dlg = wx.TextEntryDialog(self, "Filter files:", "Filter", self._filter_text)
-        dlg.SetName("Filter Files")
-        if dlg.ShowModal() == wx.ID_OK:
-            self._filter_text = dlg.GetValue()
-            self._populate_file_list()
-        dlg.Destroy()
+        if self._is_local_focused():
+            dlg = wx.TextEntryDialog(self, "Filter local files:", "Filter", self._local_filter_text)
+            dlg.SetName("Filter Files")
+            if dlg.ShowModal() == wx.ID_OK:
+                self._local_filter_text = dlg.GetValue()
+                self._populate_file_list(
+                    self.local_file_list,
+                    self._get_visible_files(self._local_files, self._local_filter_text),
+                )
+            dlg.Destroy()
+        else:
+            dlg = wx.TextEntryDialog(
+                self, "Filter remote files:", "Filter", self._remote_filter_text
+            )
+            dlg.SetName("Filter Files")
+            if dlg.ShowModal() == wx.ID_OK:
+                self._remote_filter_text = dlg.GetValue()
+                self._populate_file_list(
+                    self.remote_file_list,
+                    self._get_visible_files(self._remote_files, self._remote_filter_text),
+                )
+            dlg.Destroy()
 
-    def _get_selected_file(self) -> RemoteFile | None:
-        idx = self.file_list.GetFirstSelected()
+    # --- Selection helpers ---
+
+    def _get_selected_file_from_list(
+        self, list_ctrl: wx.ListCtrl, files: list[RemoteFile], filter_text: str
+    ) -> RemoteFile | None:
+        idx = list_ctrl.GetFirstSelected()
         if idx == wx.NOT_FOUND:
             return None
-        visible = self._get_visible_files()
+        visible = self._get_visible_files(files, filter_text)
         if 0 <= idx < len(visible):
             return visible[idx]
         return None
 
-    def _on_item_activated(self, event: wx.ListEvent) -> None:
-        f = self._get_selected_file()
+    def _get_selected_remote_file(self) -> RemoteFile | None:
+        return self._get_selected_file_from_list(
+            self.remote_file_list, self._remote_files, self._remote_filter_text
+        )
+
+    def _get_selected_local_file(self) -> RemoteFile | None:
+        return self._get_selected_file_from_list(
+            self.local_file_list, self._local_files, self._local_filter_text
+        )
+
+    # Keep old name for compat
+    def _get_selected_file(self) -> RemoteFile | None:
+        return self._get_selected_remote_file()
+
+    # --- Item activation ---
+
+    def _on_remote_item_activated(self, event: wx.ListEvent) -> None:
+        f = self._get_selected_remote_file()
         if not f or not self._client:
             return
         if f.is_dir:
             try:
                 self._client.chdir(f.path)
-                self._refresh_files()
+                self._refresh_remote_files()
             except Exception as e:
                 wx.MessageBox(
                     f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -387,10 +574,28 @@ class MainFrame(wx.Frame):
         else:
             self._on_download(None)
 
-    def _on_file_list_key(self, event: wx.KeyEvent) -> None:
+    def _on_local_item_activated(self, event: wx.ListEvent) -> None:
+        f = self._get_selected_local_file()
+        if not f:
+            return
+        if f.is_dir:
+            self._local_cwd = f.path
+            self._refresh_local_files()
+        else:
+            # Activate file on local = upload if connected
+            if self._client and self._client.connected:
+                self._on_upload(None)
+
+    # Keep old name for compat
+    def _on_item_activated(self, event: wx.ListEvent) -> None:
+        self._on_remote_item_activated(event)
+
+    # --- Keyboard handling ---
+
+    def _on_remote_file_list_key(self, event: wx.KeyEvent) -> None:
         key = event.GetKeyCode()
         if key == wx.WXK_BACK:
-            self._go_parent_dir()
+            self._go_remote_parent_dir()
         elif key == wx.WXK_DELETE:
             self._on_delete(None)
         elif key == wx.WXK_F2:
@@ -398,50 +603,73 @@ class MainFrame(wx.Frame):
         else:
             event.Skip()
 
-    def _go_parent_dir(self) -> None:
+    def _on_local_file_list_key(self, event: wx.KeyEvent) -> None:
+        key = event.GetKeyCode()
+        if key == wx.WXK_BACK:
+            self._go_local_parent_dir()
+        elif key == wx.WXK_DELETE:
+            self._on_delete(None)
+        elif key == wx.WXK_F2:
+            self._on_rename(None)
+        else:
+            event.Skip()
+
+    # Keep old name for compat
+    def _on_file_list_key(self, event: wx.KeyEvent) -> None:
+        self._on_remote_file_list_key(event)
+
+    def _go_remote_parent_dir(self) -> None:
         if not self._client or not self._client.connected:
             return
         try:
             self._client.parent_dir()
-            self._refresh_files()
+            self._refresh_remote_files()
         except Exception as e:
             wx.MessageBox(f"Failed to go to parent: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
+    def _go_local_parent_dir(self) -> None:
+        new_path = str(parent_local(self._local_cwd))
+        if new_path != self._local_cwd:
+            self._local_cwd = new_path
+            self._refresh_local_files()
+
+    # Keep old name for compat
+    def _go_parent_dir(self) -> None:
+        self._go_remote_parent_dir()
+
+    # --- Transfer operations ---
+
     def _on_download(self, event) -> None:
-        f = self._get_selected_file()
+        f = self._get_selected_remote_file()
         if not f or f.is_dir or not self._client:
             return
-        default_dir = self._settings.transfer.default_download_dir
-        with wx.FileDialog(
-            self,
-            "Save As",
-            defaultDir=default_dir,
-            defaultFile=f.name,
-            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
-        ) as dlg:
-            if dlg.ShowModal() == wx.ID_OK:
-                local_path = dlg.GetPath()
-                self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
-                self._announce(f"Downloading {f.name}")
+        local_path = os.path.join(self._local_cwd, f.name)
+        self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
+        self._announce(f"Downloading {f.name} to {self._local_cwd}")
 
-    def _on_upload(self, event: wx.CommandEvent) -> None:
+    def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
             return
-        with wx.FileDialog(
-            self,
-            "Select File to Upload",
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
-        ) as dlg:
-            if dlg.ShowModal() == wx.ID_OK:
-                local_path = dlg.GetPath()
-                filename = os.path.basename(local_path)
-                remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
-                total = os.path.getsize(local_path)
-                self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
-                self._announce(f"Uploading {filename}")
+        f = self._get_selected_local_file()
+        if not f or f.is_dir:
+            return
+        local_path = f.path
+        filename = f.name
+        remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+        total = os.path.getsize(local_path)
+        self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
+        self._announce(f"Uploading {filename}")
+
+    # --- File operations (context-aware) ---
 
     def _on_delete(self, event) -> None:
-        f = self._get_selected_file()
+        if self._is_local_focused():
+            self._delete_local()
+        else:
+            self._delete_remote()
+
+    def _delete_remote(self) -> None:
+        f = self._get_selected_remote_file()
         if not f or not self._client:
             return
         result = wx.MessageBox(
@@ -454,12 +682,33 @@ class MainFrame(wx.Frame):
                 else:
                     self._client.delete(f.path)
                 self._announce(f"Deleted {f.name}")
-                self._refresh_files()
+                self._refresh_remote_files()
+            except Exception as e:
+                wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
+
+    def _delete_local(self) -> None:
+        f = self._get_selected_local_file()
+        if not f:
+            return
+        result = wx.MessageBox(
+            f"Delete {f.name}?", "Confirm Delete", wx.YES_NO | wx.ICON_WARNING, self
+        )
+        if result == wx.YES:
+            try:
+                delete_local(f.path)
+                self._announce(f"Deleted {f.name}")
+                self._refresh_local_files()
             except Exception as e:
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_rename(self, event) -> None:
-        f = self._get_selected_file()
+        if self._is_local_focused():
+            self._rename_local()
+        else:
+            self._rename_remote()
+
+    def _rename_remote(self) -> None:
+        f = self._get_selected_remote_file()
         if not f or not self._client:
             return
         dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
@@ -472,12 +721,35 @@ class MainFrame(wx.Frame):
                 try:
                     self._client.rename(f.path, new_path)
                     self._announce(f"Renamed to {new_name}")
-                    self._refresh_files()
+                    self._refresh_remote_files()
+                except Exception as e:
+                    wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
+        dlg.Destroy()
+
+    def _rename_local(self) -> None:
+        f = self._get_selected_local_file()
+        if not f:
+            return
+        dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
+        dlg.SetName("Rename File")
+        if dlg.ShowModal() == wx.ID_OK:
+            new_name = dlg.GetValue().strip()
+            if new_name and new_name != f.name:
+                try:
+                    rename_local(f.path, new_name)
+                    self._announce(f"Renamed to {new_name}")
+                    self._refresh_local_files()
                 except Exception as e:
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
     def _on_mkdir(self, event: wx.CommandEvent) -> None:
+        if self._is_local_focused():
+            self._mkdir_local()
+        else:
+            self._mkdir_remote()
+
+    def _mkdir_remote(self) -> None:
         if not self._client or not self._client.connected:
             return
         dlg = wx.TextEntryDialog(self, "Directory name:", "New Directory")
@@ -489,7 +761,23 @@ class MainFrame(wx.Frame):
                 try:
                     self._client.mkdir(path)
                     self._announce(f"Created directory {name}")
-                    self._refresh_files()
+                    self._refresh_remote_files()
+                except Exception as e:
+                    wx.MessageBox(
+                        f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
+                    )
+        dlg.Destroy()
+
+    def _mkdir_local(self) -> None:
+        dlg = wx.TextEntryDialog(self, "Directory name:", "New Directory")
+        dlg.SetName("New Directory")
+        if dlg.ShowModal() == wx.ID_OK:
+            name = dlg.GetValue().strip()
+            if name:
+                try:
+                    mkdir_local(self._local_cwd, name)
+                    self._announce(f"Created directory {name}")
+                    self._refresh_local_files()
                 except Exception as e:
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -497,7 +785,10 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def _on_properties(self, event: wx.CommandEvent) -> None:
-        f = self._get_selected_file()
+        if self._is_local_focused():
+            f = self._get_selected_local_file()
+        else:
+            f = self._get_selected_remote_file()
         if not f:
             return
         dlg = PropertiesDialog(self, f)
@@ -510,7 +801,6 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def _on_transfer_update(self, event) -> None:
-        # Could update status bar with transfer info
         pass
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
@@ -518,7 +808,14 @@ class MainFrame(wx.Frame):
         if dlg.ShowModal() == wx.ID_OK:
             self._settings = dlg.get_settings()
             save_settings(self._settings)
-            self._populate_file_list()
+            self._populate_file_list(
+                self.remote_file_list,
+                self._get_visible_files(self._remote_files, self._remote_filter_text),
+            )
+            self._populate_file_list(
+                self.local_file_list,
+                self._get_visible_files(self._local_files, self._local_filter_text),
+            )
         dlg.Destroy()
 
     def _on_about(self, event: wx.CommandEvent) -> None:
@@ -531,7 +828,6 @@ class MainFrame(wx.Frame):
     def _announce(self, message: str) -> None:
         """Announce a message for screen readers via status bar."""
         self.status_bar.SetStatusText(message, 0)
-        # Try prismatoid for direct speech if available
         try:
             import prismatoid
 

@@ -1,10 +1,14 @@
 # AccessiTransfer
 
-Accessible file transfer client for screen reader users. Supports FTP, SFTP, FTPS, SCP, and WebDAV with a keyboard-driven, single-pane interface designed for NVDA and JAWS compatibility.
+Accessible file transfer client for screen reader users. Supports FTP, SFTP, FTPS, SCP, and WebDAV with a keyboard-driven, dual-pane interface designed for NVDA and JAWS compatibility.
 
-## Why?
+## Layout
 
-Existing transfer clients (FileZilla, WinSCP) use dual-pane layouts that are painful with screen readers. AccessiTransfer takes a single-pane approach where every action is keyboard-accessible and every state change is spoken.
+Two side-by-side file browsers:
+- **Left pane**: Local files (starts at your home directory)
+- **Right pane**: Remote files (connected server)
+
+Each pane is a labeled standard list control, so screen readers announce "Local Files" or "Remote Files" when you Tab between them. Upload with Ctrl+U (local → remote), download with Ctrl+D (remote → local) — no file picker dialogs needed.
 
 ## Protocols
 
