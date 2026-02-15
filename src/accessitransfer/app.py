@@ -348,22 +348,34 @@ class MainFrame(wx.Frame):
 
     def _on_quick_connect(self, event: wx.CommandEvent) -> None:
         dlg = QuickConnectDialog(self)
+        info = None
         if dlg.ShowModal() == wx.ID_OK:
             info = dlg.get_connection_info()
-            self._do_connect(info)
         dlg.Destroy()
+        if info:
+            self._do_connect(info)
 
     def _on_site_manager(self, event: wx.CommandEvent) -> None:
         dlg = SiteManagerDialog(self, self._site_manager)
         result = dlg.ShowModal()
+        info = None
         if result == wx.ID_OK and dlg.connect_requested and dlg.selected_site:
             info = dlg.selected_site.to_connection_info()
-            self._do_connect(info)
         dlg.Destroy()
+        if info:
+            self._do_connect(info)
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
             wx.MessageBox("Please enter a host.", "Error", wx.OK | wx.ICON_ERROR, self)
+            return
+        if not info.username:
+            wx.MessageBox("Please enter a username.", "Error", wx.OK | wx.ICON_ERROR, self)
+            return
+        if not info.password:
+            wx.MessageBox(
+                "Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self
+            )
             return
         self._on_disconnect(None)
         try:
