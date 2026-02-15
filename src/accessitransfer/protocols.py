@@ -7,7 +7,7 @@ import logging
 import ssl
 import stat
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import PurePosixPath
@@ -215,11 +215,19 @@ class FTPClient(TransferClient):
                     modified = datetime.strptime(facts["modify"][:14], "%Y%m%d%H%M%S")
                 except ValueError:
                     pass
-            full_path = f"{self._cwd.rstrip('/')}/{name}" if path == "." else f"{path.rstrip('/')}/{name}"
-            files.append(RemoteFile(
-                name=name, path=full_path, size=size, is_dir=is_dir,
-                modified=modified, permissions=facts.get("perm", ""),
-            ))
+            full_path = (
+                f"{self._cwd.rstrip('/')}/{name}" if path == "." else f"{path.rstrip('/')}/{name}"
+            )
+            files.append(
+                RemoteFile(
+                    name=name,
+                    path=full_path,
+                    size=size,
+                    is_dir=is_dir,
+                    modified=modified,
+                    permissions=facts.get("perm", ""),
+                )
+            )
         return files
 
     def chdir(self, path: str) -> str:
@@ -372,16 +380,18 @@ class SFTPClient(TransferClient):
             modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
             perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
             full_path = f"{target.rstrip('/')}/{attr.filename}"
-            files.append(RemoteFile(
-                name=attr.filename,
-                path=full_path,
-                size=attr.st_size or 0,
-                is_dir=is_dir,
-                modified=modified,
-                permissions=perms,
-                owner=str(attr.st_uid or ""),
-                group=str(attr.st_gid or ""),
-            ))
+            files.append(
+                RemoteFile(
+                    name=attr.filename,
+                    path=full_path,
+                    size=attr.st_size or 0,
+                    is_dir=is_dir,
+                    modified=modified,
+                    permissions=perms,
+                    owner=str(attr.st_uid or ""),
+                    group=str(attr.st_gid or ""),
+                )
+            )
         return files
 
     def chdir(self, path: str) -> str:
@@ -394,8 +404,6 @@ class SFTPClient(TransferClient):
         self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
     ) -> None:
         sftp = self._ensure_connected()
-        file_stat = sftp.stat(remote_path)
-        total = file_stat.st_size or 0
 
         def progress(transferred: int, total_bytes: int) -> None:
             if callback:
@@ -441,8 +449,12 @@ class SFTPClient(TransferClient):
         perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
         name = PurePosixPath(path).name
         return RemoteFile(
-            name=name, path=path, size=attr.st_size or 0, is_dir=is_dir,
-            modified=modified, permissions=perms,
+            name=name,
+            path=path,
+            size=attr.st_size or 0,
+            is_dir=is_dir,
+            modified=modified,
+            permissions=perms,
         )
 
 

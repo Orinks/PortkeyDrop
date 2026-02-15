@@ -57,8 +57,7 @@ class SiteManager:
         try:
             data = json.loads(self._sites_path.read_text(encoding="utf-8"))
             self._sites = [
-                Site(**{k: v for k, v in s.items() if k in Site.__dataclass_fields__})
-                for s in data
+                Site(**{k: v for k, v in s.items() if k in Site.__dataclass_fields__}) for s in data
             ]
         except Exception as e:
             logger.warning(f"Failed to load sites: {e}")

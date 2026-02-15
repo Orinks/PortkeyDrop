@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ from accessitransfer.protocols import (
     Protocol,
     RemoteFile,
     SFTPClient,
-    TransferClient,
     create_client,
 )
 
@@ -120,7 +118,9 @@ class TestFTPClient:
         mock_ftp.pwd.return_value = "/"
         mock_ftp_class.return_value = mock_ftp
 
-        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com", username="user", password="pass")
+        info = ConnectionInfo(
+            protocol=Protocol.FTP, host="example.com", username="user", password="pass"
+        )
         client = FTPClient(info)
         client.connect()
 

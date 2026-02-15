@@ -81,20 +81,32 @@ def save_settings(settings: Settings, config_dir: Path = DEFAULT_CONFIG_DIR) -> 
 def _dict_to_settings(data: dict) -> Settings:
     """Convert a dictionary to Settings, filling in defaults for missing keys."""
     return Settings(
-        transfer=TransferSettings(**{
-            k: v for k, v in data.get("transfer", {}).items()
-            if k in TransferSettings.__dataclass_fields__
-        }),
-        display=DisplaySettings(**{
-            k: v for k, v in data.get("display", {}).items()
-            if k in DisplaySettings.__dataclass_fields__
-        }),
-        connection=ConnectionDefaults(**{
-            k: v for k, v in data.get("connection", {}).items()
-            if k in ConnectionDefaults.__dataclass_fields__
-        }),
-        speech=SpeechSettings(**{
-            k: v for k, v in data.get("speech", {}).items()
-            if k in SpeechSettings.__dataclass_fields__
-        }),
+        transfer=TransferSettings(
+            **{
+                k: v
+                for k, v in data.get("transfer", {}).items()
+                if k in TransferSettings.__dataclass_fields__
+            }
+        ),
+        display=DisplaySettings(
+            **{
+                k: v
+                for k, v in data.get("display", {}).items()
+                if k in DisplaySettings.__dataclass_fields__
+            }
+        ),
+        connection=ConnectionDefaults(
+            **{
+                k: v
+                for k, v in data.get("connection", {}).items()
+                if k in ConnectionDefaults.__dataclass_fields__
+            }
+        ),
+        speech=SpeechSettings(
+            **{
+                k: v
+                for k, v in data.get("speech", {}).items()
+                if k in SpeechSettings.__dataclass_fields__
+            }
+        ),
     )
