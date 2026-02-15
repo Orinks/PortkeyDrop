@@ -25,7 +25,7 @@ from accessitransfer.local_files import (
 )
 from accessitransfer.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
 from accessitransfer.settings import load_settings, save_settings
-from accessitransfer.sites import SiteManager
+from accessitransfer.sites import Site, SiteManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ ID_RENAME = wx.NewIdRef()
 ID_MKDIR = wx.NewIdRef()
 ID_PARENT_DIR = wx.NewIdRef()
 ID_FILTER = wx.NewIdRef()
+ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
 
 
@@ -95,6 +96,10 @@ class MainFrame(wx.Frame):
         sites_menu = wx.Menu()
         sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
         sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
+        sites_menu.AppendSeparator()
+        sites_menu.Append(
+            ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
         menubar.Append(sites_menu, "S&ites")
 
         # Transfer menu
@@ -293,6 +298,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self._on_site_manager, id=ID_SITE_MANAGER)
         self.Bind(wx.EVT_MENU, self._on_quick_connect, id=ID_QUICK_CONNECT)
+        self.Bind(wx.EVT_MENU, self._on_save_connection, id=ID_SAVE_CONNECTION)
         self.Bind(wx.EVT_MENU, self._on_transfer, id=ID_TRANSFER)
         self.Bind(wx.EVT_MENU, self._on_upload, id=ID_UPLOAD)
         self.Bind(wx.EVT_MENU, self._on_download, id=ID_DOWNLOAD)
@@ -364,6 +370,39 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
         if info:
             self._do_connect(info)
+
+    def _on_save_connection(self, event: wx.CommandEvent) -> None:
+        if not self._client or not self._client.connected:
+            wx.MessageBox(
+                "Not connected. Connect to a server first.",
+                "Save Connection",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        # Build site from toolbar fields
+        proto_str = self.tb_protocol.GetStringSelection()
+        host = self.tb_host.GetValue().strip()
+        port_str = self.tb_port.GetValue().strip()
+        username = self.tb_username.GetValue().strip()
+        password = self.tb_password.GetValue()
+        default_name = f"{username}@{host}" if username else host
+        dlg = wx.TextEntryDialog(self, "Site name:", "Save Connection", default_name)
+        dlg.SetName("Save Connection")
+        if dlg.ShowModal() == wx.ID_OK:
+            name = dlg.GetValue().strip() or default_name
+            site = Site(
+                name=name,
+                protocol=proto_str,
+                host=host,
+                port=int(port_str) if port_str else 0,
+                username=username,
+                password=password,
+                initial_dir=self._client.cwd,
+            )
+            self._site_manager.add(site)
+            self._announce(f"Site '{name}' saved")
+        dlg.Destroy()
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
