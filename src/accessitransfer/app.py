@@ -327,10 +327,12 @@ class MainFrame(wx.Frame):
         # File list events - remote
         self.remote_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_remote_item_activated)
         self.remote_file_list.Bind(wx.EVT_KEY_DOWN, self._on_remote_file_list_key)
+        self.remote_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_remote_context_menu)
 
         # File list events - local
         self.local_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_local_item_activated)
         self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
+        self.local_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_local_context_menu)
 
         # Path bar enter
         self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
@@ -486,14 +488,19 @@ class MainFrame(wx.Frame):
             self._refresh_local_files()
             self._announce(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
-            try:
-                self._client.chdir(self._remote_home)
-                self._refresh_remote_files()
-                self._announce(f"Home: {self._client.cwd}")
-            except Exception as e:
-                wx.MessageBox(
-                    f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self
-                )
+            self._announce("Going home...")
+            wx.CallAfter(self._navigate_remote_home)
+
+    def _navigate_remote_home(self) -> None:
+        """Navigate to remote home in a non-blocking way."""
+        try:
+            self._client.chdir(self._remote_home)
+            self._refresh_remote_files()
+            self._announce(f"Home: {self._client.cwd}")
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self
+            )
 
     def _on_refresh(self, event: wx.CommandEvent) -> None:
         if self._is_local_focused():
@@ -727,6 +734,122 @@ class MainFrame(wx.Frame):
     # Keep old name for compat
     def _on_file_list_key(self, event: wx.KeyEvent) -> None:
         self._on_remote_file_list_key(event)
+
+    def _open_selected_remote_dir(self) -> None:
+        """Open the selected remote directory."""
+        f = self._get_selected_remote_file()
+        if not f or not f.is_dir or not self._client:
+            return
+        try:
+            self._announce(f"Opening {f.name}...")
+            self._client.chdir(f.path)
+            self._refresh_remote_files()
+        except Exception as e:
+            wx.MessageBox(
+                f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
+            )
+
+    def _on_remote_context_menu(self, event: wx.ContextMenuEvent) -> None:
+        """Show context menu for the remote file list."""
+        menu = wx.Menu()
+        f = self._get_selected_remote_file()
+
+        item = menu.Append(wx.ID_ANY, "&Download\tCtrl+D")
+        self.Bind(wx.EVT_MENU, self._on_download, item)
+        if not f or (f.name == ".."):
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "&Transfer\tCtrl+T")
+        self.Bind(wx.EVT_MENU, self._on_transfer, item)
+        if not f or (f.name == ".."):
+            item.Enable(False)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "&Open Folder")
+        self.Bind(wx.EVT_MENU, lambda e: self._open_selected_remote_dir(), item)
+        if not f or not f.is_dir:
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "&Home Directory\tCtrl+H")
+        self.Bind(wx.EVT_MENU, self._on_home_dir, item)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "Re&name\tF2")
+        self.Bind(wx.EVT_MENU, self._on_rename, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "De&lete\tDelete")
+        self.Bind(wx.EVT_MENU, self._on_delete, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "&New Directory\tCtrl+Shift+N")
+        self.Bind(wx.EVT_MENU, self._on_mkdir, item)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "&Refresh\tCtrl+R")
+        self.Bind(wx.EVT_MENU, self._on_refresh, item)
+
+        item = menu.Append(wx.ID_ANY, "P&roperties\tCtrl+I")
+        self.Bind(wx.EVT_MENU, self._on_properties, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def _on_local_context_menu(self, event: wx.ContextMenuEvent) -> None:
+        """Show context menu for the local file list."""
+        menu = wx.Menu()
+        f = self._get_selected_local_file()
+        connected = self._client and self._client.connected
+
+        item = menu.Append(wx.ID_ANY, "&Upload\tCtrl+U")
+        self.Bind(wx.EVT_MENU, self._on_upload, item)
+        if not f or f.name == ".." or not connected:
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "&Transfer\tCtrl+T")
+        self.Bind(wx.EVT_MENU, self._on_transfer, item)
+        if not f or f.name == ".." or not connected:
+            item.Enable(False)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "&Home Directory\tCtrl+H")
+        self.Bind(wx.EVT_MENU, self._on_home_dir, item)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "Re&name\tF2")
+        self.Bind(wx.EVT_MENU, self._on_rename, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "De&lete\tDelete")
+        self.Bind(wx.EVT_MENU, self._on_delete, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        item = menu.Append(wx.ID_ANY, "&New Directory\tCtrl+Shift+N")
+        self.Bind(wx.EVT_MENU, self._on_mkdir, item)
+
+        menu.AppendSeparator()
+
+        item = menu.Append(wx.ID_ANY, "&Refresh\tCtrl+R")
+        self.Bind(wx.EVT_MENU, self._on_refresh, item)
+
+        item = menu.Append(wx.ID_ANY, "P&roperties\tCtrl+I")
+        self.Bind(wx.EVT_MENU, self._on_properties, item)
+        if not f or f.name == "..":
+            item.Enable(False)
+
+        self.PopupMenu(menu)
+        menu.Destroy()
 
     def _go_remote_parent_dir(self) -> None:
         if not self._client or not self._client.connected:
