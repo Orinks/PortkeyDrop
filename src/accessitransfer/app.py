@@ -737,24 +737,36 @@ class MainFrame(wx.Frame):
 
     def _on_download(self, event) -> None:
         f = self._get_selected_remote_file()
-        if not f or f.is_dir or not self._client:
+        if not f or not self._client:
             return
         local_path = os.path.join(self._local_cwd, f.name)
-        self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
-        self._announce(f"Downloading {f.name} to {self._local_cwd}")
+        if f.is_dir:
+            if f.name == "..":
+                return
+            self._transfer_manager.add_recursive_download(self._client, f.path, local_path)
+            self._announce(f"Downloading folder {f.name} to {self._local_cwd}")
+        else:
+            self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
+            self._announce(f"Downloading {f.name} to {self._local_cwd}")
 
     def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
             return
         f = self._get_selected_local_file()
-        if not f or f.is_dir:
+        if not f:
             return
         local_path = f.path
         filename = f.name
         remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
-        total = os.path.getsize(local_path)
-        self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
-        self._announce(f"Uploading {filename}")
+        if f.is_dir:
+            if f.name == "..":
+                return
+            self._transfer_manager.add_recursive_upload(self._client, local_path, remote_path)
+            self._announce(f"Uploading folder {filename}")
+        else:
+            total = os.path.getsize(local_path)
+            self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
+            self._announce(f"Uploading {filename}")
 
     # --- File operations (context-aware) ---
 

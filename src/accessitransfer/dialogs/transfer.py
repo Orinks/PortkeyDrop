@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
@@ -9,6 +11,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from accessitransfer.protocols import TransferClient
+
+logger = logging.getLogger(__name__)
 
 
 class TransferDirection(Enum):
@@ -99,6 +103,46 @@ class TransferManager:
         thread.start()
         return item
 
+    def add_recursive_download(
+        self, client: TransferClient, remote_path: str, local_path: str
+    ) -> TransferItem:
+        """Queue a recursive folder download."""
+        item = TransferItem(
+            id=self._next_id,
+            direction=TransferDirection.DOWNLOAD,
+            remote_path=remote_path,
+            local_path=local_path,
+            total_bytes=0,
+        )
+        self._next_id += 1
+        with self._lock:
+            self._transfers.append(item)
+        thread = threading.Thread(
+            target=self._run_recursive_download, args=(client, item), daemon=True
+        )
+        thread.start()
+        return item
+
+    def add_recursive_upload(
+        self, client: TransferClient, local_path: str, remote_path: str
+    ) -> TransferItem:
+        """Queue a recursive folder upload."""
+        item = TransferItem(
+            id=self._next_id,
+            direction=TransferDirection.UPLOAD,
+            local_path=local_path,
+            remote_path=remote_path,
+            total_bytes=0,
+        )
+        self._next_id += 1
+        with self._lock:
+            self._transfers.append(item)
+        thread = threading.Thread(
+            target=self._run_recursive_upload, args=(client, item), daemon=True
+        )
+        thread.start()
+        return item
+
     def cancel(self, transfer_id: int) -> None:
         with self._lock:
             for t in self._transfers:
@@ -151,6 +195,124 @@ class TransferManager:
             item.status = TransferStatus.FAILED
             item.error = str(e)
         self._notify()
+
+    def _run_recursive_download(self, client: TransferClient, item: TransferItem) -> None:
+        """Recursively download a remote directory."""
+        import stat as stat_mod
+
+        item.status = TransferStatus.IN_PROGRESS
+        self._notify()
+        try:
+            # Collect all files first to calculate total size
+            file_queue: list[tuple[str, str, int]] = []  # (remote, local, size)
+            self._collect_remote_files(client, item.remote_path, item.local_path, file_queue)
+            item.total_bytes = sum(size for _, _, size in file_queue)
+            item.transferred_bytes = 0
+            self._notify()
+
+            for remote_file, local_file, size in file_queue:
+                if item.cancel_event.is_set():
+                    raise InterruptedError("Transfer cancelled")
+                os.makedirs(os.path.dirname(local_file), exist_ok=True)
+                with open(local_file, "wb") as f:
+                    base_transferred = item.transferred_bytes
+
+                    def callback(transferred: int, total: int) -> None:
+                        if item.cancel_event.is_set():
+                            raise InterruptedError("Transfer cancelled")
+                        item.transferred_bytes = base_transferred + transferred
+                        self._notify()
+
+                    client.download(remote_file, f, callback=callback)
+                item.transferred_bytes = item.transferred_bytes  # ensure accurate after file done
+            item.status = TransferStatus.COMPLETED
+        except InterruptedError:
+            item.status = TransferStatus.CANCELLED
+        except Exception as e:
+            item.status = TransferStatus.FAILED
+            item.error = str(e)
+            logger.exception("Recursive download failed: %s", item.remote_path)
+        self._notify()
+
+    def _collect_remote_files(
+        self,
+        client: TransferClient,
+        remote_dir: str,
+        local_dir: str,
+        file_queue: list[tuple[str, str, int]],
+    ) -> None:
+        """Walk a remote directory tree and collect files to download."""
+        for entry in client.list_dir(remote_dir):
+            if entry.name in (".", ".."):
+                continue
+            local_path = os.path.join(local_dir, entry.name)
+            if entry.is_dir:
+                self._collect_remote_files(client, entry.path, local_path, file_queue)
+            else:
+                file_queue.append((entry.path, local_path, entry.size))
+
+    def _run_recursive_upload(self, client: TransferClient, item: TransferItem) -> None:
+        """Recursively upload a local directory."""
+        item.status = TransferStatus.IN_PROGRESS
+        self._notify()
+        try:
+            # Collect all files first
+            file_queue: list[tuple[str, str, int]] = []  # (local, remote, size)
+            self._collect_local_files(item.local_path, item.remote_path, file_queue)
+            item.total_bytes = sum(size for _, _, size in file_queue)
+            item.transferred_bytes = 0
+            self._notify()
+
+            # Collect directories to create
+            dirs_to_create: set[str] = set()
+            for _, remote_file, _ in file_queue:
+                remote_parent = os.path.dirname(remote_file).replace("\\", "/")
+                while remote_parent and remote_parent != item.remote_path:
+                    dirs_to_create.add(remote_parent)
+                    remote_parent = os.path.dirname(remote_parent).replace("\\", "/")
+
+            # Create directories (sorted so parents come first)
+            for d in sorted(dirs_to_create):
+                try:
+                    client.mkdir(d)
+                except Exception:
+                    pass  # may already exist
+
+            for local_file, remote_file, size in file_queue:
+                if item.cancel_event.is_set():
+                    raise InterruptedError("Transfer cancelled")
+                with open(local_file, "rb") as f:
+                    base_transferred = item.transferred_bytes
+
+                    def callback(transferred: int, total: int) -> None:
+                        if item.cancel_event.is_set():
+                            raise InterruptedError("Transfer cancelled")
+                        item.transferred_bytes = base_transferred + transferred
+                        self._notify()
+
+                    client.upload(f, remote_file, callback=callback)
+            item.status = TransferStatus.COMPLETED
+        except InterruptedError:
+            item.status = TransferStatus.CANCELLED
+        except Exception as e:
+            item.status = TransferStatus.FAILED
+            item.error = str(e)
+            logger.exception("Recursive upload failed: %s", item.local_path)
+        self._notify()
+
+    def _collect_local_files(
+        self,
+        local_dir: str,
+        remote_dir: str,
+        file_queue: list[tuple[str, str, int]],
+    ) -> None:
+        """Walk a local directory tree and collect files to upload."""
+        for entry in os.scandir(local_dir):
+            remote_path = f"{remote_dir.rstrip('/')}/{entry.name}"
+            if entry.is_dir(follow_symlinks=True):
+                self._collect_local_files(entry.path, remote_path, file_queue)
+            elif entry.is_file(follow_symlinks=True):
+                file_queue.append((entry.path, remote_path, entry.stat().st_size))
 
     def _notify(self) -> None:
         if self._notify_window:
