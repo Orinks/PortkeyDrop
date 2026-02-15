@@ -345,13 +345,22 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
             super().__init__(
                 parent_win,
                 title="Transfer Queue",
-                style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+                style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.CLOSE_BOX,
                 size=(500, 350),
             )
             self._transfer_manager = tm
             self._build_ui()
             self._refresh()
             self.SetName("Transfer Queue Dialog")
+
+            # Auto-refresh timer (every 1 second)
+            self._timer = wx.Timer(self)
+            self.Bind(wx.EVT_TIMER, self._on_timer, self._timer)
+            self._timer.Start(1000)
+
+            # Escape to close
+            self.Bind(wx.EVT_CHAR_HOOK, self._on_key)
+            self.Bind(wx.EVT_CLOSE, self._on_close)
 
         def _build_ui(self):
             sizer = wx.BoxSizer(wx.VERTICAL)
@@ -376,6 +385,23 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
 
             self.cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
             self.close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
+
+        def _on_key(self, event):
+            if event.GetKeyCode() == wx.WXK_ESCAPE:
+                self.Close()
+            else:
+                event.Skip()
+
+        def _on_close(self, event):
+            self._timer.Stop()
+            # Clear parent's reference so a new one can be created
+            parent = self.GetParent()
+            if parent and hasattr(parent, "_transfer_dlg"):
+                parent._transfer_dlg = None
+            self.Destroy()
+
+        def _on_timer(self, event):
+            self._refresh()
 
         def _on_cancel(self, event):
             idx = self.transfer_list.GetFirstSelected()

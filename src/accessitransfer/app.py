@@ -892,6 +892,7 @@ class MainFrame(wx.Frame):
         else:
             self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
             self._announce(f"Downloading {f.name} to {self._local_cwd}")
+        self._show_transfer_queue()
 
     def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
@@ -911,6 +912,18 @@ class MainFrame(wx.Frame):
             total = os.path.getsize(local_path)
             self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
             self._announce(f"Uploading {filename}")
+        self._show_transfer_queue()
+
+    def _show_transfer_queue(self) -> None:
+        """Show the transfer queue as a modeless dialog."""
+        if hasattr(self, "_transfer_dlg") and self._transfer_dlg:
+            try:
+                self._transfer_dlg.Raise()
+                return
+            except Exception:
+                pass
+        self._transfer_dlg = create_transfer_dialog(self, self._transfer_manager)
+        self._transfer_dlg.Show()
 
     # --- File operations (context-aware) ---
 
@@ -1048,9 +1061,7 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def _on_transfer_queue(self, event: wx.CommandEvent) -> None:
-        dlg = create_transfer_dialog(self, self._transfer_manager)
-        dlg.ShowModal()
-        dlg.Destroy()
+        self._show_transfer_queue()
 
     def _on_transfer_update(self, event) -> None:
         pass
