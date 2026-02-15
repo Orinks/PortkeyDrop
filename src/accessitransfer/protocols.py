@@ -377,12 +377,22 @@ class SFTPClient(TransferClient):
             if attr.filename in (".", ".."):
                 continue
             is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
+            # Follow symlinks to check if target is a directory
+            is_link = bool(attr.st_mode is not None and stat.S_ISLNK(attr.st_mode))
+            if is_link:
+                try:
+                    target_attr = sftp.stat(full_path)
+                    if target_attr.st_mode is not None and stat.S_ISDIR(target_attr.st_mode):
+                        is_dir = True
+                except Exception:
+                    pass  # broken symlink or permission error; leave as file
             if not is_dir and hasattr(attr, "longname") and attr.longname.startswith("d"):
                 is_dir = True
             logger.debug(
-                "listdir entry: %s st_mode=%s is_dir=%s longname=%r",
+                "listdir entry: %s st_mode=%s is_link=%s is_dir=%s longname=%r",
                 attr.filename,
                 oct(attr.st_mode) if attr.st_mode is not None else None,
+                is_link,
                 is_dir,
                 getattr(attr, "longname", None),
             )
