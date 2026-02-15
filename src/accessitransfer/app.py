@@ -49,6 +49,7 @@ ID_DELETE = wx.NewIdRef()
 ID_RENAME = wx.NewIdRef()
 ID_MKDIR = wx.NewIdRef()
 ID_PARENT_DIR = wx.NewIdRef()
+ID_HOME_DIR = wx.NewIdRef()
 ID_FILTER = wx.NewIdRef()
 ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
@@ -62,6 +63,7 @@ class MainFrame(wx.Frame):
         self.SetName("AccessiTransfer Main Window")
 
         self._client = None
+        self._remote_home = "/"
         self._remote_files: list[RemoteFile] = []
         self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
@@ -118,6 +120,7 @@ class MainFrame(wx.Frame):
         # View menu
         view_menu = wx.Menu()
         view_menu.Append(ID_REFRESH, "&Refresh\tCtrl+R", "Refresh file list")
+        view_menu.Append(ID_HOME_DIR, "&Home Directory\tCtrl+H", "Go to home directory")
         view_menu.AppendCheckItem(ID_SHOW_HIDDEN, "Show &Hidden Files", "Toggle hidden files")
         view_menu.Check(ID_SHOW_HIDDEN, self._settings.display.show_hidden_files)
         view_menu.AppendSeparator()
@@ -303,6 +306,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_upload, id=ID_UPLOAD)
         self.Bind(wx.EVT_MENU, self._on_download, id=ID_DOWNLOAD)
         self.Bind(wx.EVT_MENU, self._on_refresh, id=ID_REFRESH)
+        self.Bind(wx.EVT_MENU, self._on_home_dir, id=ID_HOME_DIR)
         self.Bind(wx.EVT_MENU, self._on_toggle_hidden, id=ID_SHOW_HIDDEN)
         self.Bind(wx.EVT_MENU, lambda e: self._sort_by("name"), id=ID_SORT_NAME)
         self.Bind(wx.EVT_MENU, lambda e: self._sort_by("size"), id=ID_SORT_SIZE)
@@ -420,6 +424,7 @@ class MainFrame(wx.Frame):
         try:
             self._client = create_client(info)
             self._client.connect()
+            self._remote_home = self._client.cwd
             self._update_status("Connected", self._client.cwd)
             self._update_title()
             self._announce(f"Connected to {info.host}")
@@ -473,6 +478,22 @@ class MainFrame(wx.Frame):
                 wx.MessageBox(f"Failed to navigate: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     # --- Refresh ---
+
+    def _on_home_dir(self, event: wx.CommandEvent) -> None:
+        """Navigate to home directory in the focused pane."""
+        if self._is_local_focused() or not self._client:
+            self._local_cwd = str(Path.home())
+            self._refresh_local_files()
+            self._announce(f"Home: {self._local_cwd}")
+        elif self._client and self._client.connected:
+            try:
+                self._client.chdir(self._remote_home)
+                self._refresh_remote_files()
+                self._announce(f"Home: {self._client.cwd}")
+            except Exception as e:
+                wx.MessageBox(
+                    f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self
+                )
 
     def _on_refresh(self, event: wx.CommandEvent) -> None:
         if self._is_local_focused():
