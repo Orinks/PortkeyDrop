@@ -376,7 +376,9 @@ class SFTPClient(TransferClient):
         for attr in sftp.listdir_attr(target):
             if attr.filename in (".", ".."):
                 continue
-            is_dir = stat.S_ISDIR(attr.st_mode) if attr.st_mode else False
+            is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
+            if not is_dir and hasattr(attr, "longname") and attr.longname.startswith("d"):
+                is_dir = True
             modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
             perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
             full_path = f"{target.rstrip('/')}/{attr.filename}"
