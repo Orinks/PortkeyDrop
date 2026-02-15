@@ -44,6 +44,7 @@ ID_SORT_TYPE = wx.NewIdRef()
 ID_SORT_MODIFIED = wx.NewIdRef()
 ID_PROPERTIES = wx.NewIdRef()
 ID_TRANSFER_QUEUE = wx.NewIdRef()
+ID_TRANSFER = wx.NewIdRef()
 ID_DELETE = wx.NewIdRef()
 ID_RENAME = wx.NewIdRef()
 ID_MKDIR = wx.NewIdRef()
@@ -98,10 +99,15 @@ class MainFrame(wx.Frame):
 
         # Transfer menu
         transfer_menu = wx.Menu()
+        transfer_menu.Append(
+            ID_TRANSFER, "&Transfer\tCtrl+T", "Upload or download based on active pane"
+        )
         transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
         transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
         transfer_menu.AppendSeparator()
-        transfer_menu.Append(ID_TRANSFER_QUEUE, "&Transfer Queue...\tCtrl+T", "Show transfer queue")
+        transfer_menu.Append(
+            ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
+        )
         menubar.Append(transfer_menu, "&Transfer")
 
         # View menu
@@ -287,6 +293,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self._on_site_manager, id=ID_SITE_MANAGER)
         self.Bind(wx.EVT_MENU, self._on_quick_connect, id=ID_QUICK_CONNECT)
+        self.Bind(wx.EVT_MENU, self._on_transfer, id=ID_TRANSFER)
         self.Bind(wx.EVT_MENU, self._on_upload, id=ID_UPLOAD)
         self.Bind(wx.EVT_MENU, self._on_download, id=ID_DOWNLOAD)
         self.Bind(wx.EVT_MENU, self._on_refresh, id=ID_REFRESH)
@@ -638,6 +645,13 @@ class MainFrame(wx.Frame):
         self._go_remote_parent_dir()
 
     # --- Transfer operations ---
+
+    def _on_transfer(self, event) -> None:
+        """Context-aware transfer: upload from local pane, download from remote pane."""
+        if self._is_local_focused():
+            self._on_upload(None)
+        else:
+            self._on_download(None)
 
     def _on_download(self, event) -> None:
         f = self._get_selected_remote_file()
