@@ -9,9 +9,8 @@ import sys
 def main() -> None:
     """Launch Portkey Drop."""
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.WARNING,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
-        filename="portkeydrop.log",
     )
     try:
         import wx  # noqa: F401
