@@ -408,6 +408,7 @@ class SFTPClient(TransferClient):
                 continue
             is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
             # Follow symlinks to check if target is a directory
+            full_path = f"{target.rstrip('/')}/{attr.filename}"
             is_link = bool(attr.st_mode is not None and stat.S_ISLNK(attr.st_mode))
             if is_link:
                 try:
@@ -428,7 +429,6 @@ class SFTPClient(TransferClient):
             )
             modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
             perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
-            full_path = f"{target.rstrip('/')}/{attr.filename}"
             files.append(
                 RemoteFile(
                     name=attr.filename,
