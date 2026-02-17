@@ -44,6 +44,8 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager).
+
 ```bash
 git clone https://github.com/Orinks/PortkeyDrop.git
 cd PortkeyDrop
