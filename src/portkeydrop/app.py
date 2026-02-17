@@ -1099,7 +1099,7 @@ class MainFrame(wx.Frame):
             pass
 
 
-class Portkey DropApp(wx.App):
+class PortkeyDropApp(wx.App):
     """Main wxPython application."""
 
     def OnInit(self) -> bool:

@@ -16,9 +16,9 @@ def main() -> None:
     try:
         import wx  # noqa: F401
 
-        from portkeydrop.app import Portkey DropApp
+        from portkeydrop.app import PortkeyDropApp
 
-        app = Portkey DropApp(False)
+        app = PortkeyDropApp(False)
         app.MainLoop()
     except ImportError:
         print("Portkey Drop v0.1.0")
