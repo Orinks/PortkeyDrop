@@ -394,8 +394,8 @@ class SFTPClient(TransferClient):
         self._ssh_client = None
         self._connected = False
 
-    def _ensure_connected(self):
-        if not self._sftp or not self._connected:
+    def _ensure_connected(self) -> paramiko.SFTPClient:
+        if not self._ssh_client or not self._sftp:
             raise ConnectionError("Not connected")
         return self._sftp
 

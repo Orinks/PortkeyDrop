@@ -6,3 +6,13 @@ dist/
 .pytest_cache/
 .ruff_cache/
 uv.lock
+
+# Security - credentials and keys
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.secret
+*.log
+.DS_Store

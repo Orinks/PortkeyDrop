@@ -143,6 +143,53 @@ class TestSFTPClientHostKeyPolicy:
         assert isinstance(policy_arg, paramiko.RejectPolicy)
 
 
+class TestSFTPClientEnsureConnected:
+    def test_raises_when_ssh_client_is_none(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        client._ssh_client = None
+        client._sftp = MagicMock()
+        with pytest.raises(ConnectionError, match="Not connected"):
+            client._ensure_connected()
+
+    def test_raises_when_sftp_is_none(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = None
+        with pytest.raises(ConnectionError, match="Not connected"):
+            client._ensure_connected()
+
+    def test_raises_when_both_none(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        with pytest.raises(ConnectionError, match="Not connected"):
+            client._ensure_connected()
+
+    def test_returns_sftp_when_connected(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        mock_sftp = MagicMock()
+        client._ssh_client = MagicMock()
+        client._sftp = mock_sftp
+        result = client._ensure_connected()
+        assert result is mock_sftp
+
+    def test_methods_use_ensure_connected(self, sftp_info: ConnectionInfo) -> None:
+        """Verify that SFTP methods raise ConnectionError when not connected."""
+        client = SFTPClient(sftp_info)
+        with pytest.raises(ConnectionError):
+            client.list_dir()
+        with pytest.raises(ConnectionError):
+            client.chdir("/tmp")
+        with pytest.raises(ConnectionError):
+            client.delete("/tmp/f")
+        with pytest.raises(ConnectionError):
+            client.mkdir("/tmp/d")
+        with pytest.raises(ConnectionError):
+            client.rmdir("/tmp/d")
+        with pytest.raises(ConnectionError):
+            client.rename("/a", "/b")
+        with pytest.raises(ConnectionError):
+            client.stat("/tmp/f")
+
+
 class TestSFTPClientDisconnect:
     def test_disconnect_cleans_up(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)

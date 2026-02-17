@@ -1,0 +1,17 @@
+
+## 2026-02-17 12:42 - US-002: Add host key verification policy enum
+- Added `HostKeyPolicy` enum to protocols.py with AUTO_ADD, STRICT, PROMPT values
+- Added `host_key_policy` field to `ConnectionInfo` dataclass with default AUTO_ADD
+- Files changed: src/portkeydrop/protocols.py, tests/test_host_key_policy.py
+- **Learnings:** ConnectionInfo is a dataclass so adding fields with defaults is straightforward
+---
+
+## 2026-02-17 12:47 - US-003: Update SFTPClient to use SSHClient instead of Transport
+- Replaced `self._transport` with `self._ssh_client` (paramiko.SSHClient) in SFTPClient
+- Updated `connect()` to use `SSHClient.connect()` with `allow_agent=True`, `look_for_keys=True`
+- Host key policy from `ConnectionInfo.host_key_policy` applied (AUTO_ADD→AutoAddPolicy, STRICT→RejectPolicy)
+- Key file auth disables agent/look_for_keys; password auth still passed through; no creds = agent-only
+- Added TYPE_CHECKING import for paramiko in protocols.py
+- Files changed: src/portkeydrop/protocols.py, tests/test_sftp_client.py (9 tests)
+- **Learnings:** paramiko is imported locally in connect(); patch `paramiko.SSHClient` not `module.paramiko`
+---

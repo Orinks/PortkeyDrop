@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest import mock
 
 import paramiko
-import pytest
 
 from portkeydrop.ssh_utils import check_ssh_agent_available, create_ssh_client
 
