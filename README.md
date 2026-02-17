@@ -45,11 +45,13 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 ## Install
 
 ```bash
-uv sync
+git clone https://github.com/Orinks/PortkeyDrop.git
+cd PortkeyDrop
+uv sync --all-extras
 uv run portkeydrop
 ```
 
-On Linux, install wxPython from the prebuilt wheel:
+On Linux, you may need to install wxPython from the prebuilt wheel first:
 ```bash
 pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 wxPython
 ```
@@ -57,7 +59,7 @@ pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24
 ## Development
 
 ```bash
-uv sync --group dev
+uv sync --all-extras --group dev
 uv run pytest
 uv run ruff check
 ```
