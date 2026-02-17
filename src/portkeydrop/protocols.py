@@ -26,6 +26,13 @@ class Protocol(Enum):
     WEBDAV = "webdav"
 
 
+class HostKeyPolicy(Enum):
+    """SSH host key verification policy."""
+    AUTO_ADD = "auto_add"
+    STRICT = "strict"
+    PROMPT = "prompt"
+
+
 @dataclass
 class RemoteFile:
     """Represents a file or directory on the remote server."""
@@ -70,6 +77,7 @@ class ConnectionInfo:
     key_path: str = ""
     timeout: int = 30
     passive_mode: bool = True  # FTP only
+    host_key_policy: HostKeyPolicy = HostKeyPolicy.AUTO_ADD
 
     @property
     def effective_port(self) -> int:
