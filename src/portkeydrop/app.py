@@ -727,6 +727,8 @@ class MainFrame(wx.Frame):
             self._on_delete(None)
         elif key == wx.WXK_F2:
             self._on_rename(None)
+        elif key == ord("V") and event.ControlDown():
+            self._paste_upload()
         else:
             event.Skip()
 
@@ -738,6 +740,8 @@ class MainFrame(wx.Frame):
             self._on_delete(None)
         elif key == wx.WXK_F2:
             self._on_rename(None)
+        elif key == ord("V") and event.ControlDown():
+            self._paste_local()
         else:
             event.Skip()
 
@@ -923,6 +927,74 @@ class MainFrame(wx.Frame):
             self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
             self._announce(f"Uploading {filename}")
         self._show_transfer_queue()
+
+    def _get_clipboard_files(self) -> list[str]:
+        """Get file paths from the system clipboard."""
+        paths: list[str] = []
+        data = wx.FileDataObject()
+        if wx.TheClipboard.Open():
+            try:
+                if wx.TheClipboard.GetData(data):
+                    paths = list(data.GetFilenames())
+            finally:
+                wx.TheClipboard.Close()
+        return paths
+
+    def _paste_upload(self) -> None:
+        """Upload files from clipboard to the remote server."""
+        if not self._client or not self._client.connected:
+            self._announce("Not connected")
+            return
+        paths = self._get_clipboard_files()
+        if not paths:
+            self._announce("No files in clipboard")
+            return
+        count = 0
+        for local_path in paths:
+            p = Path(local_path)
+            if not p.exists():
+                continue
+            filename = p.name
+            remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+            if p.is_dir():
+                self._transfer_manager.add_recursive_upload(
+                    self._client, str(p), remote_path
+                )
+            else:
+                total = os.path.getsize(str(p))
+                self._transfer_manager.add_upload(
+                    self._client, str(p), remote_path, total
+                )
+            count += 1
+        if count:
+            self._announce(f"Uploading {count} item{'s' if count != 1 else ''} from clipboard")
+            self._show_transfer_queue()
+
+    def _paste_local(self) -> None:
+        """Copy files from clipboard to the current local directory."""
+        import shutil
+
+        paths = self._get_clipboard_files()
+        if not paths:
+            self._announce("No files in clipboard")
+            return
+        count = 0
+        for src_path in paths:
+            p = Path(src_path)
+            if not p.exists():
+                continue
+            dest = Path(self._local_cwd) / p.name
+            try:
+                if p.is_dir():
+                    shutil.copytree(str(p), str(dest))
+                else:
+                    shutil.copy2(str(p), str(dest))
+                count += 1
+            except Exception as e:
+                logger.warning(f"Failed to paste {p.name}: {e}")
+        if count:
+            self._announce(f"Pasted {count} item{'s' if count != 1 else ''}")
+            self._refresh_local_files()
 
     def _show_transfer_queue(self) -> None:
         """Show the transfer queue as a modeless dialog."""
