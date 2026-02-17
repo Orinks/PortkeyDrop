@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import BinaryIO, Callable
+from typing import TYPE_CHECKING, BinaryIO, Callable
+
+if TYPE_CHECKING:
+    import paramiko
 
 logger = logging.getLogger(__name__)
 
@@ -333,22 +336,41 @@ class SFTPClient(TransferClient):
 
     def __init__(self, info: ConnectionInfo) -> None:
         super().__init__(info)
-        self._transport = None
-        self._sftp = None
+        self._ssh_client: paramiko.SSHClient | None = None
+        self._sftp: paramiko.SFTPClient | None = None
 
     def connect(self) -> None:
         try:
             import paramiko
 
-            self._transport = paramiko.Transport((self._info.host, self._info.effective_port))
-            connect_kwargs: dict = {}
+            self._ssh_client = paramiko.SSHClient()
+            if self._info.host_key_policy == HostKeyPolicy.STRICT:
+                self._ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            else:
+                self._ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                self._ssh_client.load_system_host_keys()
+            except Exception:
+                pass
+
+            connect_kwargs: dict = {
+                "hostname": self._info.host,
+                "port": self._info.effective_port,
+                "username": self._info.username,
+                "timeout": self._info.timeout,
+                "allow_agent": True,
+                "look_for_keys": True,
+            }
             if self._info.key_path:
                 key = paramiko.RSAKey.from_private_key_file(self._info.key_path)
                 connect_kwargs["pkey"] = key
-            else:
+                connect_kwargs["allow_agent"] = False
+                connect_kwargs["look_for_keys"] = False
+            elif self._info.password:
                 connect_kwargs["password"] = self._info.password
-            self._transport.connect(username=self._info.username, **connect_kwargs)
-            self._sftp = paramiko.SFTPClient.from_transport(self._transport)
+
+            self._ssh_client.connect(**connect_kwargs)
+            self._sftp = self._ssh_client.open_sftp()
             if self._sftp is None:
                 raise ConnectionError("Failed to create SFTP session")
             self._cwd = self._sftp.normalize(".")
@@ -363,13 +385,13 @@ class SFTPClient(TransferClient):
                 self._sftp.close()
             except Exception:
                 pass
-        if self._transport:
+        if self._ssh_client:
             try:
-                self._transport.close()
+                self._ssh_client.close()
             except Exception:
                 pass
         self._sftp = None
-        self._transport = None
+        self._ssh_client = None
         self._connected = False
 
     def _ensure_connected(self):
