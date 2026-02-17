@@ -2,11 +2,43 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
 
 import pytest
 
 from portkeydrop.protocols import Protocol
 from portkeydrop.sites import Site, SiteManager
+
+
+# In-memory keyring for tests
+_fake_store: dict[str, str] = {}
+
+
+def _fake_set(service: str, key: str, value: str) -> None:
+    _fake_store[f"{service}/{key}"] = value
+
+
+def _fake_get(service: str, key: str) -> str | None:
+    return _fake_store.get(f"{service}/{key}")
+
+
+def _fake_delete(service: str, key: str) -> None:
+    _fake_store.pop(f"{service}/{key}", None)
+
+
+@pytest.fixture(autouse=True)
+def _mock_keyring(monkeypatch):
+    """Provide an in-memory keyring for all site tests."""
+    _fake_store.clear()
+    import portkeydrop.sites as sites_mod
+
+    monkeypatch.setattr(sites_mod, "_has_keyring", True)
+    with (
+        patch("portkeydrop.sites.keyring.set_password", _fake_set),
+        patch("portkeydrop.sites.keyring.get_password", _fake_get),
+        patch("portkeydrop.sites.keyring.delete_password", _fake_delete),
+    ):
+        yield
 
 
 class TestSite:
@@ -132,3 +164,50 @@ class TestSiteManager:
         sites = mgr.sites
         sites.clear()
         assert len(mgr.sites) == 1  # original unchanged
+
+    def test_password_stored_in_keyring_not_json(self, tmp_path):
+        mgr = SiteManager(tmp_path)
+        site = Site(name="Secure", host="example.com", password="s3cret")
+        mgr.add(site)
+
+        # Password should be in fake keyring
+        assert _fake_store.get(f"portkeydrop/{site.id}") == "s3cret"
+
+        # Password should NOT be in the JSON file
+        import json
+
+        data = json.loads((tmp_path / "sites.json").read_text())
+        assert "password" not in data[0]
+
+    def test_password_retrieved_from_keyring_on_load(self, tmp_path):
+        mgr = SiteManager(tmp_path)
+        site = Site(name="Secure", host="example.com", password="s3cret")
+        mgr.add(site)
+
+        # Reload from disk
+        mgr2 = SiteManager(tmp_path)
+        assert mgr2.sites[0].password == "s3cret"
+
+    def test_password_deleted_on_site_remove(self, tmp_path):
+        mgr = SiteManager(tmp_path)
+        site = Site(name="Secure", host="example.com", password="s3cret")
+        mgr.add(site)
+        key = f"portkeydrop/{site.id}"
+        assert key in _fake_store
+
+        mgr.remove(site.id)
+        assert key not in _fake_store
+
+    def test_plaintext_password_migrated_to_keyring(self, tmp_path):
+        """If sites.json has a plaintext password (pre-keyring), migrate it."""
+        import json
+
+        site_id = "legacy-site-id"
+        data = [{"id": site_id, "name": "Old", "host": "old.com", "password": "oldpass",
+                 "protocol": "sftp", "port": 22, "username": "user", "key_path": "",
+                 "initial_dir": "/", "notes": ""}]
+        (tmp_path / "sites.json").write_text(json.dumps(data))
+
+        mgr = SiteManager(tmp_path)
+        assert mgr.sites[0].password == "oldpass"
+        assert _fake_store.get(f"portkeydrop/{site_id}") == "oldpass"

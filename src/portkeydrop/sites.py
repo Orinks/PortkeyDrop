@@ -13,6 +13,46 @@ from portkeydrop.protocols import ConnectionInfo, Protocol
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_DIR = Path.home() / ".portkeydrop"
+KEYRING_SERVICE = "portkeydrop"
+
+try:
+    import keyring
+
+    _has_keyring = True
+except ImportError:
+    _has_keyring = False
+
+
+def _store_password(site_id: str, password: str) -> None:
+    """Store a password in the system keyring."""
+    if not _has_keyring or not password:
+        return
+    try:
+        keyring.set_password(KEYRING_SERVICE, site_id, password)
+    except Exception as e:
+        logger.warning(f"Failed to store password in keyring: {e}")
+
+
+def _retrieve_password(site_id: str) -> str:
+    """Retrieve a password from the system keyring."""
+    if not _has_keyring:
+        return ""
+    try:
+        pw = keyring.get_password(KEYRING_SERVICE, site_id)
+        return pw or ""
+    except Exception as e:
+        logger.warning(f"Failed to retrieve password from keyring: {e}")
+        return ""
+
+
+def _delete_password(site_id: str) -> None:
+    """Delete a password from the system keyring."""
+    if not _has_keyring:
+        return
+    try:
+        keyring.delete_password(KEYRING_SERVICE, site_id)
+    except Exception as e:
+        logger.debug(f"Failed to delete password from keyring: {e}")
 
 
 @dataclass
@@ -25,7 +65,7 @@ class Site:
     host: str = ""
     port: int = 0
     username: str = ""
-    password: str = ""  # TODO: use keyring for secure storage
+    password: str = ""
     key_path: str = ""
     initial_dir: str = "/"
     notes: str = ""
@@ -59,13 +99,30 @@ class SiteManager:
             self._sites = [
                 Site(**{k: v for k, v in s.items() if k in Site.__dataclass_fields__}) for s in data
             ]
+            # Retrieve passwords from keyring; migrate any leftover plaintext passwords
+            for site in self._sites:
+                stored_pw = _retrieve_password(site.id)
+                if stored_pw:
+                    site.password = stored_pw
+                elif site.password:
+                    # Migrate plaintext password to keyring
+                    _store_password(site.id, site.password)
         except Exception as e:
             logger.warning(f"Failed to load sites: {e}")
             self._sites = []
 
     def save(self) -> None:
         self._config_dir.mkdir(parents=True, exist_ok=True)
-        data = [asdict(s) for s in self._sites]
+        # Store passwords in keyring, strip from JSON
+        for site in self._sites:
+            if site.password:
+                _store_password(site.id, site.password)
+        data = []
+        for site in self._sites:
+            d = asdict(site)
+            if _has_keyring:
+                d.pop("password", None)
+            data.append(d)
         self._sites_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     @property
@@ -85,6 +142,7 @@ class SiteManager:
         raise ValueError(f"Site {site.id} not found")
 
     def remove(self, site_id: str) -> None:
+        _delete_password(site_id)
         self._sites = [s for s in self._sites if s.id != site_id]
         self.save()
 
