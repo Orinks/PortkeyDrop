@@ -146,8 +146,10 @@ class TestSFTPClientHostKeyPolicy:
 class TestSFTPClientDisconnect:
     def test_disconnect_cleans_up(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        client._ssh_client = mock_ssh
+        client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()
@@ -155,3 +157,66 @@ class TestSFTPClientDisconnect:
         assert client._ssh_client is None
         assert client._sftp is None
         assert client._connected is False
+
+    def test_disconnect_calls_close_on_both(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        client._ssh_client = mock_ssh
+        client._sftp = mock_sftp
+        client._connected = True
+
+        client.disconnect()
+
+        mock_sftp.close.assert_called_once()
+        mock_ssh.close.assert_called_once()
+
+    def test_disconnect_handles_sftp_close_exception(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.close.side_effect = Exception("SFTP close error")
+        client._ssh_client = mock_ssh
+        client._sftp = mock_sftp
+        client._connected = True
+
+        client.disconnect()  # Should not raise
+
+        assert client._sftp is None
+        assert client._ssh_client is None
+        mock_ssh.close.assert_called_once()
+
+    def test_disconnect_handles_ssh_close_exception(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        mock_ssh = MagicMock()
+        mock_ssh.close.side_effect = Exception("SSH close error")
+        mock_sftp = MagicMock()
+        client._ssh_client = mock_ssh
+        client._sftp = mock_sftp
+        client._connected = True
+
+        client.disconnect()  # Should not raise
+
+        assert client._sftp is None
+        assert client._ssh_client is None
+
+    def test_disconnect_handles_both_close_exceptions(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        mock_ssh = MagicMock()
+        mock_ssh.close.side_effect = Exception("SSH close error")
+        mock_sftp = MagicMock()
+        mock_sftp.close.side_effect = Exception("SFTP close error")
+        client._ssh_client = mock_ssh
+        client._sftp = mock_sftp
+        client._connected = True
+
+        client.disconnect()  # Should not raise
+
+        assert client._sftp is None
+        assert client._ssh_client is None
+
+    def test_disconnect_when_not_connected(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        client.disconnect()  # Should not raise
+        assert client._sftp is None
+        assert client._ssh_client is None
