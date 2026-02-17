@@ -1,10 +1,10 @@
-"""Settings dialog for AccessiTransfer."""
+"""Settings dialog for Portkey Drop."""
 
 from __future__ import annotations
 
 import wx
 
-from accessitransfer.settings import Settings
+from portkeydrop.settings import Settings
 
 
 class SettingsDialog(wx.Dialog):

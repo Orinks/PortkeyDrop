@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-from accessitransfer.protocols import RemoteFile
+from portkeydrop.protocols import RemoteFile
 
 
 class TestRemoteFileDisplay:
@@ -93,19 +93,19 @@ class TestTransferItem:
     """Test TransferItem data class."""
 
     def test_progress_pct(self):
-        from accessitransfer.dialogs.transfer import TransferItem
+        from portkeydrop.dialogs.transfer import TransferItem
 
         item = TransferItem(total_bytes=1000, transferred_bytes=500)
         assert item.progress_pct == 50
 
     def test_progress_pct_zero_total(self):
-        from accessitransfer.dialogs.transfer import TransferItem
+        from portkeydrop.dialogs.transfer import TransferItem
 
         item = TransferItem(total_bytes=0)
         assert item.progress_pct == 0
 
     def test_display_status_in_progress(self):
-        from accessitransfer.dialogs.transfer import TransferItem, TransferStatus
+        from portkeydrop.dialogs.transfer import TransferItem, TransferStatus
 
         item = TransferItem(
             total_bytes=100, transferred_bytes=75, status=TransferStatus.IN_PROGRESS
@@ -113,13 +113,13 @@ class TestTransferItem:
         assert item.display_status == "75%"
 
     def test_display_status_completed(self):
-        from accessitransfer.dialogs.transfer import TransferItem, TransferStatus
+        from portkeydrop.dialogs.transfer import TransferItem, TransferStatus
 
         item = TransferItem(status=TransferStatus.COMPLETED)
         assert item.display_status == "completed"
 
     def test_cancel_event(self):
-        from accessitransfer.dialogs.transfer import TransferItem
+        from portkeydrop.dialogs.transfer import TransferItem
 
         item = TransferItem()
         assert not item.cancel_event.is_set()

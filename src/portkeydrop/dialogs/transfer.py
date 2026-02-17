@@ -1,4 +1,4 @@
-"""Transfer queue dialog for AccessiTransfer."""
+"""Transfer queue dialog for Portkey Drop."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from accessitransfer.protocols import TransferClient
+    from portkeydrop.protocols import TransferClient
 
 logger = logging.getLogger(__name__)
 

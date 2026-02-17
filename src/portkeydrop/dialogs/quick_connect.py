@@ -1,10 +1,10 @@
-"""Quick Connect dialog for AccessiTransfer."""
+"""Quick Connect dialog for Portkey Drop."""
 
 from __future__ import annotations
 
 import wx
 
-from accessitransfer.protocols import ConnectionInfo, Protocol
+from portkeydrop.protocols import ConnectionInfo, Protocol
 
 
 class QuickConnectDialog(wx.Dialog):

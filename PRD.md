@@ -1,10 +1,10 @@
-# AccessiTransfer - Product Requirements Document
+# Portkey Drop - Product Requirements Document
 
 ## Overview
-AccessiTransfer is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via FTP, SFTP, FTPS, SCP, and WebDAV. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
+Portkey Drop is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via FTP, SFTP, FTPS, SCP, and WebDAV. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
 
 ## Why This Exists
-Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. AccessiTransfer uses a dual-pane layout with properly labeled standard ListCtrl panes ("Local Files" / "Remote Files") that screen readers like NVDA and JAWS handle naturally. Each pane is a standard list control with SetName(), so screen readers announce which pane has focus. Every action is keyboard-accessible and every state change is announced.
+Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. Portkey Drop uses a dual-pane layout with properly labeled standard ListCtrl panes ("Local Files" / "Remote Files") that screen readers like NVDA and JAWS handle naturally. Each pane is a standard list control with SetName(), so screen readers announce which pane has focus. Every action is keyboard-accessible and every state change is announced.
 
 ## Supported Protocols
 1. **SFTP** (SSH File Transfer Protocol) - Primary, most secure, most common
@@ -87,8 +87,8 @@ Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on vi
   - `ftplib` (stdlib) for FTP
   - `ftplib` with SSL context for FTPS
   - `requests` + `webdavlib` for WebDAV
-- **Settings**: JSON config at `~/.accessitransfer/settings.json`
-- **Site Manager**: JSON at `~/.accessitransfer/sites.json` (passwords encrypted)
+- **Settings**: JSON config at `~/.portkeydrop/settings.json`
+- **Site Manager**: JSON at `~/.portkeydrop/sites.json` (passwords encrypted)
 - **Transfer Queue**: Threaded background transfers with progress callbacks
 
 ## Keyboard Shortcuts

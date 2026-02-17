@@ -1,10 +1,10 @@
-"""File properties dialog for AccessiTransfer."""
+"""File properties dialog for Portkey Drop."""
 
 from __future__ import annotations
 
 import wx
 
-from accessitransfer.protocols import RemoteFile
+from portkeydrop.protocols import RemoteFile
 
 
 class PropertiesDialog(wx.Dialog):

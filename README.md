@@ -1,6 +1,6 @@
-# AccessiTransfer
+# Portkey Drop
 
-Accessible file transfer client for screen reader users. Supports FTP, SFTP, FTPS, SCP, and WebDAV with a keyboard-driven, dual-pane interface designed for NVDA and JAWS compatibility.
+A keyboard-driven file transfer client supporting FTP, SFTP, FTPS, SCP, and WebDAV. Dual-pane interface with full keyboard navigation and screen reader compatibility (NVDA, JAWS).
 
 ## Layout
 
@@ -42,7 +42,7 @@ Each pane is a labeled standard list control, so screen readers announce "Local 
 
 ```bash
 uv sync
-uv run accessitransfer
+uv run portkeydrop
 ```
 
 On Linux, install wxPython from the prebuilt wheel:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 
-from accessitransfer.settings import (
+from portkeydrop.settings import (
     ConnectionDefaults,
     DisplaySettings,
     Settings,

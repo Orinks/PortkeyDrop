@@ -1,4 +1,4 @@
-"""Settings management for AccessiTransfer."""
+"""Settings management for Portkey Drop."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_DIR = Path.home() / ".accessitransfer"
+DEFAULT_CONFIG_DIR = Path.home() / ".portkeydrop"
 
 
 @dataclass

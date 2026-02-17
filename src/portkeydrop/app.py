@@ -1,4 +1,4 @@
-"""Main application window for AccessiTransfer."""
+"""Main application window for Portkey Drop."""
 
 from __future__ import annotations
 
@@ -8,24 +8,24 @@ from pathlib import Path, PurePosixPath
 
 import wx
 
-from accessitransfer.dialogs.properties import PropertiesDialog
-from accessitransfer.dialogs.quick_connect import QuickConnectDialog
-from accessitransfer.dialogs.settings import SettingsDialog
-from accessitransfer.dialogs.site_manager import SiteManagerDialog
-from accessitransfer.dialogs.transfer import (
+from portkeydrop.dialogs.properties import PropertiesDialog
+from portkeydrop.dialogs.quick_connect import QuickConnectDialog
+from portkeydrop.dialogs.settings import SettingsDialog
+from portkeydrop.dialogs.site_manager import SiteManagerDialog
+from portkeydrop.dialogs.transfer import (
     TransferManager,
     create_transfer_dialog,
 )
-from accessitransfer.local_files import (
+from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
     mkdir_local,
     parent_local,
     rename_local,
 )
-from accessitransfer.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
-from accessitransfer.settings import load_settings, save_settings
-from accessitransfer.sites import Site, SiteManager
+from portkeydrop.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
+from portkeydrop.settings import load_settings, save_settings
+from portkeydrop.sites import Site, SiteManager
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ class MainFrame(wx.Frame):
     """Main application window with dual-pane file browser."""
 
     def __init__(self) -> None:
-        super().__init__(None, title="AccessiTransfer", size=(1000, 600))
-        self.SetName("AccessiTransfer Main Window")
+        super().__init__(None, title="Portkey Drop", size=(1000, 600))
+        self.SetName("Portkey Drop Main Window")
 
         self._client = None
         self._remote_home = "/"
@@ -145,7 +145,7 @@ class MainFrame(wx.Frame):
 
         # Help menu
         help_menu = wx.Menu()
-        help_menu.Append(wx.ID_ABOUT, "&About", "About AccessiTransfer")
+        help_menu.Append(wx.ID_ABOUT, "&About", "About Portkey Drop")
         menubar.Append(help_menu, "&Help")
 
         self.SetMenuBar(menubar)
@@ -271,9 +271,9 @@ class MainFrame(wx.Frame):
 
     def _update_title(self) -> None:
         if self._client and self._client.connected:
-            self.SetTitle(f"AccessiTransfer - {self._client.cwd}")
+            self.SetTitle(f"Portkey Drop - {self._client.cwd}")
         else:
-            self.SetTitle("AccessiTransfer")
+            self.SetTitle("Portkey Drop")
 
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""
@@ -1083,7 +1083,7 @@ class MainFrame(wx.Frame):
 
     def _on_about(self, event: wx.CommandEvent) -> None:
         info = wx.adv.AboutDialogInfo()
-        info.SetName("AccessiTransfer")
+        info.SetName("Portkey Drop")
         info.SetVersion("0.1.0")
         info.SetDescription("Accessible file transfer client for screen reader users")
         wx.adv.AboutBox(info)
@@ -1099,7 +1099,7 @@ class MainFrame(wx.Frame):
             pass
 
 
-class AccessiTransferApp(wx.App):
+class Portkey DropApp(wx.App):
     """Main wxPython application."""
 
     def OnInit(self) -> bool:

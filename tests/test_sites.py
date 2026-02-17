@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from accessitransfer.protocols import Protocol
-from accessitransfer.sites import Site, SiteManager
+from portkeydrop.protocols import Protocol
+from portkeydrop.sites import Site, SiteManager
 
 
 class TestSite:

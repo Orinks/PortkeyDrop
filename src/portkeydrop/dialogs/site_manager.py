@@ -1,10 +1,10 @@
-"""Site Manager dialog for AccessiTransfer."""
+"""Site Manager dialog for Portkey Drop."""
 
 from __future__ import annotations
 
 import wx
 
-from accessitransfer.sites import Site, SiteManager
+from portkeydrop.sites import Site, SiteManager
 
 
 class SiteManagerDialog(wx.Dialog):

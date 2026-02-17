@@ -8,11 +8,11 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from accessitransfer.protocols import ConnectionInfo, Protocol
+from portkeydrop.protocols import ConnectionInfo, Protocol
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_DIR = Path.home() / ".accessitransfer"
+DEFAULT_CONFIG_DIR = Path.home() / ".portkeydrop"
 
 
 @dataclass

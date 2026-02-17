@@ -8,7 +8,7 @@ import stat
 from datetime import datetime
 from pathlib import Path
 
-from accessitransfer.protocols import RemoteFile
+from portkeydrop.protocols import RemoteFile
 
 logger = logging.getLogger(__name__)
 

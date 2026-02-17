@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from accessitransfer.protocols import (
+from portkeydrop.protocols import (
     ConnectionInfo,
     FTPClient,
     FTPSClient,

@@ -1,4 +1,4 @@
-"""AccessiTransfer entry point."""
+"""Portkey Drop entry point."""
 
 from __future__ import annotations
 
@@ -7,25 +7,25 @@ import sys
 
 
 def main() -> None:
-    """Launch AccessiTransfer."""
+    """Launch Portkey Drop."""
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
-        filename="accessitransfer.log",
+        filename="portkeydrop.log",
     )
     try:
         import wx  # noqa: F401
 
-        from accessitransfer.app import AccessiTransferApp
+        from portkeydrop.app import Portkey DropApp
 
-        app = AccessiTransferApp(False)
+        app = Portkey DropApp(False)
         app.MainLoop()
     except ImportError:
-        print("AccessiTransfer v0.1.0")
+        print("Portkey Drop v0.1.0")
         print("Accessible file transfer client")
         print()
         print("wxPython is required for the GUI. Install with:")
-        print("  pip install 'accessitransfer[gui]'")
+        print("  pip install 'portkeydrop[gui]'")
         sys.exit(1)
 
 
