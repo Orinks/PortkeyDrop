@@ -528,6 +528,11 @@ class MainFrame(wx.Frame):
             self._update_status("Connected", self._client.cwd)
             self.remote_path_bar.SetValue(self._client.cwd)
             self._update_title()
+            # Select first item so screen readers announce the new directory
+            if self.remote_file_list.GetItemCount() > 0:
+                self.remote_file_list.Select(0)
+                self.remote_file_list.Focus(0)
+                self.remote_file_list.SetFocus()
             count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
             if self._settings.display.announce_file_count:
                 self._announce(f"{self._client.cwd}: {count} items")
@@ -549,6 +554,11 @@ class MainFrame(wx.Frame):
                 self._get_visible_files(self._local_files, self._local_filter_text),
             )
             self.local_path_bar.SetValue(self._local_cwd)
+            # Select first item so screen readers announce the new directory
+            if self.local_file_list.GetItemCount() > 0:
+                self.local_file_list.Select(0)
+                self.local_file_list.Focus(0)
+                self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
             if self._settings.display.announce_file_count:
                 self._announce(f"{self._local_cwd}: {count} items")
