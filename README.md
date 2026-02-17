@@ -38,6 +38,10 @@ Each pane is a labeled standard list control, so screen readers announce "Local 
 - **SCP** — Fast SSH transfers (planned)
 - **WebDAV** — HTTP-based, cloud service compatible (planned)
 
+## Security
+
+Saved connection passwords are stored in your system's secure keyring (Windows Credential Locker, macOS Keychain, Linux Secret Service) and never written to disk in plaintext.
+
 ## Install
 
 ```bash
