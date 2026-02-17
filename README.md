@@ -44,11 +44,22 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
-```bash
+**Windows:**
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 git clone https://github.com/Orinks/PortkeyDrop.git
 cd PortkeyDrop
-pip install ".[gui]"
-portkeydrop
+uv sync --all-extras
+uv run portkeydrop
+```
+
+**Mac/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/Orinks/PortkeyDrop.git
+cd PortkeyDrop
+uv sync --all-extras
+uv run portkeydrop
 ```
 
 On Linux, you may need to install wxPython from the prebuilt wheel first:
@@ -59,15 +70,9 @@ pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24
 ## Development
 
 ```bash
-pip install -e ".[gui,webdav]" && pip install pytest ruff
-pytest
-ruff check
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
-```bash
 uv sync --all-extras --group dev
 uv run pytest
+uv run ruff check
 ```
 
 ## License
