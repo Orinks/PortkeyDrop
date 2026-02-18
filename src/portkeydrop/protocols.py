@@ -353,9 +353,18 @@ class SFTPClient(TransferClient):
             if self._info.host_key_policy == HostKeyPolicy.STRICT:
                 self._ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
                 logger.debug("SFTP host key policy: strict (RejectPolicy)")
-            else:
+            elif self._info.host_key_policy == HostKeyPolicy.AUTO_ADD:
                 self._ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 logger.debug("SFTP host key policy: auto-add (AutoAddPolicy)")
+            elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
+                raise ConnectionError(
+                    "SFTP connection failed: host key policy 'prompt' is not supported yet. "
+                    "Use STRICT or AUTO_ADD."
+                )
+            else:
+                raise ConnectionError(
+                    f"SFTP connection failed: unknown host key policy '{self._info.host_key_policy}'."
+                )
 
             try:
                 self._ssh_client.load_system_host_keys()

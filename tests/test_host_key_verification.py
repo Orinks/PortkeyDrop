@@ -110,6 +110,22 @@ class TestStrictPolicy:
         assert not client.connected
 
 
+class TestPromptPolicy:
+    """Tests for PROMPT host key policy behavior."""
+
+    def test_prompt_policy_is_rejected_until_supported(self, sftp_info, mock_ssh_client):
+        """PROMPT should not silently fall back to AUTO_ADD."""
+        _, mock_ssh = mock_ssh_client
+        info = sftp_info(host_key_policy=HostKeyPolicy.PROMPT)
+        client = SFTPClient(info)
+
+        with pytest.raises(ConnectionError, match="host key policy 'prompt' is not supported"):
+            client.connect()
+
+        mock_ssh.set_missing_host_key_policy.assert_not_called()
+        assert not client.connected
+
+
 class TestHostKeyPolicyAppliedDuringConnect:
     """AC-3: Verify policy is applied during connection establishment."""
 
