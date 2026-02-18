@@ -382,8 +382,12 @@ class SFTPClient(TransferClient):
             }
             auth_methods: list[str] = ["ssh-agent", "default-key-files"]
             if self._info.key_path:
-                key = paramiko.RSAKey.from_private_key_file(self._info.key_path)
-                connect_kwargs["pkey"] = key
+                key_path = os.path.expanduser(self._info.key_path)
+                if not os.path.exists(key_path):
+                    raise ConnectionError(
+                        f"SFTP connection failed: key file not found: {self._info.key_path}"
+                    )
+                connect_kwargs["key_filename"] = key_path
                 connect_kwargs["allow_agent"] = False
                 connect_kwargs["look_for_keys"] = False
                 auth_methods = [f"key-file:{self._info.key_path}"]

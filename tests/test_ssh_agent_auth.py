@@ -77,14 +77,13 @@ class TestFallbackToKeyFile:
             mock_instance.open_sftp.return_value = mock_sftp
             mock_sftp.normalize.return_value = "/"
 
-            with mock.patch("paramiko.RSAKey.from_private_key_file") as mock_key:
-                mock_key.return_value = mock.MagicMock()
+            with mock.patch("os.path.exists", return_value=True):
                 client.connect()
 
                 call_kwargs = mock_instance.connect.call_args[1]
                 assert call_kwargs["allow_agent"] is False
                 assert call_kwargs["look_for_keys"] is False
-                assert "pkey" in call_kwargs
+                assert call_kwargs["key_filename"] == "/home/user/.ssh/id_rsa"
 
     def test_key_path_takes_precedence_over_password(self, sftp_info: ConnectionInfo) -> None:
         sftp_info.key_path = "/home/user/.ssh/id_rsa"
@@ -97,15 +96,14 @@ class TestFallbackToKeyFile:
             mock_instance.open_sftp.return_value = mock_sftp
             mock_sftp.normalize.return_value = "/"
 
-            with mock.patch("paramiko.RSAKey.from_private_key_file") as mock_key:
-                mock_key.return_value = mock.MagicMock()
+            with mock.patch("os.path.exists", return_value=True):
                 client.connect()
 
                 call_kwargs = mock_instance.connect.call_args[1]
                 # key_path branch: agent disabled, password not passed
                 assert call_kwargs["allow_agent"] is False
                 assert "password" not in call_kwargs
-                assert "pkey" in call_kwargs
+                assert call_kwargs["key_filename"] == "/home/user/.ssh/id_rsa"
 
 
 class TestFallbackToPassword:
@@ -145,7 +143,7 @@ class TestFallbackToPassword:
             assert call_kwargs["allow_agent"] is True
             assert call_kwargs["look_for_keys"] is True
             assert "password" not in call_kwargs
-            assert "pkey" not in call_kwargs
+            assert "key_filename" not in call_kwargs
 
 
 class TestErrorHandlingAllMethodsFail:
@@ -190,11 +188,8 @@ class TestErrorHandlingAllMethodsFail:
         sftp_info.key_path = "/nonexistent/key"
         client = SFTPClient(sftp_info)
         with mock.patch("paramiko.SSHClient"):
-            with mock.patch(
-                "paramiko.RSAKey.from_private_key_file",
-                side_effect=FileNotFoundError("Key not found"),
-            ):
-                with pytest.raises(ConnectionError, match="SFTP connection failed"):
+            with mock.patch("os.path.exists", return_value=False):
+                with pytest.raises(ConnectionError, match="key file not found"):
                     client.connect()
 
                 assert client.connected is False

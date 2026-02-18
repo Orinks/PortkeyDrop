@@ -59,9 +59,9 @@ class TestSFTPClientConnect:
         assert call_kwargs["look_for_keys"] is True
         assert client._connected is True
 
-    @patch("paramiko.RSAKey.from_private_key_file")
+    @patch("os.path.exists", return_value=True)
     @patch("paramiko.SSHClient")
-    def test_connect_with_key_file(self, mock_cls: MagicMock, mock_key_load: MagicMock) -> None:
+    def test_connect_with_key_file(self, mock_cls: MagicMock, _mock_exists: MagicMock) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -70,15 +70,12 @@ class TestSFTPClientConnect:
         )
         mock_ssh = _make_mock_ssh()
         mock_cls.return_value = mock_ssh
-        mock_key = MagicMock()
-        mock_key_load.return_value = mock_key
 
         client = SFTPClient(info)
         client.connect()
 
-        mock_key_load.assert_called_once_with("/path/to/key")
         call_kwargs = mock_ssh.connect.call_args[1]
-        assert call_kwargs["pkey"] == mock_key
+        assert call_kwargs["key_filename"] == "/path/to/key"
         assert call_kwargs["allow_agent"] is False
         assert call_kwargs["look_for_keys"] is False
 
@@ -99,7 +96,7 @@ class TestSFTPClientConnect:
         assert call_kwargs["allow_agent"] is True
         assert call_kwargs["look_for_keys"] is True
         assert "password" not in call_kwargs
-        assert "pkey" not in call_kwargs
+        assert "key_filename" not in call_kwargs
 
     @patch("paramiko.SSHClient")
     def test_connect_failure(self, mock_cls: MagicMock, sftp_info: ConnectionInfo) -> None:

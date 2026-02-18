@@ -424,8 +424,8 @@ class TestSFTPClient:
         mock_sftp.rename.assert_called_once_with("/old", "/new")
 
     @patch("paramiko.SSHClient")
-    @patch("paramiko.RSAKey.from_private_key_file")
-    def test_connect_with_key_and_stat(self, mock_key_loader, mock_ssh_class):
+    @patch("os.path.exists", return_value=True)
+    def test_connect_with_key_and_stat(self, _mock_exists, mock_ssh_class):
         import stat as stat_mod
 
         mock_ssh = MagicMock()
@@ -433,8 +433,6 @@ class TestSFTPClient:
         mock_sftp.normalize.return_value = "/"
         mock_ssh.open_sftp.return_value = mock_sftp
         mock_ssh_class.return_value = mock_ssh
-        mock_key = MagicMock()
-        mock_key_loader.return_value = mock_key
 
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
@@ -445,11 +443,10 @@ class TestSFTPClient:
         client = SFTPClient(info)
         client.connect()
 
-        mock_key_loader.assert_called_once_with("/tmp/id_rsa")
         kwargs = mock_ssh.connect.call_args.kwargs
         assert kwargs["allow_agent"] is False
         assert kwargs["look_for_keys"] is False
-        assert kwargs["pkey"] is mock_key
+        assert kwargs["key_filename"] == "/tmp/id_rsa"
 
         attr = MagicMock(st_mode=stat_mod.S_IFREG | 0o644, st_size=42, st_mtime=1700000000)
         mock_sftp.stat.return_value = attr
