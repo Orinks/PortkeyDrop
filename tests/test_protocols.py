@@ -11,6 +11,7 @@ from portkeydrop.protocols import (
     ConnectionInfo,
     FTPClient,
     FTPSClient,
+    HostKeyPolicy,
     Protocol,
     RemoteFile,
     SFTPClient,
@@ -94,6 +95,50 @@ class TestCreateClient:
         info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com")
         client = create_client(info)
         assert isinstance(client, SFTPClient)
+
+    @patch("portkeydrop.protocols.SFTPClient")
+    def test_create_sftp_client_passes_connection_info_with_host_key_policy(self, mock_sftp_class):
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="alice",
+            timeout=15,
+            host_key_policy=HostKeyPolicy.STRICT,
+        )
+
+        created_client = MagicMock()
+        mock_sftp_class.return_value = created_client
+
+        client = create_client(info)
+
+        mock_sftp_class.assert_called_once_with(info)
+        assert client is created_client
+
+    def test_create_client_keeps_backward_compatible_default_host_key_policy(self):
+        info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com")
+
+        client = create_client(info)
+
+        assert isinstance(client, SFTPClient)
+        assert client._info.host_key_policy is HostKeyPolicy.AUTO_ADD
+
+    def test_create_client_keeps_other_protocols_working_with_new_connectioninfo_field(self):
+        ftp_info = ConnectionInfo(
+            protocol=Protocol.FTP,
+            host="ftp.example.com",
+            host_key_policy=HostKeyPolicy.STRICT,
+        )
+        ftps_info = ConnectionInfo(
+            protocol=Protocol.FTPS,
+            host="ftps.example.com",
+            host_key_policy=HostKeyPolicy.STRICT,
+        )
+
+        ftp_client = create_client(ftp_info)
+        ftps_client = create_client(ftps_info)
+
+        assert isinstance(ftp_client, FTPClient)
+        assert isinstance(ftps_client, FTPSClient)
 
     def test_create_unsupported_raises(self):
         info = ConnectionInfo(protocol=Protocol.WEBDAV, host="example.com")
