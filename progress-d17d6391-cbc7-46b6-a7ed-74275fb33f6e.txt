@@ -15,3 +15,18 @@
 - Files changed: src/portkeydrop/protocols.py, tests/test_sftp_client.py (9 tests)
 - **Learnings:** paramiko is imported locally in connect(); patch `paramiko.SSHClient` not `module.paramiko`
 ---
+
+## 2026-02-17 13:07 - US-005: Update SFTPClient _ensure_connected method
+- Updated `_ensure_connected()` to check `_ssh_client` instead of `_connected` flag, plus `_sftp`
+- Added return type annotation `-> paramiko.SFTPClient`
+- Added 5 tests: ssh_client None, sftp None, both None, returns sftp, methods use ensure_connected
+- Files changed: src/portkeydrop/protocols.py, tests/test_sftp_client.py
+---
+
+## 2026-02-18 00:23 UTC - US-008: Update existing SFTPClient tests for SSHClient
+- Updated `tests/test_protocols.py` SFTPClient tests to mock `paramiko.SSHClient` instead of transport-based behavior
+- Added/updated connect success assertion to verify `SSHClient.connect()` kwargs (hostname/port/username/timeout/allow_agent/look_for_keys/password)
+- Added connect failure test for SSHClient connection exceptions and disconnect test verifying both `SFTPClient.close()` and `SSHClient.close()` are called
+- Files changed: tests/test_protocols.py
+- **Learnings:** In this codebase, SFTP unit tests typically patch `paramiko.SSHClient` and assert against `connect.call_args[1]` for auth-flow parameters
+---

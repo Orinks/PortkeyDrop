@@ -221,6 +221,64 @@ class TestSFTPClient:
         client = SFTPClient(info)
         assert not client.connected
 
+    @patch("paramiko.SSHClient")
+    def test_connect_success(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            password="pass",
+        )
+        client = SFTPClient(info)
+        client.connect()
+
+        assert client.connected
+        mock_ssh.connect.assert_called_once_with(
+            hostname="example.com",
+            port=22,
+            username="user",
+            timeout=30,
+            allow_agent=True,
+            look_for_keys=True,
+            password="pass",
+        )
+
+    @patch("paramiko.SSHClient")
+    def test_connect_failure(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_ssh.connect.side_effect = Exception("Connection refused")
+        mock_ssh_class.return_value = mock_ssh
+
+        info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com")
+        client = SFTPClient(info)
+
+        with pytest.raises(ConnectionError, match="SFTP connection failed"):
+            client.connect()
+        assert not client.connected
+
+    @patch("paramiko.SSHClient")
+    def test_disconnect(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+
+        info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com")
+        client = SFTPClient(info)
+        client.connect()
+        client.disconnect()
+
+        assert not client.connected
+        mock_sftp.close.assert_called_once()
+        mock_ssh.close.assert_called_once()
+
     def test_list_dir_not_connected(self):
         info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com")
         client = SFTPClient(info)
