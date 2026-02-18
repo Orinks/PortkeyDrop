@@ -14,18 +14,24 @@ def main() -> None:
     )
     try:
         import wx  # noqa: F401
-
-        from portkeydrop.app import PortkeyDropApp
-
-        app = PortkeyDropApp(False)
-        app.MainLoop()
-    except ImportError:
+    except ModuleNotFoundError:
         print("Portkey Drop v0.1.0")
         print("Accessible file transfer client")
         print()
-        print("wxPython is required for the GUI. Install with:")
-        print("  pip install 'portkeydrop[gui]'")
+        print("GUI dependency missing: wxPython")
+        print("Try:")
+        print("  uv sync")
+        print()
+        print("If sync succeeds but wxPython is still missing, use Python 3.12:")
+        print("  uv python install 3.12")
+        print("  uv sync --python 3.12")
+        print("  uv run --python 3.12 portkeydrop")
         sys.exit(1)
+
+    from portkeydrop.app import PortkeyDropApp
+
+    app = PortkeyDropApp(False)
+    app.MainLoop()
 
 
 if __name__ == "__main__":

@@ -44,6 +44,8 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
+Portkey Drop currently supports Python 3.11 and 3.12.
+
 **Windows:**
 ```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
