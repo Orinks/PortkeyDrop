@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ftplib
 import logging
+import os
+import platform
 import ssl
 import stat
 from abc import ABC, abstractmethod
@@ -11,7 +13,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import BinaryIO, Callable
+from typing import TYPE_CHECKING, BinaryIO, Callable
+
+if TYPE_CHECKING:
+    import paramiko
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,13 @@ class Protocol(Enum):
     SFTP = "sftp"
     SCP = "scp"
     WEBDAV = "webdav"
+
+
+class HostKeyPolicy(Enum):
+    """SSH host key verification policy."""
+    AUTO_ADD = "auto_add"
+    STRICT = "strict"
+    PROMPT = "prompt"
 
 
 @dataclass
@@ -70,6 +82,7 @@ class ConnectionInfo:
     key_path: str = ""
     timeout: int = 30
     passive_mode: bool = True  # FTP only
+    host_key_policy: HostKeyPolicy = HostKeyPolicy.AUTO_ADD
 
     @property
     def effective_port(self) -> int:
@@ -325,28 +338,139 @@ class SFTPClient(TransferClient):
 
     def __init__(self, info: ConnectionInfo) -> None:
         super().__init__(info)
-        self._transport = None
-        self._sftp = None
+        self._ssh_client: paramiko.SSHClient | None = None
+        self._sftp: paramiko.SFTPClient | None = None
 
     def connect(self) -> None:
-        try:
-            import paramiko
+        import paramiko
 
-            self._transport = paramiko.Transport((self._info.host, self._info.effective_port))
-            connect_kwargs: dict = {}
-            if self._info.key_path:
-                key = paramiko.RSAKey.from_private_key_file(self._info.key_path)
-                connect_kwargs["pkey"] = key
+        self._connected = False
+        self._ssh_client = None
+        self._sftp = None
+
+        try:
+            self._ssh_client = paramiko.SSHClient()
+            if self._info.host_key_policy == HostKeyPolicy.STRICT:
+                self._ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+                logger.debug("SFTP host key policy: strict (RejectPolicy)")
+            elif self._info.host_key_policy == HostKeyPolicy.AUTO_ADD:
+                self._ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                logger.debug("SFTP host key policy: auto-add (AutoAddPolicy)")
+            elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
+                raise ConnectionError(
+                    "SFTP connection failed: host key policy 'prompt' is not supported yet. "
+                    "Use STRICT or AUTO_ADD."
+                )
             else:
+                raise ConnectionError(
+                    f"SFTP connection failed: unknown host key policy '{self._info.host_key_policy}'."
+                )
+
+            try:
+                self._ssh_client.load_system_host_keys()
+                logger.debug("Loaded system host keys")
+            except Exception:
+                logger.debug("System host keys could not be loaded; continuing")
+
+            connect_kwargs: dict[str, object] = {
+                "hostname": self._info.host,
+                "port": self._info.effective_port,
+                "username": self._info.username,
+                "timeout": self._info.timeout,
+                "allow_agent": True,
+                "look_for_keys": True,
+            }
+            auth_methods: list[str] = ["ssh-agent", "default-key-files"]
+            if self._info.key_path:
+                key_path = os.path.expanduser(self._info.key_path)
+                if not os.path.exists(key_path):
+                    raise ConnectionError(
+                        f"SFTP connection failed: key file not found: {self._info.key_path}"
+                    )
+                connect_kwargs["key_filename"] = key_path
+                connect_kwargs["allow_agent"] = False
+                connect_kwargs["look_for_keys"] = False
+                auth_methods = [f"key-file:{self._info.key_path}"]
+            elif self._info.password:
                 connect_kwargs["password"] = self._info.password
-            self._transport.connect(username=self._info.username, **connect_kwargs)
-            self._sftp = paramiko.SFTPClient.from_transport(self._transport)
+                auth_methods.append("password")
+
+            if bool(connect_kwargs["allow_agent"]):
+                auth_sock = os.environ.get("SSH_AUTH_SOCK")
+                open_ssh_pipe = r"\\.\pipe\openssh-ssh-agent"
+                pageant_status = "not-checked"
+                if platform.system() == "Windows":
+                    try:
+                        pageant_status = "available" if list(paramiko.Agent().get_keys()) else "running-no-keys"
+                    except Exception as e:
+                        pageant_status = f"error:{e}"
+                logger.debug(
+                    "SSH agent detection: ssh_auth_sock=%s sock_exists=%s win_openssh_pipe_exists=%s pageant=%s",
+                    auth_sock,
+                    bool(auth_sock and os.path.exists(auth_sock)),
+                    os.path.exists(open_ssh_pipe),
+                    pageant_status,
+                )
+
+            logger.debug("SFTP authentication methods to try: %s", ", ".join(auth_methods))
+            self._ssh_client.connect(**connect_kwargs)
+            logger.debug("SSH authentication succeeded using one of: %s", ", ".join(auth_methods))
+
+            self._sftp = self._ssh_client.open_sftp()
             if self._sftp is None:
-                raise ConnectionError("Failed to create SFTP session")
+                raise ConnectionError("Failed to create SFTP session after SSH authentication")
             self._cwd = self._sftp.normalize(".")
             self._connected = True
+
+        except paramiko.BadHostKeyException as e:
+            logger.error("Host key verification failed for %s: %s", self._info.host, e)
+            raise ConnectionError(
+                f"SFTP connection failed: host key verification failed for {self._info.host}. "
+                "Verify the server host key or adjust host key policy."
+            ) from e
+        except paramiko.PasswordRequiredException as e:
+            logger.error("Private key requires passphrase: %s", e)
+            raise ConnectionError(
+                "SFTP connection failed: the private key requires a passphrase. "
+                "Decrypt the key or use an agent/password."
+            ) from e
+        except paramiko.AuthenticationException as e:
+            logger.error("SFTP authentication failed for %s. Methods attempted: %s", self._info.host, auth_methods)
+            if self._info.key_path:
+                message = (
+                    f"Authentication failed with key file '{self._info.key_path}'. "
+                    "Check key permissions, passphrase, and server authorized_keys."
+                )
+            elif self._info.password:
+                message = (
+                    "Authentication failed after trying SSH agent, default key files, and password. "
+                    "Ensure your agent has the right key loaded or verify username/password."
+                )
+            else:
+                message = (
+                    "Authentication failed using SSH agent/default key files. "
+                    "Start your SSH agent and load a key, or provide a password/private key path."
+                )
+            raise ConnectionError(f"SFTP connection failed: {message}") from e
+        except paramiko.ssh_exception.NoValidConnectionsError as e:
+            logger.error("Could not reach SSH service at %s:%s: %s", self._info.host, self._info.effective_port, e)
+            raise ConnectionError(
+                f"SFTP connection failed: could not connect to {self._info.host}:{self._info.effective_port}. "
+                "Verify host/port and that the SSH service is running."
+            ) from e
+        except paramiko.SSHException as e:
+            error_text = str(e)
+            if "agent" in error_text.lower():
+                logger.warning("SSH agent appears unavailable or inaccessible: %s", e)
+                raise ConnectionError(
+                    "SFTP connection failed: SSH agent is unavailable or inaccessible. "
+                    "Start the agent (or 1Password/Bitwarden integration), then retry; "
+                    "or use password/private key file authentication."
+                ) from e
+            logger.error("SSH protocol error during SFTP connect: %s", e)
+            raise ConnectionError(f"SFTP connection failed: SSH negotiation failed: {e}") from e
         except Exception as e:
-            self._connected = False
+            logger.error("Unexpected SFTP connection failure: %s", e)
             raise ConnectionError(f"SFTP connection failed: {e}") from e
 
     def disconnect(self) -> None:
@@ -355,17 +479,17 @@ class SFTPClient(TransferClient):
                 self._sftp.close()
             except Exception:
                 pass
-        if self._transport:
+        if self._ssh_client:
             try:
-                self._transport.close()
+                self._ssh_client.close()
             except Exception:
                 pass
         self._sftp = None
-        self._transport = None
+        self._ssh_client = None
         self._connected = False
 
-    def _ensure_connected(self):
-        if not self._sftp or not self._connected:
+    def _ensure_connected(self) -> paramiko.SFTPClient:
+        if not self._ssh_client or not self._sftp:
             raise ConnectionError("Not connected")
         return self._sftp
 
@@ -378,6 +502,7 @@ class SFTPClient(TransferClient):
                 continue
             is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
             # Follow symlinks to check if target is a directory
+            full_path = f"{target.rstrip('/')}/{attr.filename}"
             is_link = bool(attr.st_mode is not None and stat.S_ISLNK(attr.st_mode))
             if is_link:
                 try:
@@ -398,7 +523,6 @@ class SFTPClient(TransferClient):
             )
             modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
             perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
-            full_path = f"{target.rstrip('/')}/{attr.filename}"
             files.append(
                 RemoteFile(
                     name=attr.filename,
