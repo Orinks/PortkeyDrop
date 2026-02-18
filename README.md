@@ -49,7 +49,7 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 git clone https://github.com/Orinks/PortkeyDrop.git
 cd PortkeyDrop
-uv sync --all-extras
+uv sync
 uv run portkeydrop
 ```
 
@@ -58,13 +58,8 @@ uv run portkeydrop
 curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/Orinks/PortkeyDrop.git
 cd PortkeyDrop
-uv sync --all-extras
+uv sync
 uv run portkeydrop
-```
-
-On Linux, you may need to install wxPython from the prebuilt wheel first:
-```bash
-pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 wxPython
 ```
 
 ## Development
