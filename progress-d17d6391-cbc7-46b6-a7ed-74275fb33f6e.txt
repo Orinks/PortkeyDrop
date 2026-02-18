@@ -38,3 +38,12 @@
 - Files changed: tests/test_protocols.py, src/portkeydrop/dialogs/transfer.py
 - **Learnings:** High-leverage coverage for callback APIs comes from driving mocked side_effect callbacks and asserting propagated transfer metrics.
 ---
+
+## 2026-02-18 00:44 UTC - US-009: Add SSH agent status logging and error handling
+- Enhanced `SFTPClient.connect()` with debug logging for host key policy, system host key loading, SSH agent detection signals (`SSH_AUTH_SOCK`, OpenSSH Windows pipe, Pageant status), and attempted auth methods.
+- Added explicit error handling for `BadHostKeyException`, `PasswordRequiredException`, `AuthenticationException`, `NoValidConnectionsError`, and `SSHException` (including agent-specific SSHException handling) with actionable `ConnectionError` messages.
+- Preserved backward compatibility by keeping `ConnectionError` messages prefixed with `SFTP connection failed:` while distinguishing failure scenarios.
+- Added logging-focused and message-focused tests in `tests/test_sftp_client.py` covering auth method logging, agent-unavailable logging, and differentiated auth failure messaging.
+- Files changed: src/portkeydrop/protocols.py, tests/test_sftp_client.py, progress-d17d6391-cbc7-46b6-a7ed-74275fb33f6e.txt
+- **Learnings:** `caplog.set_level(..., logger="portkeydrop.protocols")` is a stable pattern here for asserting protocol-layer logs without over-capturing unrelated logger output.
+---
