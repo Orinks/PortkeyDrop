@@ -417,7 +417,7 @@ class MainFrame(wx.Frame):
         if not info.username:
             wx.MessageBox("Please enter a username.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
-        if not info.password:
+        if not info.password and info.protocol in {Protocol.FTP, Protocol.FTPS, Protocol.WEBDAV}:
             wx.MessageBox(
                 "Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self
             )
