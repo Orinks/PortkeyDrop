@@ -198,7 +198,6 @@ class TransferManager:
 
     def _run_recursive_download(self, client: TransferClient, item: TransferItem) -> None:
         """Recursively download a remote directory."""
-        import stat as stat_mod
 
         item.status = TransferStatus.IN_PROGRESS
         self._notify()

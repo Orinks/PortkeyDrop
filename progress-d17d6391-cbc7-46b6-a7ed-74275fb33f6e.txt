@@ -30,3 +30,11 @@
 - Files changed: tests/test_protocols.py
 - **Learnings:** In this codebase, SFTP unit tests typically patch `paramiko.SSHClient` and assert against `connect.call_args[1]` for auth-flow parameters
 ---
+
+## 2026-02-18 00:32 UTC - US-008 (retry): Raise SFTPClient test coverage and fix lint gate
+- Expanded `tests/test_protocols.py` with additional SFTPClient tests covering list_dir parsing, chdir, download/upload callbacks, delete/mkdir/rmdir/rename, key-path auth flags, and stat mapping.
+- Kept SSHClient-based mocking throughout to align with production auth flow.
+- Fixed `ruff` failure by removing an unused import in `src/portkeydrop/dialogs/transfer.py`.
+- Files changed: tests/test_protocols.py, src/portkeydrop/dialogs/transfer.py
+- **Learnings:** High-leverage coverage for callback APIs comes from driving mocked side_effect callbacks and asserting propagated transfer metrics.
+---

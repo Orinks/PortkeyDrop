@@ -292,6 +292,129 @@ class TestSFTPClient:
         assert not client.connected
 
 
+    @patch("paramiko.SSHClient")
+    def test_list_dir_maps_file_attributes(self, mock_ssh_class):
+        import stat as stat_mod
+
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/home/user"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+
+        file_attr = MagicMock(
+            filename="file.txt",
+            st_mode=stat_mod.S_IFREG | 0o644,
+            st_size=123,
+            st_mtime=1700000000,
+            st_uid=1000,
+            st_gid=1000,
+            longname="-rw-r--r--",
+        )
+        dir_attr = MagicMock(
+            filename="docs",
+            st_mode=stat_mod.S_IFDIR | 0o755,
+            st_size=0,
+            st_mtime=1700000000,
+            st_uid=1000,
+            st_gid=1000,
+            longname="drwxr-xr-x",
+        )
+        dot_attr = MagicMock(filename=".")
+        mock_sftp.listdir_attr.return_value = [dot_attr, file_attr, dir_attr]
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+        files = client.list_dir(".")
+
+        assert len(files) == 2
+        assert files[0].name == "file.txt"
+        assert files[0].is_dir is False
+        assert files[0].size == 123
+        assert files[1].name == "docs"
+        assert files[1].is_dir is True
+
+    @patch("paramiko.SSHClient")
+    def test_chdir_download_upload_and_file_ops(self, mock_ssh_class):
+        import io
+
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.side_effect = ["/", "/uploads"]
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        assert client.chdir("/uploads") == "/uploads"
+        mock_sftp.chdir.assert_called_once_with("/uploads")
+
+        download_calls: list[tuple[int, int]] = []
+
+        def fake_getfo(_path, _file, callback):
+            callback(10, 100)
+
+        mock_sftp.getfo.side_effect = fake_getfo
+        client.download("/remote.bin", MagicMock(), callback=lambda t, n: download_calls.append((t, n)))
+        assert download_calls == [(10, 100)]
+
+        upload_calls: list[tuple[int, int]] = []
+
+        def fake_putfo(_file, _path, file_size, callback):
+            assert file_size == 4
+            callback(4, file_size)
+
+        mock_sftp.putfo.side_effect = fake_putfo
+        client.upload(io.BytesIO(b"data"), "/remote.txt", callback=lambda t, n: upload_calls.append((t, n)))
+        assert upload_calls == [(4, 4)]
+
+        client.delete("/a")
+        client.mkdir("/b")
+        client.rmdir("/b")
+        client.rename("/old", "/new")
+        mock_sftp.remove.assert_called_once_with("/a")
+        mock_sftp.mkdir.assert_called_once_with("/b")
+        mock_sftp.rmdir.assert_called_once_with("/b")
+        mock_sftp.rename.assert_called_once_with("/old", "/new")
+
+    @patch("paramiko.SSHClient")
+    @patch("paramiko.RSAKey.from_private_key_file")
+    def test_connect_with_key_and_stat(self, mock_key_loader, mock_ssh_class):
+        import stat as stat_mod
+
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_key = MagicMock()
+        mock_key_loader.return_value = mock_key
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/id_rsa",
+        )
+        client = SFTPClient(info)
+        client.connect()
+
+        mock_key_loader.assert_called_once_with("/tmp/id_rsa")
+        kwargs = mock_ssh.connect.call_args.kwargs
+        assert kwargs["allow_agent"] is False
+        assert kwargs["look_for_keys"] is False
+        assert kwargs["pkey"] is mock_key
+
+        attr = MagicMock(st_mode=stat_mod.S_IFREG | 0o644, st_size=42, st_mtime=1700000000)
+        mock_sftp.stat.return_value = attr
+        remote = client.stat("/remote/file.txt")
+        assert remote.name == "file.txt"
+        assert remote.path == "/remote/file.txt"
+        assert remote.size == 42
+        assert remote.is_dir is False
+
+
 class TestParentDir:
     def test_parent_from_subdir(self):
         info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
