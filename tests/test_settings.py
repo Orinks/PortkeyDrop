@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 
-
 from portkeydrop.settings import (
+    AppSettings,
     ConnectionDefaults,
     DisplaySettings,
     Settings,
     SpeechSettings,
     TransferSettings,
     load_settings,
+    resolve_startup_local_folder,
     save_settings,
+    update_last_local_folder,
 )
 
 
@@ -60,6 +62,13 @@ class TestSpeechSettings:
         assert s.verbosity == "normal"
 
 
+class TestAppSettings:
+    def test_defaults(self):
+        s = AppSettings()
+        assert s.remember_last_local_folder_on_startup is True
+        assert s.last_local_folder is None
+
+
 class TestSettings:
     def test_defaults(self):
         s = Settings()
@@ -67,6 +76,7 @@ class TestSettings:
         assert isinstance(s.display, DisplaySettings)
         assert isinstance(s.connection, ConnectionDefaults)
         assert isinstance(s.speech, SpeechSettings)
+        assert isinstance(s.app, AppSettings)
 
 
 class TestLoadSaveSettings:
@@ -114,3 +124,72 @@ class TestLoadSaveSettings:
         settings = Settings()
         save_settings(settings, nested)
         assert (nested / "settings.json").exists()
+
+
+class TestRememberLastLocalFolder:
+    def test_update_last_local_folder_enabled(self, tmp_path):
+        settings = Settings()
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+
+        changed = update_last_local_folder(settings, str(local_dir))
+
+        assert changed is True
+        assert settings.app.last_local_folder == str(local_dir.resolve())
+
+    def test_update_last_local_folder_disabled_clears_value(self):
+        settings = Settings(
+            app=AppSettings(
+                remember_last_local_folder_on_startup=False,
+                last_local_folder="/tmp/old",
+            )
+        )
+
+        changed = update_last_local_folder(settings, "/tmp/new")
+
+        assert changed is True
+        assert settings.app.last_local_folder is None
+
+    def test_resolve_startup_local_folder_restores_when_available(self, tmp_path):
+        local_dir = tmp_path / "mounted"
+        local_dir.mkdir()
+        settings = Settings(
+            app=AppSettings(
+                remember_last_local_folder_on_startup=True,
+                last_local_folder=str(local_dir),
+            )
+        )
+
+        resolved = resolve_startup_local_folder(settings, fallback=str(tmp_path / "fallback"))
+
+        assert resolved == str(local_dir.resolve())
+
+    def test_resolve_startup_local_folder_missing_path_falls_back_and_clears(self, tmp_path):
+        missing = tmp_path / "missing"
+        fallback = tmp_path / "fallback"
+        fallback.mkdir()
+        settings = Settings(
+            app=AppSettings(
+                remember_last_local_folder_on_startup=True,
+                last_local_folder=str(missing),
+            )
+        )
+
+        resolved = resolve_startup_local_folder(settings, fallback=str(fallback))
+
+        assert resolved == str(fallback)
+        assert settings.app.last_local_folder is None
+
+    def test_save_settings_does_not_persist_last_local_folder_when_disabled(self, tmp_path):
+        settings = Settings(
+            app=AppSettings(
+                remember_last_local_folder_on_startup=False,
+                last_local_folder="/tmp/should-not-persist",
+            )
+        )
+
+        save_settings(settings, tmp_path)
+
+        data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert data["app"]["remember_last_local_folder_on_startup"] is False
+        assert data["app"]["last_local_folder"] is None
