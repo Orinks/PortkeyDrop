@@ -144,6 +144,13 @@ class SettingsDialog(wx.Dialog):
             panel, grid, "&Verify host keys:", self.verify_keys_choice, "Verify host keys"
         )
 
+        self.remember_local_folder_check = wx.CheckBox(
+            panel, label="&Remember last local folder on startup"
+        )
+        self.remember_local_folder_check.SetName("Remember last local folder on startup")
+        grid.Add((0, 0))
+        grid.Add(self.remember_local_folder_check)
+
         panel.SetSizer(grid)
         self.notebook.AddPage(panel, "Connection")
 
@@ -192,6 +199,7 @@ class SettingsDialog(wx.Dialog):
         self.passive_check.SetValue(s.connection.passive_mode)
         idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
         self.verify_keys_choice.SetSelection(idx)
+        self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
         # Speech
         self.speech_rate_spin.SetValue(s.speech.rate)
         self.speech_volume_spin.SetValue(s.speech.volume)
@@ -219,6 +227,7 @@ class SettingsDialog(wx.Dialog):
         s.connection.max_retries = self.retries_spin.GetValue()
         s.connection.passive_mode = self.passive_check.GetValue()
         s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
+        s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
         s.speech.rate = self.speech_rate_spin.GetValue()
         s.speech.volume = self.speech_volume_spin.GetValue()
         s.speech.verbosity = self.verbosity_choice.GetStringSelection()

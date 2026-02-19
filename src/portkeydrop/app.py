@@ -24,7 +24,12 @@ from portkeydrop.local_files import (
     rename_local,
 )
 from portkeydrop.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
-from portkeydrop.settings import load_settings, save_settings
+from portkeydrop.settings import (
+    load_settings,
+    resolve_startup_local_folder,
+    save_settings,
+    update_last_local_folder,
+)
 from portkeydrop.sites import Site, SiteManager
 
 logger = logging.getLogger(__name__)
@@ -71,7 +76,8 @@ class MainFrame(wx.Frame):
         self._transfer_manager = TransferManager(notify_window=self)
         self._remote_filter_text = ""
         self._local_filter_text = ""
-        self._local_cwd = str(Path.home())
+        self._local_cwd = resolve_startup_local_folder(self._settings)
+        self._persist_local_folder_setting()
 
         self._build_menu()
         self._build_toolbar()
@@ -463,7 +469,7 @@ class MainFrame(wx.Frame):
     def _on_local_path_enter(self, event: wx.CommandEvent) -> None:
         path = self.local_path_bar.GetValue().strip()
         if path and Path(path).is_dir():
-            self._local_cwd = str(Path(path).resolve())
+            self._set_local_cwd(path)
             self._refresh_local_files()
         else:
             wx.MessageBox("Invalid directory path.", "Error", wx.OK | wx.ICON_ERROR, self)
@@ -484,7 +490,7 @@ class MainFrame(wx.Frame):
     def _on_home_dir(self, event: wx.CommandEvent) -> None:
         """Navigate to home directory in the focused pane."""
         if self._is_local_focused() or not self._client:
-            self._local_cwd = str(Path.home())
+            self._set_local_cwd(str(Path.home()))
             self._refresh_local_files()
             self._announce(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
@@ -566,6 +572,14 @@ class MainFrame(wx.Frame):
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
             )
+
+    def _set_local_cwd(self, path: str) -> None:
+        self._local_cwd = str(Path(path).expanduser().resolve())
+        self._persist_local_folder_setting()
+
+    def _persist_local_folder_setting(self) -> None:
+        if update_last_local_folder(self._settings, self._local_cwd):
+            save_settings(self._settings)
 
     # Keep _refresh_files for backward compat (calls remote refresh)
     def _refresh_files(self) -> None:
@@ -706,7 +720,7 @@ class MainFrame(wx.Frame):
         if not f:
             return
         if f.is_dir:
-            self._local_cwd = f.path
+            self._set_local_cwd(f.path)
             self._refresh_local_files()
         else:
             # Activate file on local = upload if connected
@@ -877,7 +891,7 @@ class MainFrame(wx.Frame):
     def _go_local_parent_dir(self) -> None:
         new_path = str(parent_local(self._local_cwd))
         if new_path != self._local_cwd:
-            self._local_cwd = new_path
+            self._set_local_cwd(new_path)
             self._refresh_local_files()
 
     # Keep old name for compat
@@ -1152,6 +1166,7 @@ class MainFrame(wx.Frame):
         dlg = SettingsDialog(self, self._settings)
         if dlg.ShowModal() == wx.ID_OK:
             self._settings = dlg.get_settings()
+            update_last_local_folder(self._settings, self._local_cwd)
             save_settings(self._settings)
             self._populate_file_list(
                 self.remote_file_list,
