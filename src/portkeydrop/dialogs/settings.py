@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import wx
 
 from portkeydrop.settings import Settings
@@ -18,15 +20,18 @@ class SettingsDialog(wx.Dialog):
             size=(560, 460),
         )
         self._settings = settings
-        self._spin_controls: list[wx.SpinCtrl] = []
+        self._spin_controls: list[tuple[wx.SpinCtrl, str]] = []
 
         self._build_ui()
         self._populate()
         self.SetName("Settings Dialog")
 
-        # Keep initialization simple/stable across wx builds.
-        self._refresh_spin_contexts()
+        # Re-apply accessible names on spin inner editors after _populate()
+        # may have reset them via SetValue().
+        self._apply_spin_accessible_names()
         wx.CallAfter(self.notebook.SetFocus)
+
+    # -- UI construction -----------------------------------------------
 
     def _build_ui(self) -> None:
         root = wx.BoxSizer(wx.VERTICAL)
@@ -48,9 +53,20 @@ class SettingsDialog(wx.Dialog):
 
     def _new_tab_panel(self) -> tuple[wx.Panel, wx.BoxSizer]:
         panel = wx.Panel(self.notebook)
-        panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        panel.SetSizer(panel_sizer)
-        return panel, panel_sizer
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        panel.SetSizer(sizer)
+        return panel, sizer
+
+    # -- Layout helpers ------------------------------------------------
+    #
+    # CRITICAL: The StaticText label HWND must be created *before* the
+    # control HWND.  NVDA resolves labels by walking backward through
+    # sibling HWNDs; if the control is created first its HWND precedes
+    # the label and NVDA associates the wrong label (or none at all).
+    #
+    # To guarantee correct order the helpers below accept a *factory*
+    # callable that creates the control — the helper creates the label
+    # first, then calls the factory.
 
     def _add_labeled_row(
         self,
@@ -58,26 +74,59 @@ class SettingsDialog(wx.Dialog):
         parent_sizer: wx.BoxSizer,
         *,
         label: str,
-        control: wx.Control,
+        make_control: Callable[[wx.Panel], wx.Control],
         control_name: str,
     ) -> wx.Control:
+        """Create a label then a control, in that HWND order, and lay them out."""
         row = wx.BoxSizer(wx.HORIZONTAL)
 
+        # Label HWND created FIRST
         row_label = wx.StaticText(panel, label=label)
-        row_label.SetName(control_name)
-        row_label.SetMinSize((240, -1))
-        row_label.Wrap(-1)
+        row_label.SetMinSize((220, -1))
+
+        # Control HWND created SECOND — correct Z-order for NVDA
+        control = make_control(panel)
 
         if hasattr(row_label, "SetLabelFor"):
             row_label.SetLabelFor(control)
 
         control.SetName(control_name)
         row.Add(row_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        # Don't combine alignment flags with EXPAND; wx asserts in debug builds.
         row.Add(control, 1, wx.EXPAND)
 
         parent_sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
         return control
+
+    def _add_spin_row(
+        self,
+        panel: wx.Panel,
+        parent_sizer: wx.BoxSizer,
+        *,
+        label: str,
+        control_name: str,
+        min_val: int,
+        max_val: int,
+    ) -> wx.SpinCtrl:
+        """Create a label then a spin control with full accessible naming."""
+        row = wx.BoxSizer(wx.HORIZONTAL)
+
+        # Label HWND created FIRST
+        row_label = wx.StaticText(panel, label=label)
+        row_label.SetMinSize((220, -1))
+
+        # SpinCtrl HWND created SECOND — correct Z-order for NVDA
+        spin = wx.SpinCtrl(panel, min=min_val, max=max_val)
+
+        if hasattr(row_label, "SetLabelFor"):
+            row_label.SetLabelFor(spin)
+
+        self._register_spin(spin, control_name)
+
+        row.Add(row_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        row.Add(spin, 1, wx.EXPAND)
+
+        parent_sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        return spin
 
     def _add_checkbox_row(
         self,
@@ -86,60 +135,66 @@ class SettingsDialog(wx.Dialog):
         *,
         name: str,
     ) -> wx.CheckBox:
+        """Add a standalone checkbox with an accessible name."""
         checkbox.SetName(name)
         parent_sizer.Add(checkbox, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         return checkbox
 
+    # -- Spin control accessibility ------------------------------------
+
     def _register_spin(self, spin: wx.SpinCtrl, name: str) -> wx.SpinCtrl:
-        self._spin_controls.append(spin)
-        self._set_spin_context(spin, name)
+        """Register a spin control for accessible name management."""
+        self._spin_controls.append((spin, name))
+        self._set_spin_accessible_name(spin, name)
         return spin
 
-    def _set_spin_context(self, spin: wx.SpinCtrl, name: str) -> None:
+    def _set_spin_accessible_name(self, spin: wx.SpinCtrl, name: str) -> None:
+        """Set accessible name on spin and its inner text editor."""
         spin.SetName(name)
         spin.SetToolTip(name)
 
         text_child = self._find_text_child(spin)
-        if text_child is not None and hasattr(text_child, "SetName"):
-            text_child.SetName(f"{name} value")
+        if text_child is not None:
+            if hasattr(text_child, "SetName"):
+                text_child.SetName(f"{name} value")
+            if hasattr(text_child, "SetToolTip"):
+                text_child.SetToolTip(name)
 
-    def _find_text_child(self, control: wx.Window) -> wx.Window | None:
+    @staticmethod
+    def _find_text_child(control: wx.Window) -> wx.Window | None:
+        """Find the inner wxTextCtrl child of a composite control."""
         for child in control.GetChildren():
             class_name = getattr(child, "GetClassName", lambda: "")()
             if class_name == "wxTextCtrl":
                 return child
-
-            nested = self._find_text_child(child)
+            nested = SettingsDialog._find_text_child(child)
             if nested is not None:
                 return nested
-
         return None
 
-    def _refresh_spin_contexts(self) -> None:
-        for spin in self._spin_controls:
-            self._set_spin_context(spin, spin.GetName())
+    def _apply_spin_accessible_names(self) -> None:
+        """Re-apply accessible names to all registered spin controls."""
+        for spin, name in self._spin_controls:
+            self._set_spin_accessible_name(spin, name)
 
+    # -- Tab builders --------------------------------------------------
 
     def _build_transfer_tab(self) -> None:
         panel, sizer = self._new_tab_panel()
 
-        self.concurrent_spin = self._register_spin(
-            wx.SpinCtrl(panel, min=1, max=10), "Concurrent transfers count"
-        )
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.concurrent_spin = self._add_spin_row(
+            panel, sizer,
             label="&Concurrent transfers:",
-            control=self.concurrent_spin,
             control_name="Concurrent transfers count",
+            min_val=1, max_val=10,
         )
 
-        self.overwrite_choice = wx.Choice(panel, choices=["ask", "overwrite", "skip", "rename"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.overwrite_choice = self._add_labeled_row(
+            panel, sizer,
             label="&Overwrite mode:",
-            control=self.overwrite_choice,
+            make_control=lambda p: wx.Choice(
+                p, choices=["ask", "overwrite", "skip", "rename"],
+            ),
             control_name="Overwrite mode",
         )
 
@@ -161,12 +216,10 @@ class SettingsDialog(wx.Dialog):
             name="Follow symlinks",
         )
 
-        self.download_dir_text = wx.TextCtrl(panel)
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.download_dir_text = self._add_labeled_row(
+            panel, sizer,
             label="&Download directory:",
-            control=self.download_dir_text,
+            make_control=lambda p: wx.TextCtrl(p),
             control_name="Download directory",
         )
 
@@ -182,15 +235,11 @@ class SettingsDialog(wx.Dialog):
             name="Announce file count",
         )
 
-        self.progress_interval_spin = self._register_spin(
-            wx.SpinCtrl(panel, min=5, max=50), "Progress interval"
-        )
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.progress_interval_spin = self._add_spin_row(
+            panel, sizer,
             label="&Progress interval (%):",
-            control=self.progress_interval_spin,
             control_name="Progress interval",
+            min_val=5, max_val=50,
         )
 
         self.show_hidden_check = self._add_checkbox_row(
@@ -199,12 +248,12 @@ class SettingsDialog(wx.Dialog):
             name="Show hidden files",
         )
 
-        self.sort_by_choice = wx.Choice(panel, choices=["name", "size", "modified", "type"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.sort_by_choice = self._add_labeled_row(
+            panel, sizer,
             label="&Sort by:",
-            control=self.sort_by_choice,
+            make_control=lambda p: wx.Choice(
+                p, choices=["name", "size", "modified", "type"],
+            ),
             control_name="Sort by",
         )
 
@@ -214,12 +263,10 @@ class SettingsDialog(wx.Dialog):
             name="Sort ascending",
         )
 
-        self.date_format_choice = wx.Choice(panel, choices=["relative", "absolute"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.date_format_choice = self._add_labeled_row(
+            panel, sizer,
             label="&Date format:",
-            control=self.date_format_choice,
+            make_control=lambda p: wx.Choice(p, choices=["relative", "absolute"]),
             control_name="Date format",
         )
 
@@ -229,40 +276,32 @@ class SettingsDialog(wx.Dialog):
     def _build_connection_tab(self) -> None:
         panel, sizer = self._new_tab_panel()
 
-        self.default_proto_choice = wx.Choice(panel, choices=["sftp", "ftp", "ftps"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.default_proto_choice = self._add_labeled_row(
+            panel, sizer,
             label="&Default protocol:",
-            control=self.default_proto_choice,
+            make_control=lambda p: wx.Choice(p, choices=["sftp", "ftp", "ftps"]),
             control_name="Default protocol",
         )
 
-        self.timeout_spin = self._register_spin(wx.SpinCtrl(panel, min=5, max=300), "Connection timeout")
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.timeout_spin = self._add_spin_row(
+            panel, sizer,
             label="&Timeout (seconds):",
-            control=self.timeout_spin,
             control_name="Connection timeout",
+            min_val=5, max_val=300,
         )
 
-        self.keepalive_spin = self._register_spin(wx.SpinCtrl(panel, min=0, max=600), "Keepalive interval")
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.keepalive_spin = self._add_spin_row(
+            panel, sizer,
             label="&Keepalive (seconds):",
-            control=self.keepalive_spin,
             control_name="Keepalive interval",
+            min_val=0, max_val=600,
         )
 
-        self.retries_spin = self._register_spin(wx.SpinCtrl(panel, min=0, max=10), "Maximum retries")
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.retries_spin = self._add_spin_row(
+            panel, sizer,
             label="Max &retries:",
-            control=self.retries_spin,
             control_name="Maximum retries",
+            min_val=0, max_val=10,
         )
 
         self.passive_check = self._add_checkbox_row(
@@ -271,12 +310,10 @@ class SettingsDialog(wx.Dialog):
             name="Passive mode",
         )
 
-        self.verify_keys_choice = wx.Choice(panel, choices=["ask", "always", "never"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.verify_keys_choice = self._add_labeled_row(
+            panel, sizer,
             label="&Verify host keys:",
-            control=self.verify_keys_choice,
+            make_control=lambda p: wx.Choice(p, choices=["ask", "always", "never"]),
             control_name="Verify host keys",
         )
 
@@ -292,64 +329,70 @@ class SettingsDialog(wx.Dialog):
     def _build_speech_tab(self) -> None:
         panel, sizer = self._new_tab_panel()
 
-        self.speech_rate_spin = self._register_spin(wx.SpinCtrl(panel, min=0, max=100), "Speech rate")
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.speech_rate_spin = self._add_spin_row(
+            panel, sizer,
             label="&Rate:",
-            control=self.speech_rate_spin,
             control_name="Speech rate",
+            min_val=0, max_val=100,
         )
 
-        self.speech_volume_spin = self._register_spin(wx.SpinCtrl(panel, min=0, max=100), "Speech volume")
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.speech_volume_spin = self._add_spin_row(
+            panel, sizer,
             label="&Volume:",
-            control=self.speech_volume_spin,
             control_name="Speech volume",
+            min_val=0, max_val=100,
         )
 
-        self.verbosity_choice = wx.Choice(panel, choices=["minimal", "normal", "verbose"])
-        self._add_labeled_row(
-            panel,
-            sizer,
+        self.verbosity_choice = self._add_labeled_row(
+            panel, sizer,
             label="V&erbosity:",
-            control=self.verbosity_choice,
+            make_control=lambda p: wx.Choice(
+                p, choices=["minimal", "normal", "verbose"],
+            ),
             control_name="Speech verbosity",
         )
 
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Speech")
 
+    # -- Data binding --------------------------------------------------
+
     def _populate(self) -> None:
         s = self._settings
-
+        # Transfer
         self.concurrent_spin.SetValue(s.transfer.concurrent_transfers)
-        self.overwrite_choice.SetSelection(["ask", "overwrite", "skip", "rename"].index(s.transfer.overwrite_mode))
+        idx = ["ask", "overwrite", "skip", "rename"].index(s.transfer.overwrite_mode)
+        self.overwrite_choice.SetSelection(idx)
         self.resume_check.SetValue(s.transfer.resume_partial)
         self.preserve_ts_check.SetValue(s.transfer.preserve_timestamps)
         self.follow_symlinks_check.SetValue(s.transfer.follow_symlinks)
         self.download_dir_text.SetValue(s.transfer.default_download_dir)
-
+        # Display
         self.announce_count_check.SetValue(s.display.announce_file_count)
         self.progress_interval_spin.SetValue(s.display.progress_interval)
         self.show_hidden_check.SetValue(s.display.show_hidden_files)
-        self.sort_by_choice.SetSelection(["name", "size", "modified", "type"].index(s.display.sort_by))
+        idx = ["name", "size", "modified", "type"].index(s.display.sort_by)
+        self.sort_by_choice.SetSelection(idx)
         self.sort_asc_check.SetValue(s.display.sort_ascending)
-        self.date_format_choice.SetSelection(["relative", "absolute"].index(s.display.date_format))
-
-        self.default_proto_choice.SetSelection(["sftp", "ftp", "ftps"].index(s.connection.protocol))
+        idx = ["relative", "absolute"].index(s.display.date_format)
+        self.date_format_choice.SetSelection(idx)
+        # Connection
+        idx = ["sftp", "ftp", "ftps"].index(s.connection.protocol)
+        self.default_proto_choice.SetSelection(idx)
         self.timeout_spin.SetValue(s.connection.timeout)
         self.keepalive_spin.SetValue(s.connection.keepalive)
         self.retries_spin.SetValue(s.connection.max_retries)
         self.passive_check.SetValue(s.connection.passive_mode)
-        self.verify_keys_choice.SetSelection(["ask", "always", "never"].index(s.connection.verify_host_keys))
-        self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
-
+        idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
+        self.verify_keys_choice.SetSelection(idx)
+        self.remember_local_folder_check.SetValue(
+            s.app.remember_last_local_folder_on_startup
+        )
+        # Speech
         self.speech_rate_spin.SetValue(s.speech.rate)
         self.speech_volume_spin.SetValue(s.speech.volume)
-        self.verbosity_choice.SetSelection(["minimal", "normal", "verbose"].index(s.speech.verbosity))
+        idx = ["minimal", "normal", "verbose"].index(s.speech.verbosity)
+        self.verbosity_choice.SetSelection(idx)
 
     def get_settings(self) -> Settings:
         """Return updated Settings from the dialog fields."""
@@ -373,8 +416,12 @@ class SettingsDialog(wx.Dialog):
         s.connection.keepalive = self.keepalive_spin.GetValue()
         s.connection.max_retries = self.retries_spin.GetValue()
         s.connection.passive_mode = self.passive_check.GetValue()
-        s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
-        s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
+        s.connection.verify_host_keys = (
+            self.verify_keys_choice.GetStringSelection()
+        )
+        s.app.remember_last_local_folder_on_startup = (
+            self.remember_local_folder_check.GetValue()
+        )
 
         s.speech.rate = self.speech_rate_spin.GetValue()
         s.speech.volume = self.speech_volume_spin.GetValue()

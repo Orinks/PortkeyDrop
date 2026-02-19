@@ -1,4 +1,4 @@
-"""Accessibility contracts for the Settings dialog."""
+"""Accessibility contracts for the wx Settings dialog."""
 
 from __future__ import annotations
 
@@ -9,24 +9,22 @@ import types
 from portkeydrop.settings import Settings
 
 
-class _FakeEvent:
-    def __init__(self, shown: bool = False):
-        self._shown = shown
-        self.skipped = False
+# -- Fake wx stubs for headless testing --------------------------------
+#
+# These track HWND creation order so we can verify that labels are
+# always created before their controls (the key invariant for NVDA).
 
-    def IsShown(self) -> bool:
-        return self._shown
-
-    def Skip(self) -> None:
-        self.skipped = True
+_creation_order: list[object] = []
 
 
 class _Window:
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, **_kw):
         self.parent = parent
-        self.children = []
+        self.children: list[_Window] = []
         self._name = ""
+        self._tooltip = ""
         self.focused = False
+        _creation_order.append(self)
         if parent is not None and hasattr(parent, "children"):
             parent.children.append(self)
 
@@ -39,10 +37,13 @@ class _Window:
     def SetFocus(self) -> None:
         self.focused = True
 
+    def SetToolTip(self, text: str) -> None:
+        self._tooltip = text
+
     def GetChildren(self):
         return list(self.children)
 
-    def Bind(self, *_args, **_kwargs):
+    def Bind(self, *_a, **_kw):
         return None
 
     def SetSizer(self, sizer):
@@ -50,9 +51,6 @@ class _Window:
 
 
 class _Dialog(_Window):
-    def __init__(self, parent=None, **_kwargs):
-        super().__init__(parent)
-
     def CreateStdDialogButtonSizer(self, _flags):
         return _BoxSizer()
 
@@ -62,40 +60,36 @@ class _Panel(_Window):
 
 
 class _Notebook(_Window):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, **_kw):
         super().__init__(parent)
-        self.pages = []
+        self.pages: list[tuple[_Panel, str]] = []
 
     def AddPage(self, panel, title: str):
         self.pages.append((panel, title))
 
 
 class _BoxSizer:
-    def __init__(self, *_args, **_kwargs):
-        self.items = []
+    def __init__(self, *_a, **_kw):
+        self.items: list = []
 
     def Add(self, *args, **kwargs):
         self.items.append((args, kwargs))
 
-    def AddStretchSpacer(self, *_args, **_kwargs):
+    def AddStretchSpacer(self, *_a, **_kw):
         return None
 
 
 class _Control(_Window):
-    def __init__(self, parent=None, **_kwargs):
+    def __init__(self, parent=None, **_kw):
         super().__init__(parent)
         self._value = None
         self._selection = 0
-        self._tooltip = ""
 
     def SetValue(self, value):
         self._value = value
 
     def GetValue(self):
         return self._value
-
-    def SetToolTip(self, text: str):
-        self._tooltip = text
 
 
 class _TextCtrl(_Control):
@@ -104,13 +98,13 @@ class _TextCtrl(_Control):
 
 
 class _SpinCtrl(_Control):
-    def __init__(self, parent=None, **_kwargs):
+    def __init__(self, parent=None, **_kw):
         super().__init__(parent)
         self._editor = _TextCtrl(self)
 
 
 class _Choice(_Control):
-    def __init__(self, parent=None, choices=None):
+    def __init__(self, parent=None, choices=None, **_kw):
         super().__init__(parent)
         self._choices = choices or []
 
@@ -126,30 +120,29 @@ class _CheckBox(_Control):
 
 
 class _StaticText(_Window):
-    created = []
+    created: list[_StaticText] = []
 
-    def __init__(self, parent=None, label: str = ""):
+    def __init__(self, parent=None, label: str = "", **_kw):
         super().__init__(parent)
         self.label = label
         self._label_for = None
         _StaticText.created.append(self)
 
-    def SetMinSize(self, *_args, **_kwargs):
+    def SetMinSize(self, *_a, **_kw):
         return None
 
-    def Wrap(self, *_args, **_kwargs):
+    def Wrap(self, *_a, **_kw):
         return None
 
     def SetLabelFor(self, ctrl):
         self._label_for = ctrl
 
 
-class _WxModule(types.SimpleNamespace):
-    pass
+# -- Helpers -----------------------------------------------------------
 
 
-def _load_settings_dialog_module(monkeypatch):
-    fake_wx = _WxModule(
+def _make_fake_wx():
+    return types.SimpleNamespace(
         Dialog=_Dialog,
         Window=_Window,
         Panel=_Panel,
@@ -161,10 +154,6 @@ def _load_settings_dialog_module(monkeypatch):
         CheckBox=_CheckBox,
         TextCtrl=_TextCtrl,
         Control=_Control,
-        ShowEvent=_FakeEvent,
-        WindowCreateEvent=_FakeEvent,
-        EVT_SHOW=object(),
-        EVT_WINDOW_CREATE=object(),
         DEFAULT_DIALOG_STYLE=1,
         RESIZE_BORDER=2,
         VERTICAL=1,
@@ -177,32 +166,43 @@ def _load_settings_dialog_module(monkeypatch):
         ALIGN_CENTER_VERTICAL=128,
         OK=1,
         CANCEL=2,
-        CallAfter=lambda fn, *a, **k: fn(*a, **k),
+        CallAfter=lambda fn, *a, **kw: fn(*a, **kw),
     )
-    monkeypatch.setitem(sys.modules, "wx", fake_wx)
+
+
+def _load_dialog(monkeypatch):
+    """Import SettingsDialog with fake wx and return a fresh instance."""
+    monkeypatch.setitem(sys.modules, "wx", _make_fake_wx())
     _StaticText.created = []
-    module = importlib.import_module("portkeydrop.dialogs.settings")
-    module = importlib.reload(module)
-    return module
+    _creation_order.clear()
+    mod = importlib.import_module("portkeydrop.dialogs.settings")
+    mod = importlib.reload(mod)
+    return mod.SettingsDialog(None, Settings())
 
 
-def test_settings_dialog_assigns_unambiguous_names_and_label_links(monkeypatch):
-    module = _load_settings_dialog_module(monkeypatch)
-    dlg = module.SettingsDialog(None, Settings())
+# -- Tests -------------------------------------------------------------
 
-    expected_names = {
+
+def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
+    """Every control must carry a descriptive accessible name."""
+    dlg = _load_dialog(monkeypatch)
+
+    expected = {
+        # Transfer
         "concurrent_spin": "Concurrent transfers count",
         "overwrite_choice": "Overwrite mode",
         "resume_check": "Resume partial transfers",
         "preserve_ts_check": "Preserve timestamps",
         "follow_symlinks_check": "Follow symlinks",
         "download_dir_text": "Download directory",
+        # Display
         "announce_count_check": "Announce file count",
         "progress_interval_spin": "Progress interval",
         "show_hidden_check": "Show hidden files",
         "sort_by_choice": "Sort by",
         "sort_asc_check": "Sort ascending",
         "date_format_choice": "Date format",
+        # Connection
         "default_proto_choice": "Default protocol",
         "timeout_spin": "Connection timeout",
         "keepalive_spin": "Keepalive interval",
@@ -210,17 +210,30 @@ def test_settings_dialog_assigns_unambiguous_names_and_label_links(monkeypatch):
         "passive_check": "Passive mode",
         "verify_keys_choice": "Verify host keys",
         "remember_local_folder_check": "Remember last local folder on startup",
+        # Speech
         "speech_rate_spin": "Speech rate",
         "speech_volume_spin": "Speech volume",
         "verbosity_choice": "Speech verbosity",
     }
 
-    for attr, expected in expected_names.items():
+    for attr, name in expected.items():
         control = getattr(dlg, attr)
-        assert control.GetName() == expected
+        assert control.GetName() == name, (
+            f"{attr}: expected {name!r}, got {control.GetName()!r}"
+        )
 
-    linked_controls = {lbl._label_for for lbl in _StaticText.created if lbl._label_for is not None}
-    for attr in [
+
+def test_labeled_controls_have_label_for_links(monkeypatch):
+    """Non-checkbox controls must be linked to their label via SetLabelFor."""
+    dlg = _load_dialog(monkeypatch)
+
+    linked = {
+        lbl._label_for
+        for lbl in _StaticText.created
+        if lbl._label_for is not None
+    }
+
+    controls_needing_labels = [
         "concurrent_spin",
         "overwrite_choice",
         "download_dir_text",
@@ -235,15 +248,39 @@ def test_settings_dialog_assigns_unambiguous_names_and_label_links(monkeypatch):
         "speech_rate_spin",
         "speech_volume_spin",
         "verbosity_choice",
-    ]:
-        assert getattr(dlg, attr) in linked_controls
+    ]
+
+    for attr in controls_needing_labels:
+        ctrl = getattr(dlg, attr)
+        assert ctrl in linked, f"{attr} is not linked to any label via SetLabelFor"
 
 
-def test_spin_controls_name_inner_editor_with_field_context(monkeypatch):
-    module = _load_settings_dialog_module(monkeypatch)
-    dlg = module.SettingsDialog(None, Settings())
+def test_label_hwnd_created_before_control(monkeypatch):
+    """Every label must be created before its control in HWND order.
 
-    spin_controls = [
+    NVDA resolves labels by walking backward through sibling HWNDs.
+    If a control's HWND is created before its label, NVDA picks up the
+    wrong label or none at all.
+    """
+    dlg = _load_dialog(monkeypatch)
+
+    for lbl in _StaticText.created:
+        if lbl._label_for is None:
+            continue
+        ctrl = lbl._label_for
+        lbl_idx = _creation_order.index(lbl)
+        ctrl_idx = _creation_order.index(ctrl)
+        assert lbl_idx < ctrl_idx, (
+            f"label {lbl.label!r} (idx {lbl_idx}) created AFTER "
+            f"control {ctrl.GetName()!r} (idx {ctrl_idx})"
+        )
+
+
+def test_spin_inner_editors_carry_field_context(monkeypatch):
+    """The inner wxTextCtrl of each SpinCtrl must be named with field context."""
+    dlg = _load_dialog(monkeypatch)
+
+    spins = [
         dlg.concurrent_spin,
         dlg.progress_interval_spin,
         dlg.timeout_spin,
@@ -253,13 +290,37 @@ def test_spin_controls_name_inner_editor_with_field_context(monkeypatch):
         dlg.speech_volume_spin,
     ]
 
-    for spin in spin_controls:
+    for spin in spins:
         editor = spin.GetChildren()[0]
-        assert editor.GetName() == f"{spin.GetName()} value"
+        expected = f"{spin.GetName()} value"
+        assert editor.GetName() == expected, (
+            f"inner editor of {spin.GetName()!r}: expected {expected!r}, "
+            f"got {editor.GetName()!r}"
+        )
 
 
-def test_settings_dialog_focuses_tab_control_on_open(monkeypatch):
-    module = _load_settings_dialog_module(monkeypatch)
-    dlg = module.SettingsDialog(None, Settings())
+def test_spin_controls_have_tooltips(monkeypatch):
+    """Spin controls and their inner editors must have tooltips as MSAA fallback."""
+    dlg = _load_dialog(monkeypatch)
 
+    spins = [
+        dlg.concurrent_spin,
+        dlg.progress_interval_spin,
+        dlg.timeout_spin,
+        dlg.keepalive_spin,
+        dlg.retries_spin,
+        dlg.speech_rate_spin,
+        dlg.speech_volume_spin,
+    ]
+
+    for spin in spins:
+        name = spin.GetName()
+        assert spin._tooltip == name, f"{name}: spin missing tooltip"
+        editor = spin.GetChildren()[0]
+        assert editor._tooltip == name, f"{name}: inner editor missing tooltip"
+
+
+def test_notebook_receives_initial_focus(monkeypatch):
+    """Tab control must receive focus on dialog open for keyboard navigation."""
+    dlg = _load_dialog(monkeypatch)
     assert dlg.notebook.focused is True
