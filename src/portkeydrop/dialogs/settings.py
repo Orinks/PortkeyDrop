@@ -73,7 +73,8 @@ class SettingsDialog(wx.Dialog):
 
         control.SetName(control_name)
         row.Add(row_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
-        row.Add(control, 1, wx.ALIGN_CENTER_VERTICAL | wx.EXPAND)
+        # Don't combine alignment flags with EXPAND; wx asserts in debug builds.
+        row.Add(control, 1, wx.EXPAND)
 
         parent_sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
         return control
