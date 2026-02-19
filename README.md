@@ -64,6 +64,18 @@ uv sync
 uv run portkeydrop
 ```
 
+## Experimental PySide6 settings dialog
+
+Phase 1 of the PySide6 migration includes an experimental settings prototype alongside the existing wxPython app.
+
+```bash
+uv sync --extra qt
+uv run portkeydrop --qt-settings-prototype
+```
+
+- This path is optional and non-default.
+- The primary application still launches via wxPython (`uv run portkeydrop`).
+
 ## Development
 
 ```bash

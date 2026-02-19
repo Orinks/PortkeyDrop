@@ -14,6 +14,9 @@ dependencies = [
 webdav = [
     "webdavclient3>=3.14",
 ]
+qt = [
+    "PySide6>=6.7",
+]
 
 [project.scripts]
 portkeydrop = "portkeydrop.main:main"
