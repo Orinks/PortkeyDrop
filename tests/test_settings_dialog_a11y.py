@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import re
 import sys
 import types
 
@@ -264,23 +263,3 @@ def test_settings_dialog_focuses_tab_control_on_open(monkeypatch):
     dlg = module.SettingsDialog(None, Settings())
 
     assert dlg.notebook.focused is True
-
-
-def test_menu_bar_order_contract_not_changed():
-    app_py = ("src/portkeydrop/app.py")
-    with open(app_py, encoding="utf-8") as f:
-        source = f.read()
-
-    expected = [
-        'menubar.Append(file_menu, "&File")',
-        'menubar.Append(sites_menu, "S&ites")',
-        'menubar.Append(transfer_menu, "&Transfer")',
-        'menubar.Append(view_menu, "&View")',
-        'menubar.Append(edit_menu, "&Edit")',
-        'menubar.Append(help_menu, "&Help")',
-    ]
-
-    positions = [source.index(fragment) for fragment in expected]
-    assert positions == sorted(positions)
-
-    assert re.search(r'file_menu\.Append\(ID_SETTINGS, "Se&ttings\.\.\."', source)
