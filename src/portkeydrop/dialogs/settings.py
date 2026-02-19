@@ -25,7 +25,7 @@ class SettingsDialog(wx.Dialog):
         self.SetName("Settings Dialog")
 
         self.Bind(wx.EVT_SHOW, self._on_show)
-        self.Bind(wx.EVT_WINDOW_CREATE, self._on_window_create)
+        wx.CallAfter(self._refresh_spin_contexts)
 
     def _build_ui(self) -> None:
         root = wx.BoxSizer(wx.VERTICAL)
@@ -116,10 +116,6 @@ class SettingsDialog(wx.Dialog):
     def _refresh_spin_contexts(self) -> None:
         for spin in self._spin_controls:
             self._set_spin_context(spin, spin.GetName())
-
-    def _on_window_create(self, event: wx.WindowCreateEvent) -> None:
-        self._refresh_spin_contexts()
-        event.Skip()
 
     def _on_show(self, event: wx.ShowEvent) -> None:
         if event.IsShown():
