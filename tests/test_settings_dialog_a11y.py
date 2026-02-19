@@ -191,7 +191,7 @@ def test_settings_dialog_assigns_unambiguous_names_and_label_links(monkeypatch):
     dlg = module.SettingsDialog(None, Settings())
 
     expected_names = {
-        "concurrent_spin": "Concurrent transfers",
+        "concurrent_spin": "Concurrent transfers count",
         "overwrite_choice": "Overwrite mode",
         "resume_check": "Resume partial transfers",
         "preserve_ts_check": "Preserve timestamps",

@@ -123,13 +123,15 @@ class SettingsDialog(wx.Dialog):
     def _build_transfer_tab(self) -> None:
         panel, sizer = self._new_tab_panel()
 
-        self.concurrent_spin = self._register_spin(wx.SpinCtrl(panel, min=1, max=10), "Concurrent transfers")
+        self.concurrent_spin = self._register_spin(
+            wx.SpinCtrl(panel, min=1, max=10), "Concurrent transfers count"
+        )
         self._add_labeled_row(
             panel,
             sizer,
             label="&Concurrent transfers:",
             control=self.concurrent_spin,
-            control_name="Concurrent transfers",
+            control_name="Concurrent transfers count",
         )
 
         self.overwrite_choice = wx.Choice(panel, choices=["ask", "overwrite", "skip", "rename"])
