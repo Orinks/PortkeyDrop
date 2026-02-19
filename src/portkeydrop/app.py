@@ -1163,20 +1163,31 @@ class MainFrame(wx.Frame):
         pass
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
-        dlg = SettingsDialog(self, self._settings)
-        if dlg.ShowModal() == wx.ID_OK:
-            self._settings = dlg.get_settings()
-            update_last_local_folder(self._settings, self._local_cwd)
-            save_settings(self._settings)
-            self._populate_file_list(
-                self.remote_file_list,
-                self._get_visible_files(self._remote_files, self._remote_filter_text),
+        dlg = None
+        try:
+            dlg = SettingsDialog(self, self._settings)
+            if dlg.ShowModal() == wx.ID_OK:
+                self._settings = dlg.get_settings()
+                update_last_local_folder(self._settings, self._local_cwd)
+                save_settings(self._settings)
+                self._populate_file_list(
+                    self.remote_file_list,
+                    self._get_visible_files(self._remote_files, self._remote_filter_text),
+                )
+                self._populate_file_list(
+                    self.local_file_list,
+                    self._get_visible_files(self._local_files, self._local_filter_text),
+                )
+        except Exception as e:
+            logger.exception("Failed to open settings dialog")
+            wx.MessageBox(
+                f"Could not open Settings dialog:\n{e}",
+                "Settings Error",
+                wx.OK | wx.ICON_ERROR,
             )
-            self._populate_file_list(
-                self.local_file_list,
-                self._get_visible_files(self._local_files, self._local_filter_text),
-            )
-        dlg.Destroy()
+        finally:
+            if dlg:
+                dlg.Destroy()
 
     def _on_about(self, event: wx.CommandEvent) -> None:
         info = wx.adv.AboutDialogInfo()
