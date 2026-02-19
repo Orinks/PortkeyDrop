@@ -100,28 +100,14 @@ class MainFrame(wx.Frame):
         file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Exit application")
         menubar.Append(file_menu, "&File")
 
-        # Sites menu
-        sites_menu = wx.Menu()
-        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
-        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
-        sites_menu.AppendSeparator()
-        sites_menu.Append(
-            ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
-        )
-        menubar.Append(sites_menu, "S&ites")
-
-        # Transfer menu
-        transfer_menu = wx.Menu()
-        transfer_menu.Append(
-            ID_TRANSFER, "&Transfer\tCtrl+T", "Upload or download based on active pane"
-        )
-        transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
-        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
-        transfer_menu.AppendSeparator()
-        transfer_menu.Append(
-            ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
-        )
-        menubar.Append(transfer_menu, "&Transfer")
+        # Edit menu (for file operations)
+        edit_menu = wx.Menu()
+        edit_menu.Append(ID_DELETE, "De&lete\tDelete", "Delete selected file")
+        edit_menu.Append(ID_RENAME, "&Rename\tF2", "Rename selected file")
+        edit_menu.Append(ID_MKDIR, "&New Directory...\tCtrl+Shift+N", "Create new directory")
+        edit_menu.AppendSeparator()
+        edit_menu.Append(ID_PROPERTIES, "P&roperties...\tCtrl+I", "File properties")
+        menubar.Append(edit_menu, "&Edit")
 
         # View menu
         view_menu = wx.Menu()
@@ -140,14 +126,28 @@ class MainFrame(wx.Frame):
         view_menu.Append(ID_FILTER, "&Filter...\tCtrl+F", "Filter file list")
         menubar.Append(view_menu, "&View")
 
-        # Edit menu (for file operations)
-        edit_menu = wx.Menu()
-        edit_menu.Append(ID_DELETE, "De&lete\tDelete", "Delete selected file")
-        edit_menu.Append(ID_RENAME, "&Rename\tF2", "Rename selected file")
-        edit_menu.Append(ID_MKDIR, "&New Directory...\tCtrl+Shift+N", "Create new directory")
-        edit_menu.AppendSeparator()
-        edit_menu.Append(ID_PROPERTIES, "P&roperties...\tCtrl+I", "File properties")
-        menubar.Append(edit_menu, "&Edit")
+        # Transfer menu
+        transfer_menu = wx.Menu()
+        transfer_menu.Append(
+            ID_TRANSFER, "&Transfer\tCtrl+T", "Upload or download based on active pane"
+        )
+        transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
+        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
+        transfer_menu.AppendSeparator()
+        transfer_menu.Append(
+            ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
+        )
+        menubar.Append(transfer_menu, "&Transfer")
+
+        # Sites menu
+        sites_menu = wx.Menu()
+        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
+        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
+        sites_menu.AppendSeparator()
+        sites_menu.Append(
+            ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
+        menubar.Append(sites_menu, "S&ites")
 
         # Help menu
         help_menu = wx.Menu()
