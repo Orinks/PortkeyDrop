@@ -376,11 +376,13 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
             self.cancel_btn = wx.Button(self, label="&Cancel Selected")
             self.cancel_btn.SetName("Cancel Selected Transfer")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
+            self.close_btn.SetName("Close Transfer Queue")
             btn_sizer.Add(self.cancel_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.close_btn, 0)
             sizer.Add(btn_sizer, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
 
             self.SetSizer(sizer)
+            self.transfer_list.SetFocus()
 
             self.cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
             self.close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Close())

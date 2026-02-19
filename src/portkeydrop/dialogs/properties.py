@@ -35,11 +35,17 @@ class PropertiesDialog(wx.Dialog):
             lbl = wx.StaticText(self, label=label_text)
             val = wx.TextCtrl(self, value=value, style=wx.TE_READONLY)
             val.SetName(label_text.rstrip(":"))
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(val)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(val, 1, wx.EXPAND)
 
         sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 12)
         btn = self.CreateStdDialogButtonSizer(wx.OK)
+        ok_btn = self.FindWindowById(wx.ID_OK)
+        if ok_btn:
+            ok_btn.SetName("Close File Properties")
+            ok_btn.SetFocus()
         sizer.Add(btn, 0, wx.ALL | wx.EXPAND, 8)
         self.SetSizer(sizer)
         self.Fit()

@@ -16,50 +16,37 @@ class QuickConnectDialog(wx.Dialog):
         self._build_ui()
         self.SetName("Quick Connect Dialog")
 
+    def _add_field(self, grid: wx.FlexGridSizer, label_text: str, control: wx.Control, name: str) -> None:
+        label = wx.StaticText(self, label=label_text)
+        if hasattr(label, "SetLabelFor"):
+            label.SetLabelFor(control)
+        control.SetName(name)
+        grid.Add(label, 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(control, 1, wx.EXPAND)
+
     def _build_ui(self) -> None:
         sizer = wx.BoxSizer(wx.VERTICAL)
         grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=8)
         grid.AddGrowableCol(1, 1)
 
-        # Protocol
-        lbl = wx.StaticText(self, label="&Protocol:")
         self.protocol_choice = wx.Choice(self, choices=["sftp", "ftp", "ftps"])
         self.protocol_choice.SetSelection(0)
-        self.protocol_choice.SetName("Protocol")
-        grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.protocol_choice, 1, wx.EXPAND)
+        self._add_field(grid, "&Protocol:", self.protocol_choice, "Protocol")
 
-        # Host
-        lbl = wx.StaticText(self, label="&Host:")
         self.host_text = wx.TextCtrl(self)
-        self.host_text.SetName("Host")
-        grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.host_text, 1, wx.EXPAND)
+        self._add_field(grid, "&Host:", self.host_text, "Host")
 
-        # Port
-        lbl = wx.StaticText(self, label="P&ort:")
         self.port_text = wx.TextCtrl(self, value="22")
-        self.port_text.SetName("Port")
-        grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.port_text, 1, wx.EXPAND)
+        self._add_field(grid, "P&ort:", self.port_text, "Port")
 
-        # Username
-        lbl = wx.StaticText(self, label="&Username:")
         self.username_text = wx.TextCtrl(self)
-        self.username_text.SetName("Username")
-        grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.username_text, 1, wx.EXPAND)
+        self._add_field(grid, "&Username:", self.username_text, "Username")
 
-        # Password
-        lbl = wx.StaticText(self, label="Pass&word:")
         self.password_text = wx.TextCtrl(self, style=wx.TE_PASSWORD)
-        self.password_text.SetName("Password")
-        grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(self.password_text, 1, wx.EXPAND)
+        self._add_field(grid, "Pass&word:", self.password_text, "Password")
 
         sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 10)
 
-        # Buttons
         btn_sizer = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         sizer.Add(btn_sizer, 0, wx.ALL | wx.EXPAND, 10)
 
@@ -67,7 +54,6 @@ class QuickConnectDialog(wx.Dialog):
         self.Fit()
         self.host_text.SetFocus()
 
-        # Update port when protocol changes
         self.protocol_choice.Bind(wx.EVT_CHOICE, self._on_protocol_change)
 
     def _on_protocol_change(self, event: wx.CommandEvent) -> None:

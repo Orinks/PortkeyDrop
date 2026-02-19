@@ -27,19 +27,23 @@ class SiteManagerDialog(wx.Dialog):
     def _build_ui(self) -> None:
         main_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Left panel: site list + buttons
         left_sizer = wx.BoxSizer(wx.VERTICAL)
-        lbl = wx.StaticText(self, label="&Saved Sites:")
-        left_sizer.Add(lbl, 0, wx.ALL, 4)
+        saved_sites_label = wx.StaticText(self, label="&Saved Sites:")
+        left_sizer.Add(saved_sites_label, 0, wx.ALL, 4)
 
         self.site_list = wx.ListBox(self)
         self.site_list.SetName("Saved Sites")
+        if hasattr(saved_sites_label, "SetLabelFor"):
+            saved_sites_label.SetLabelFor(self.site_list)
         left_sizer.Add(self.site_list, 1, wx.EXPAND | wx.ALL, 4)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.add_btn = wx.Button(self, label="&Add")
+        self.add_btn.SetName("Add Site")
         self.remove_btn = wx.Button(self, label="&Remove")
+        self.remove_btn.SetName("Remove Site")
         self.connect_btn = wx.Button(self, label="Co&nnect")
+        self.connect_btn.SetName("Connect Site")
         btn_sizer.Add(self.add_btn, 0, wx.RIGHT, 4)
         btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 4)
         btn_sizer.Add(self.connect_btn, 0)
@@ -47,7 +51,6 @@ class SiteManagerDialog(wx.Dialog):
 
         main_sizer.Add(left_sizer, 1, wx.EXPAND | wx.ALL, 4)
 
-        # Right panel: edit form
         right_sizer = wx.BoxSizer(wx.VERTICAL)
         grid = wx.FlexGridSizer(cols=2, vgap=6, hgap=6)
         grid.AddGrowableCol(1, 1)
@@ -68,36 +71,40 @@ class SiteManagerDialog(wx.Dialog):
             ctrl = ctrl_class(self, **kwargs)
             ctrl_name = label_text.replace("&", "").rstrip(":")
             ctrl.SetName(ctrl_name)
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(ctrl)
             setattr(self, attr_name, ctrl)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             if attr_name == "key_path_text":
                 row = wx.BoxSizer(wx.HORIZONTAL)
                 row.Add(ctrl, 1, wx.EXPAND)
-                browse_btn = wx.Button(self, label="&Browse...")
-                browse_btn.Bind(wx.EVT_BUTTON, self._on_browse_key)
-                row.Add(browse_btn, 0, wx.LEFT, 4)
+                self.browse_btn = wx.Button(self, label="&Browse...")
+                self.browse_btn.SetName("Browse Key Path")
+                self.browse_btn.Bind(wx.EVT_BUTTON, self._on_browse_key)
+                row.Add(self.browse_btn, 0, wx.LEFT, 4)
                 grid.Add(row, 1, wx.EXPAND)
             else:
                 grid.Add(ctrl, 1, wx.EXPAND)
 
         right_sizer.Add(grid, 1, wx.EXPAND | wx.ALL, 4)
 
-        save_btn = wx.Button(self, label="&Save")
-        right_sizer.Add(save_btn, 0, wx.ALL | wx.ALIGN_RIGHT, 4)
+        self.save_btn = wx.Button(self, label="&Save")
+        self.save_btn.SetName("Save Site")
+        right_sizer.Add(self.save_btn, 0, wx.ALL | wx.ALIGN_RIGHT, 4)
 
         main_sizer.Add(right_sizer, 2, wx.EXPAND | wx.ALL, 4)
 
         self.SetSizer(main_sizer)
 
-        # Set default protocol selection
         self.protocol_choice.SetSelection(0)
 
-        # Events
         self.site_list.Bind(wx.EVT_LISTBOX, self._on_site_selected)
         self.add_btn.Bind(wx.EVT_BUTTON, self._on_add)
         self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
         self.connect_btn.Bind(wx.EVT_BUTTON, self._on_connect)
-        save_btn.Bind(wx.EVT_BUTTON, self._on_save)
+        self.save_btn.Bind(wx.EVT_BUTTON, self._on_save)
+
+        self.site_list.SetFocus()
 
     def _refresh_site_list(self) -> None:
         self.site_list.Clear()
@@ -133,7 +140,6 @@ class SiteManagerDialog(wx.Dialog):
         site = Site(name="New Site")
         self._site_manager.add(site)
         self._refresh_site_list()
-        # Select the new site
         self.site_list.SetSelection(self.site_list.GetCount() - 1)
         self._selected_site = site
         self._populate_form(site)
