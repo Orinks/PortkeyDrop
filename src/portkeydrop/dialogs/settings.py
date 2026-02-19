@@ -24,8 +24,9 @@ class SettingsDialog(wx.Dialog):
         self._populate()
         self.SetName("Settings Dialog")
 
-        self.Bind(wx.EVT_SHOW, self._on_show)
-        wx.CallAfter(self._refresh_spin_contexts)
+        # Keep initialization simple/stable across wx builds.
+        self._refresh_spin_contexts()
+        wx.CallAfter(self.notebook.SetFocus)
 
     def _build_ui(self) -> None:
         root = wx.BoxSizer(wx.VERTICAL)
@@ -117,11 +118,6 @@ class SettingsDialog(wx.Dialog):
         for spin in self._spin_controls:
             self._set_spin_context(spin, spin.GetName())
 
-    def _on_show(self, event: wx.ShowEvent) -> None:
-        if event.IsShown():
-            self._refresh_spin_contexts()
-            wx.CallAfter(self.notebook.SetFocus)
-        event.Skip()
 
     def _build_transfer_tab(self) -> None:
         panel, sizer = self._new_tab_panel()

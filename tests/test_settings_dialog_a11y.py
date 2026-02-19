@@ -259,15 +259,11 @@ def test_spin_controls_name_inner_editor_with_field_context(monkeypatch):
         assert editor.GetName() == f"{spin.GetName()} value"
 
 
-def test_settings_dialog_focuses_tab_control_on_show(monkeypatch):
+def test_settings_dialog_focuses_tab_control_on_open(monkeypatch):
     module = _load_settings_dialog_module(monkeypatch)
     dlg = module.SettingsDialog(None, Settings())
 
-    show_event = _FakeEvent(shown=True)
-    dlg._on_show(show_event)
-
     assert dlg.notebook.focused is True
-    assert show_event.skipped is True
 
 
 def test_menu_bar_order_contract_not_changed():
