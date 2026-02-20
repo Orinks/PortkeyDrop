@@ -105,8 +105,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 wxPython
-        pip install -r requirements-dev.txt
-        pip install -e .
+        pip install -e ".[dev]"
 
     - name: Run tests with coverage (headless via xvfb)
       env:
