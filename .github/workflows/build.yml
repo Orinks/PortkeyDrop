@@ -1,0 +1,196 @@
+name: Build
+
+on:
+  schedule:
+    - cron: "30 3 * * *"  # Nightly at 3:30 UTC
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip release creation'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.check.outputs.version }}
+      is_nightly: ${{ steps.check.outputs.is_nightly }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'dev' }}
+          fetch-depth: 0
+
+      - name: Check build conditions
+        id: check
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "is_nightly=false" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "is_nightly=true" >> $GITHUB_OUTPUT
+            echo "tag=nightly-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
+
+            if [ -z "$LAST_TAG" ]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+            else
+              USER_FACING_COUNT=$(git log "$LAST_TAG"..HEAD --pretty='%s' --no-merges --first-parent | \
+                grep -Ei '^(feat|fix|perf|security)(\([^)]+\))?:' | \
+                grep -Eiv '^fix\((test|ci|build|chore|docs|style|refactor)\):' | \
+                wc -l | tr -d ' ')
+
+              if [ "${USER_FACING_COUNT:-0}" -gt 0 ]; then
+                echo "should_build=true" >> $GITHUB_OUTPUT
+              else
+                echo "should_build=false" >> $GITHUB_OUTPUT
+              fi
+            fi
+          fi
+
+  build-windows:
+    name: Windows
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .[dev] pyinstaller pillow
+
+      - name: Build wheel
+        run: |
+          pip install hatch
+          hatch build -t wheel
+
+      # TODO: Add PyInstaller + Inno Setup steps here once installer/ scripts exist
+      # - name: Build exe
+      #   run: python installer/create_installer.py
+      # - name: Create installer
+      #   run: "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\portkeydrop.iss
+
+      - name: Rename wheel for release
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          IS_NIGHTLY="${{ needs.prepare.outputs.is_nightly }}"
+          TIMESTAMP=$(date -u +%Y%m%d)
+          mkdir -p assets
+
+          for f in dist/*.whl; do
+            [ -f "$f" ] || continue
+            if [ "$IS_NIGHTLY" = "true" ]; then
+              cp "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}.whl"
+            else
+              cp "$f" "assets/PortkeyDrop-${VERSION}.whl"
+            fi
+          done
+
+          cd assets && sha256sum * > checksums.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows
+          path: assets/
+
+  release:
+    name: Release
+    needs: [prepare, build-windows]
+    if: always() && needs.prepare.outputs.should_build == 'true' && needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Generate release notes
+        id: notes
+        env:
+          IS_NIGHTLY: ${{ needs.prepare.outputs.is_nightly }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if [ "$IS_NIGHTLY" = "true" ]; then
+            LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
+            if [ -n "$LAST_TAG" ]; then
+              git log "$LAST_TAG"..HEAD --oneline --no-merges --first-parent | \
+                grep -Ei '^[a-f0-9]+ (feat|fix|perf|security)(\([^)]+\))?:' | \
+                grep -Eiv '^[a-f0-9]+ fix\((test|ci|build|chore|docs|style|refactor)\):' | \
+                sed 's/^/- /' > notes.md
+              [ -s notes.md ] || echo "- No user-facing changes" > notes.md
+            else
+              echo "Initial nightly build" > notes.md
+            fi
+          else
+            PREV_TAG=$(git tag --list "v[0-9]*" --sort=-version:refname | grep -v "v${VERSION}" | head -1)
+            npx git-cliff@latest ${PREV_TAG:+"$PREV_TAG"..HEAD} --tag "v${VERSION}" \
+              --ignore-tags "nightly-.*" --strip header --strip all 2>/dev/null > notes.md || true
+            if [ ! -s notes.md ]; then
+              echo "See [CHANGELOG.md](https://github.com/Orinks/PortkeyDrop/blob/main/CHANGELOG.md) for full release notes." > notes.md
+            fi
+          fi
+
+      - name: Create release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_NIGHTLY: ${{ needs.prepare.outputs.is_nightly }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          if [ "$IS_NIGHTLY" = "true" ]; then
+            gh release delete "$TAG" -y --cleanup-tag 2>/dev/null || true
+            gh release create "$TAG" assets/* --notes-file notes.md \
+              --title "Nightly $(date -u +%Y-%m-%d)" --prerelease --target dev
+          else
+            if gh release view "$TAG" &>/dev/null; then
+              gh release upload "$TAG" assets/* --clobber
+            else
+              gh release create "$TAG" assets/* --notes-file notes.md \
+                --title "PortkeyDrop v${VERSION}"
+            fi
+          fi
+
+      - name: Trigger pages update
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run update-pages.yml || true

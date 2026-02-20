@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PortkeyDrop — Accessible File Transfer</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #1a1a2e;
+            background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+            min-height: 100vh;
+        }
+
+        .container { max-width: 960px; margin: 0 auto; padding: 32px 20px; }
+
+        header {
+            text-align: center;
+            color: white;
+            padding: 48px 0 40px;
+        }
+        header h1 { font-size: 2.8rem; margin-bottom: 12px; }
+        header p { font-size: 1.15rem; opacity: 0.85; max-width: 600px; margin: 0 auto; }
+
+        .badge {
+            display: inline-block;
+            background: #e94560;
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 3px 10px;
+            border-radius: 12px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 28px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+        }
+
+        .card h2 { font-size: 1.6rem; margin-bottom: 6px; color: #0f3460; }
+        .card .meta { color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+
+        .download-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .dl-btn {
+            display: block;
+            text-align: center;
+            padding: 14px 18px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: opacity 0.15s;
+        }
+        .dl-btn:hover, .dl-btn:focus { opacity: 0.85; outline: 3px solid #e94560; }
+        .dl-btn.primary { background: #0f3460; color: white; }
+        .dl-btn.secondary { background: #e94560; color: white; }
+        .dl-btn.tertiary { background: #f0f4f8; color: #0f3460; border: 2px solid #0f3460; }
+        .dl-btn small { display: block; font-weight: 400; font-size: 0.8rem; opacity: 0.8; margin-top: 2px; }
+
+        .release-notes { border-top: 1px solid #eee; padding-top: 20px; margin-top: 20px; }
+        .release-notes h3 { font-size: 1rem; color: #555; margin-bottom: 10px; }
+        .release-notes ul { padding-left: 20px; }
+        .release-notes li { margin-bottom: 4px; }
+
+        .stats { display: flex; gap: 24px; margin-top: 12px; font-size: 0.88rem; color: #888; }
+
+        footer {
+            text-align: center;
+            color: rgba(255,255,255,0.55);
+            font-size: 0.85rem;
+            padding: 24px 0 32px;
+        }
+        footer a { color: rgba(255,255,255,0.75); }
+
+        @media (max-width: 500px) {
+            header h1 { font-size: 2rem; }
+            .download-grid { grid-template-columns: 1fr; }
+        }
+
+        /* Screen reader helpers */
+        .sr-only {
+            position: absolute; width: 1px; height: 1px;
+            padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <header>
+        <h1>🗝️ PortkeyDrop</h1>
+        <p>A keyboard-driven, screen-reader-friendly file transfer client for FTP, SFTP, FTPS, SCP, and WebDAV.</p>
+    </header>
+
+    <main>
+
+        <!-- Stable Release -->
+        <section class="card" aria-labelledby="stable-heading">
+            <h2 id="stable-heading">
+                Stable Release
+                <span class="badge">v{{MAIN_VERSION}}</span>
+            </h2>
+            <p class="meta">Released: {{MAIN_DATE}}</p>
+
+            <div class="download-grid">
+                <a href="{{MAIN_INSTALLER_URL}}" class="dl-btn primary" aria-label="Download Windows installer for PortkeyDrop {{MAIN_VERSION}}">
+                    🪟 Windows Installer
+                    <small>{{MAIN_INSTALLER_DOWNLOADS}} downloads</small>
+                </a>
+                <a href="{{MAIN_PORTABLE_URL}}" class="dl-btn secondary" aria-label="Download portable ZIP for PortkeyDrop {{MAIN_VERSION}}">
+                    📦 Portable ZIP
+                    <small>{{MAIN_PORTABLE_DOWNLOADS}} downloads</small>
+                </a>
+                <a href="{{MAIN_WHEEL_URL}}" class="dl-btn tertiary" aria-label="Download Python wheel for PortkeyDrop {{MAIN_VERSION}}">
+                    🐍 Python Wheel
+                    <small>{{MAIN_WHEEL_DOWNLOADS}} downloads</small>
+                </a>
+            </div>
+
+            <div class="stats" aria-label="Download statistics">
+                <span>📥 Total downloads: <strong>{{MAIN_TOTAL_DOWNLOADS}}</strong></span>
+            </div>
+
+            <div class="release-notes" aria-label="Release notes">
+                <h3>What's new</h3>
+                {{MAIN_RELEASE_NOTES}}
+            </div>
+        </section>
+
+        <!-- Nightly / Pre-release -->
+        <section class="card" aria-labelledby="nightly-heading">
+            <h2 id="nightly-heading">
+                Nightly Build
+                <span class="badge" style="background:#888;">{{DEV_VERSION}}</span>
+            </h2>
+            <p class="meta">Built: {{DEV_DATE}} · <a href="{{DEV_RELEASE_URL}}">View on GitHub</a></p>
+
+            <div class="download-grid">
+                <a href="{{DEV_INSTALLER_URL}}" class="dl-btn primary" aria-label="Download nightly Windows installer">
+                    🪟 Windows Installer
+                    <small>{{DEV_INSTALLER_DOWNLOADS}} downloads</small>
+                </a>
+                <a href="{{DEV_PORTABLE_URL}}" class="dl-btn secondary" aria-label="Download nightly portable ZIP">
+                    📦 Portable ZIP
+                    <small>{{DEV_PORTABLE_DOWNLOADS}} downloads</small>
+                </a>
+                <a href="{{DEV_WHEEL_URL}}" class="dl-btn tertiary" aria-label="Download nightly Python wheel">
+                    🐍 Python Wheel
+                    <small>{{DEV_WHEEL_DOWNLOADS}} downloads</small>
+                </a>
+            </div>
+
+            <p style="font-size:0.88rem;color:#888;margin-top:8px;">
+                ⚠️ Nightly builds may be unstable. Use the stable release for everyday use.
+            </p>
+
+            <div class="release-notes" aria-label="Nightly release notes">
+                <h3>Changes in this build</h3>
+                {{DEV_RELEASE_NOTES}}
+            </div>
+        </section>
+
+    </main>
+
+    <footer>
+        <p>
+            <a href="https://github.com/Orinks/PortkeyDrop">GitHub</a> ·
+            <a href="https://github.com/Orinks/PortkeyDrop/issues">Report an issue</a> ·
+            Page updated: {{LAST_UPDATED}}
+        </p>
+    </footer>
+
+</div>
+</body>
+</html>
