@@ -17,6 +17,7 @@ from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, SFTPC
 @pytest.fixture
 def sftp_info():
     """Create a base SFTP ConnectionInfo for testing."""
+
     def _make(**overrides):
         defaults = dict(
             protocol=Protocol.SFTP,
@@ -27,6 +28,7 @@ def sftp_info():
         )
         defaults.update(overrides)
         return ConnectionInfo(**defaults)
+
     return _make
 
 
@@ -134,12 +136,8 @@ class TestHostKeyPolicyAppliedDuringConnect:
         _, mock_ssh = mock_ssh_client
         call_order: list[str] = []
 
-        mock_ssh.set_missing_host_key_policy.side_effect = (
-            lambda p: call_order.append("set_policy")
-        )
-        mock_ssh.load_system_host_keys.side_effect = (
-            lambda: call_order.append("load_keys")
-        )
+        mock_ssh.set_missing_host_key_policy.side_effect = lambda p: call_order.append("set_policy")
+        mock_ssh.load_system_host_keys.side_effect = lambda: call_order.append("load_keys")
         mock_ssh.connect.side_effect = lambda **kw: call_order.append("connect")
 
         info = sftp_info(host_key_policy=HostKeyPolicy.STRICT)

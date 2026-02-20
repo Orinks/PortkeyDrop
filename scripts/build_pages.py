@@ -111,9 +111,7 @@ def build_pages() -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     releases_url = f"https://github.com/{repo}/releases"
 
-    releases = request_json(
-        f"https://api.github.com/repos/{repo}/releases?per_page=100", token
-    )
+    releases = request_json(f"https://api.github.com/repos/{repo}/releases?per_page=100", token)
     stable = latest_release(releases, False)
     prerelease = latest_release(releases, True)
 

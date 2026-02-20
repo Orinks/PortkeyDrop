@@ -110,7 +110,9 @@ class TestSFTPClientConnect:
         assert client._connected is False
 
     @patch("paramiko.SSHClient")
-    def test_logs_authentication_methods(self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    def test_logs_authentication_methods(
+        self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -131,7 +133,9 @@ class TestSFTPClientConnect:
         assert "SSH authentication succeeded" in text
 
     @patch("paramiko.SSHClient")
-    def test_logs_agent_unavailable_error(self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture) -> None:
+    def test_logs_agent_unavailable_error(
+        self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         mock_ssh = MagicMock()
         mock_cls.return_value = mock_ssh
         mock_ssh.connect.side_effect = paramiko.SSHException("Error connecting to agent")
@@ -160,7 +164,9 @@ class TestSFTPClientConnect:
         )
         client = SFTPClient(info)
 
-        with pytest.raises(ConnectionError, match="trying SSH agent, default key files, and password"):
+        with pytest.raises(
+            ConnectionError, match="trying SSH agent, default key files, and password"
+        ):
             client.connect()
 
     @patch("paramiko.SSHClient")

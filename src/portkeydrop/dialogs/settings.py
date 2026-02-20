@@ -183,17 +183,21 @@ class SettingsDialog(wx.Dialog):
         panel, sizer = self._new_tab_panel()
 
         self.concurrent_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Concurrent transfers:",
             control_name="Concurrent transfers count",
-            min_val=1, max_val=10,
+            min_val=1,
+            max_val=10,
         )
 
         self.overwrite_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Overwrite mode:",
             make_control=lambda p: wx.Choice(
-                p, choices=["ask", "overwrite", "skip", "rename"],
+                p,
+                choices=["ask", "overwrite", "skip", "rename"],
             ),
             control_name="Overwrite mode",
         )
@@ -217,7 +221,8 @@ class SettingsDialog(wx.Dialog):
         )
 
         self.download_dir_text = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Download directory:",
             make_control=lambda p: wx.TextCtrl(p),
             control_name="Download directory",
@@ -236,10 +241,12 @@ class SettingsDialog(wx.Dialog):
         )
 
         self.progress_interval_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Progress interval (%):",
             control_name="Progress interval",
-            min_val=5, max_val=50,
+            min_val=5,
+            max_val=50,
         )
 
         self.show_hidden_check = self._add_checkbox_row(
@@ -249,10 +256,12 @@ class SettingsDialog(wx.Dialog):
         )
 
         self.sort_by_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Sort by:",
             make_control=lambda p: wx.Choice(
-                p, choices=["name", "size", "modified", "type"],
+                p,
+                choices=["name", "size", "modified", "type"],
             ),
             control_name="Sort by",
         )
@@ -264,7 +273,8 @@ class SettingsDialog(wx.Dialog):
         )
 
         self.date_format_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Date format:",
             make_control=lambda p: wx.Choice(p, choices=["relative", "absolute"]),
             control_name="Date format",
@@ -277,31 +287,38 @@ class SettingsDialog(wx.Dialog):
         panel, sizer = self._new_tab_panel()
 
         self.default_proto_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Default protocol:",
             make_control=lambda p: wx.Choice(p, choices=["sftp", "ftp", "ftps"]),
             control_name="Default protocol",
         )
 
         self.timeout_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Timeout (seconds):",
             control_name="Connection timeout",
-            min_val=5, max_val=300,
+            min_val=5,
+            max_val=300,
         )
 
         self.keepalive_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Keepalive (seconds):",
             control_name="Keepalive interval",
-            min_val=0, max_val=600,
+            min_val=0,
+            max_val=600,
         )
 
         self.retries_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="Max &retries:",
             control_name="Maximum retries",
-            min_val=0, max_val=10,
+            min_val=0,
+            max_val=10,
         )
 
         self.passive_check = self._add_checkbox_row(
@@ -311,7 +328,8 @@ class SettingsDialog(wx.Dialog):
         )
 
         self.verify_keys_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Verify host keys:",
             make_control=lambda p: wx.Choice(p, choices=["ask", "always", "never"]),
             control_name="Verify host keys",
@@ -330,24 +348,30 @@ class SettingsDialog(wx.Dialog):
         panel, sizer = self._new_tab_panel()
 
         self.speech_rate_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Rate:",
             control_name="Speech rate",
-            min_val=0, max_val=100,
+            min_val=0,
+            max_val=100,
         )
 
         self.speech_volume_spin = self._add_spin_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="&Volume:",
             control_name="Speech volume",
-            min_val=0, max_val=100,
+            min_val=0,
+            max_val=100,
         )
 
         self.verbosity_choice = self._add_labeled_row(
-            panel, sizer,
+            panel,
+            sizer,
             label="V&erbosity:",
             make_control=lambda p: wx.Choice(
-                p, choices=["minimal", "normal", "verbose"],
+                p,
+                choices=["minimal", "normal", "verbose"],
             ),
             control_name="Speech verbosity",
         )
@@ -385,9 +409,7 @@ class SettingsDialog(wx.Dialog):
         self.passive_check.SetValue(s.connection.passive_mode)
         idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
         self.verify_keys_choice.SetSelection(idx)
-        self.remember_local_folder_check.SetValue(
-            s.app.remember_last_local_folder_on_startup
-        )
+        self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
         # Speech
         self.speech_rate_spin.SetValue(s.speech.rate)
         self.speech_volume_spin.SetValue(s.speech.volume)
@@ -416,12 +438,8 @@ class SettingsDialog(wx.Dialog):
         s.connection.keepalive = self.keepalive_spin.GetValue()
         s.connection.max_retries = self.retries_spin.GetValue()
         s.connection.passive_mode = self.passive_check.GetValue()
-        s.connection.verify_host_keys = (
-            self.verify_keys_choice.GetStringSelection()
-        )
-        s.app.remember_last_local_folder_on_startup = (
-            self.remember_local_folder_check.GetValue()
-        )
+        s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
+        s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
 
         s.speech.rate = self.speech_rate_spin.GetValue()
         s.speech.volume = self.speech_volume_spin.GetValue()

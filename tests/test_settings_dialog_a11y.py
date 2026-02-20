@@ -218,20 +218,14 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
 
     for attr, name in expected.items():
         control = getattr(dlg, attr)
-        assert control.GetName() == name, (
-            f"{attr}: expected {name!r}, got {control.GetName()!r}"
-        )
+        assert control.GetName() == name, f"{attr}: expected {name!r}, got {control.GetName()!r}"
 
 
 def test_labeled_controls_have_label_for_links(monkeypatch):
     """Non-checkbox controls must be linked to their label via SetLabelFor."""
     dlg = _load_dialog(monkeypatch)
 
-    linked = {
-        lbl._label_for
-        for lbl in _StaticText.created
-        if lbl._label_for is not None
-    }
+    linked = {lbl._label_for for lbl in _StaticText.created if lbl._label_for is not None}
 
     controls_needing_labels = [
         "concurrent_spin",
@@ -262,7 +256,7 @@ def test_label_hwnd_created_before_control(monkeypatch):
     If a control's HWND is created before its label, NVDA picks up the
     wrong label or none at all.
     """
-    dlg = _load_dialog(monkeypatch)
+    _load_dialog(monkeypatch)
 
     for lbl in _StaticText.created:
         if lbl._label_for is None:
@@ -294,8 +288,7 @@ def test_spin_inner_editors_carry_field_context(monkeypatch):
         editor = spin.GetChildren()[0]
         expected = f"{spin.GetName()} value"
         assert editor.GetName() == expected, (
-            f"inner editor of {spin.GetName()!r}: expected {expected!r}, "
-            f"got {editor.GetName()!r}"
+            f"inner editor of {spin.GetName()!r}: expected {expected!r}, got {editor.GetName()!r}"
         )
 
 
