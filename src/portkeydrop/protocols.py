@@ -16,6 +16,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
 
 from portkeydrop.host_key_policy import InteractiveHostKeyPolicy
+import portkeydrop.ssh_utils as _ssh_utils  # noqa: F401 — imported for side-effect (SSH banner patch)
 
 if TYPE_CHECKING:
     import paramiko

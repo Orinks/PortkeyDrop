@@ -11,6 +11,20 @@ import platform
 
 import paramiko
 
+from portkeydrop import __version__
+
+# Patch Paramiko's SSH banner so server logs show "PortkeyDrop" instead of
+# "paramiko". This runs once at import time and affects all Transports.
+_original_transport_init = paramiko.Transport.__init__
+
+
+def _portkeydrop_transport_init(self, *args, **kwargs):
+    _original_transport_init(self, *args, **kwargs)
+    self.local_version = f"SSH-2.0-PortkeyDrop_{__version__}"
+
+
+paramiko.Transport.__init__ = _portkeydrop_transport_init
+
 
 def check_ssh_agent_available() -> bool:
     """Check whether an SSH agent is available on the current platform.
