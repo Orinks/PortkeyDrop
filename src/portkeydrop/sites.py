@@ -220,6 +220,10 @@ class SiteManager:
         for site in self._sites:
             if site.password:
                 self._passwords.store(site.id, site.password)
+            else:
+                # Password was cleared — remove it from secure storage so it
+                # doesn't get restored from keyring/vault on next load()
+                self._passwords.delete(site.id)
         data = []
         for site in self._sites:
             d = asdict(site)
