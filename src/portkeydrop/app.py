@@ -23,7 +23,7 @@ from portkeydrop.local_files import (
     parent_local,
     rename_local,
 )
-from portkeydrop.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
+from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
 from portkeydrop.settings import (
     load_settings,
     resolve_startup_local_folder,
@@ -361,6 +361,7 @@ class MainFrame(wx.Frame):
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
+            host_key_policy=self._host_key_policy(),
         )
         self._do_connect(info)
 
@@ -379,6 +380,7 @@ class MainFrame(wx.Frame):
         info = None
         if result == wx.ID_OK and dlg.connect_requested and dlg.selected_site:
             info = dlg.selected_site.to_connection_info()
+            info.host_key_policy = self._host_key_policy()
         dlg.Destroy()
         if info:
             self._do_connect(info)
@@ -415,6 +417,16 @@ class MainFrame(wx.Frame):
             self._site_manager.add(site)
             self._announce(f"Site '{name}' saved")
         dlg.Destroy()
+
+    def _host_key_policy(self) -> HostKeyPolicy:
+        """Map the verify_host_keys setting string to a HostKeyPolicy enum value."""
+        mapping = {
+            "ask": HostKeyPolicy.PROMPT,
+            "always": HostKeyPolicy.AUTO_ADD,
+            "never": HostKeyPolicy.STRICT,
+        }
+        setting = getattr(self._settings.connection, "verify_host_keys", "ask")
+        return mapping.get(setting, HostKeyPolicy.PROMPT)
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
