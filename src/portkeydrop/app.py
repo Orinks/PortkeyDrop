@@ -14,8 +14,11 @@ from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
 from portkeydrop.dialogs.site_manager import SiteManagerDialog
 from portkeydrop.dialogs.transfer import (
+    TransferDirection,
+    TransferStatus,
     TransferManager,
     create_transfer_dialog,
+    get_transfer_event_binder,
 )
 from portkeydrop.local_files import (
     delete_local,
@@ -75,6 +78,7 @@ class MainFrame(wx.Frame):
         self._settings = load_settings()
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
+        self._transfer_state_by_id: dict[int, str] = {}
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -327,6 +331,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
+        self.Bind(get_transfer_event_binder(), self._on_transfer_update)
 
         # Toolbar connect button
         self.tb_connect_btn.Bind(wx.EVT_BUTTON, self._on_connect_toolbar)
@@ -962,10 +967,12 @@ class MainFrame(wx.Frame):
                 return
             self._transfer_manager.add_recursive_upload(self._client, local_path, remote_path)
             self._announce(f"Uploading folder {filename}")
+            self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
             self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
             self._announce(f"Uploading {filename}")
+            self._update_status(f"Uploading {filename}...", self._client.cwd)
         self._show_transfer_queue()
 
     def _get_clipboard_files(self) -> list[str]:
@@ -1004,6 +1011,9 @@ class MainFrame(wx.Frame):
             count += 1
         if count:
             self._announce(f"Uploading {count} item{'s' if count != 1 else ''} from clipboard")
+            self._update_status(
+                f"Uploading {count} item{'s' if count != 1 else ''}...", self._client.cwd
+            )
             self._show_transfer_queue()
 
     def _paste_local(self) -> None:
@@ -1060,13 +1070,16 @@ class MainFrame(wx.Frame):
         )
         if result == wx.YES:
             try:
+                self._update_status(f"Deleting {f.name}...", self._client.cwd)
                 if f.is_dir:
                     self._client.rmdir(f.path)
                 else:
                     self._client.delete(f.path)
                 self._announce(f"Deleted {f.name}")
+                self._update_status("Delete complete.", self._client.cwd)
                 self._refresh_remote_files()
             except Exception as e:
+                self._update_status("Delete failed.", self._client.cwd)
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _delete_local(self) -> None:
@@ -1102,10 +1115,13 @@ class MainFrame(wx.Frame):
                 parent = str(PurePosixPath(f.path).parent)
                 new_path = f"{parent.rstrip('/')}/{new_name}"
                 try:
+                    self._update_status(f"Renaming {f.name}...", self._client.cwd)
                     self._client.rename(f.path, new_path)
                     self._announce(f"Renamed to {new_name}")
+                    self._update_status("Rename complete.", self._client.cwd)
                     self._refresh_remote_files()
                 except Exception as e:
+                    self._update_status("Rename failed.", self._client.cwd)
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
@@ -1142,10 +1158,13 @@ class MainFrame(wx.Frame):
             if name:
                 path = f"{self._client.cwd.rstrip('/')}/{name}"
                 try:
+                    self._update_status(f"Creating directory {name}...", self._client.cwd)
                     self._client.mkdir(path)
                     self._announce(f"Created directory {name}")
+                    self._update_status("Directory created.", self._client.cwd)
                     self._refresh_remote_files()
                 except Exception as e:
+                    self._update_status("Create directory failed.", self._client.cwd)
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                     )
@@ -1182,7 +1201,30 @@ class MainFrame(wx.Frame):
         self._show_transfer_queue()
 
     def _on_transfer_update(self, event) -> None:
-        pass
+        latest_status_message = None
+        for transfer in self._transfer_manager.transfers:
+            current_state = transfer.status.value
+            previous_state = self._transfer_state_by_id.get(transfer.id)
+            if current_state == previous_state:
+                continue
+
+            self._transfer_state_by_id[transfer.id] = current_state
+            direction_label = (
+                "Upload" if transfer.direction == TransferDirection.UPLOAD else "Download"
+            )
+
+            if transfer.status == TransferStatus.IN_PROGRESS:
+                latest_status_message = f"{direction_label} in progress..."
+            elif transfer.status == TransferStatus.COMPLETED:
+                latest_status_message = f"{direction_label} complete."
+            elif transfer.status == TransferStatus.FAILED:
+                latest_status_message = f"{direction_label} failed."
+            elif transfer.status == TransferStatus.CANCELLED:
+                latest_status_message = f"{direction_label} cancelled."
+
+        if latest_status_message:
+            current_path = self._client.cwd if self._client and self._client.connected else ""
+            self._update_status(latest_status_message, current_path)
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
         dlg = SettingsDialog(self, self._settings)
