@@ -90,40 +90,37 @@ jobs:
       - name: Install dependencies
         run: pip install -e .[dev] pyinstaller pillow
 
-      - name: Build wheel
+      - name: Build
         run: |
-          pip install hatch
-          hatch build -t wheel
+          python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
+          python -m PyInstaller --clean --noconfirm installer/portkeydrop.spec
 
-      # TODO: Add PyInstaller + Inno Setup steps here once installer/ scripts exist
-      # - name: Build exe
-      #   run: python installer/create_installer.py
-      # - name: Create installer
-      #   run: "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\portkeydrop.iss
-
-      - name: Rename wheel for release
-        shell: bash
+      - name: Create installer
+        shell: cmd
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          IS_NIGHTLY="${{ needs.prepare.outputs.is_nightly }}"
-          TIMESTAMP=$(date -u +%Y%m%d)
-          mkdir -p assets
+          echo [version]> dist\version.txt
+          echo value=${{ needs.prepare.outputs.version }}>> dist\version.txt
+          choco install innosetup -y --no-progress
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\portkeydrop.iss
 
-          for f in dist/*.whl; do
-            [ -f "$f" ] || continue
-            if [ "$IS_NIGHTLY" = "true" ]; then
-              cp "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}.whl"
-            else
-              cp "$f" "assets/PortkeyDrop-${VERSION}.whl"
-            fi
-          done
-
-          cd assets && sha256sum * > checksums.txt 2>/dev/null || true
+      - name: Create portable ZIP
+        shell: cmd
+        run: |
+          cd dist
+          if exist "PortkeyDrop_dir" (
+            cd PortkeyDrop_dir
+            7z a -tzip "..\PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" *
+            cd ..
+          ) else (
+            7z a -tzip "PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" "PortkeyDrop.exe"
+          )
 
       - uses: actions/upload-artifact@v6
         with:
           name: windows
-          path: assets/
+          path: |
+            dist/PortkeyDrop_Setup_*.exe
+            dist/PortkeyDrop_Portable_*.zip
 
   release:
     name: Release
@@ -138,16 +135,41 @@ jobs:
 
       - uses: actions/download-artifact@v7
         with:
-          path: assets
+          path: dist
           merge-multiple: true
 
-      - name: Generate release notes
-        id: notes
+      - name: Prepare release
+        id: prep
         env:
           IS_NIGHTLY: ${{ needs.prepare.outputs.is_nightly }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          mkdir -p assets
+          TIMESTAMP=$(date -u +%Y%m%d)
+
+          # Rename assets based on release type
+          for f in dist/*.exe dist/*.zip; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            if [ "$IS_NIGHTLY" = "true" ]; then
+              case "$name" in
+                *Setup*.exe) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-setup.exe" ;;
+                *Portable*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-portable.zip" ;;
+              esac
+            else
+              case "$name" in
+                *Setup*.exe) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-setup.exe" ;;
+                *Portable*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-portable.zip" ;;
+              esac
+            fi
+          done
+
+          # Generate checksums
+          cd assets && sha256sum * > checksums.txt 2>/dev/null || true
+
+          # Generate release notes
+          cd ..
           if [ "$IS_NIGHTLY" = "true" ]; then
             LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
             if [ -n "$LAST_TAG" ]; then
