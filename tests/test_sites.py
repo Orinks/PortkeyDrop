@@ -232,9 +232,20 @@ class TestKeyringBackend:
         import json
 
         site_id = "legacy-site-id"
-        data = [{"id": site_id, "name": "Old", "host": "old.com", "password": "oldpass",
-                 "protocol": "sftp", "port": 22, "username": "user", "key_path": "",
-                 "initial_dir": "/", "notes": ""}]
+        data = [
+            {
+                "id": site_id,
+                "name": "Old",
+                "host": "old.com",
+                "password": "oldpass",
+                "protocol": "sftp",
+                "port": 22,
+                "username": "user",
+                "key_path": "",
+                "initial_dir": "/",
+                "notes": "",
+            }
+        ]
         (tmp_path / "sites.json").write_text(json.dumps(data))
 
         mgr = SiteManager(tmp_path)
@@ -289,9 +300,20 @@ class TestVaultBackend:
         import json
 
         site_id = "legacy-vault"
-        data = [{"id": site_id, "name": "Old", "host": "old.com", "password": "oldpw",
-                 "protocol": "sftp", "port": 22, "username": "user", "key_path": "",
-                 "initial_dir": "/", "notes": ""}]
+        data = [
+            {
+                "id": site_id,
+                "name": "Old",
+                "host": "old.com",
+                "password": "oldpw",
+                "protocol": "sftp",
+                "port": 22,
+                "username": "user",
+                "key_path": "",
+                "initial_dir": "/",
+                "notes": "",
+            }
+        ]
         (tmp_path / "sites.json").write_text(json.dumps(data))
 
         mgr = SiteManager(tmp_path)

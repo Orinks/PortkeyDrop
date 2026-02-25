@@ -5,6 +5,8 @@ dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+cov.json
 uv.lock
 
 # Security - credentials and keys

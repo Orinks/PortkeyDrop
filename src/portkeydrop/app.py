@@ -24,7 +24,12 @@ from portkeydrop.local_files import (
     rename_local,
 )
 from portkeydrop.protocols import ConnectionInfo, Protocol, RemoteFile, create_client
-from portkeydrop.settings import load_settings, save_settings
+from portkeydrop.settings import (
+    load_settings,
+    resolve_startup_local_folder,
+    save_settings,
+    update_last_local_folder,
+)
 from portkeydrop.sites import Site, SiteManager
 
 logger = logging.getLogger(__name__)
@@ -71,7 +76,8 @@ class MainFrame(wx.Frame):
         self._transfer_manager = TransferManager(notify_window=self)
         self._remote_filter_text = ""
         self._local_filter_text = ""
-        self._local_cwd = str(Path.home())
+        self._local_cwd = resolve_startup_local_folder(self._settings)
+        self._persist_local_folder_setting()
 
         self._build_menu()
         self._build_toolbar()
@@ -94,28 +100,14 @@ class MainFrame(wx.Frame):
         file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Exit application")
         menubar.Append(file_menu, "&File")
 
-        # Sites menu
-        sites_menu = wx.Menu()
-        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
-        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
-        sites_menu.AppendSeparator()
-        sites_menu.Append(
-            ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
-        )
-        menubar.Append(sites_menu, "S&ites")
-
-        # Transfer menu
-        transfer_menu = wx.Menu()
-        transfer_menu.Append(
-            ID_TRANSFER, "&Transfer\tCtrl+T", "Upload or download based on active pane"
-        )
-        transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
-        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
-        transfer_menu.AppendSeparator()
-        transfer_menu.Append(
-            ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
-        )
-        menubar.Append(transfer_menu, "&Transfer")
+        # Edit menu (for file operations)
+        edit_menu = wx.Menu()
+        edit_menu.Append(ID_DELETE, "De&lete\tDelete", "Delete selected file")
+        edit_menu.Append(ID_RENAME, "&Rename\tF2", "Rename selected file")
+        edit_menu.Append(ID_MKDIR, "&New Directory...\tCtrl+Shift+N", "Create new directory")
+        edit_menu.AppendSeparator()
+        edit_menu.Append(ID_PROPERTIES, "P&roperties...\tCtrl+I", "File properties")
+        menubar.Append(edit_menu, "&Edit")
 
         # View menu
         view_menu = wx.Menu()
@@ -134,14 +126,28 @@ class MainFrame(wx.Frame):
         view_menu.Append(ID_FILTER, "&Filter...\tCtrl+F", "Filter file list")
         menubar.Append(view_menu, "&View")
 
-        # Edit menu (for file operations)
-        edit_menu = wx.Menu()
-        edit_menu.Append(ID_DELETE, "De&lete\tDelete", "Delete selected file")
-        edit_menu.Append(ID_RENAME, "&Rename\tF2", "Rename selected file")
-        edit_menu.Append(ID_MKDIR, "&New Directory...\tCtrl+Shift+N", "Create new directory")
-        edit_menu.AppendSeparator()
-        edit_menu.Append(ID_PROPERTIES, "P&roperties...\tCtrl+I", "File properties")
-        menubar.Append(edit_menu, "&Edit")
+        # Transfer menu
+        transfer_menu = wx.Menu()
+        transfer_menu.Append(
+            ID_TRANSFER, "&Transfer\tCtrl+T", "Upload or download based on active pane"
+        )
+        transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
+        transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
+        transfer_menu.AppendSeparator()
+        transfer_menu.Append(
+            ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
+        )
+        menubar.Append(transfer_menu, "&Transfer")
+
+        # Sites menu
+        sites_menu = wx.Menu()
+        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
+        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
+        sites_menu.AppendSeparator()
+        sites_menu.Append(
+            ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
+        menubar.Append(sites_menu, "S&ites")
 
         # Help menu
         help_menu = wx.Menu()
@@ -418,9 +424,7 @@ class MainFrame(wx.Frame):
             wx.MessageBox("Please enter a username.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
         if not info.password and info.protocol in {Protocol.FTP, Protocol.FTPS, Protocol.WEBDAV}:
-            wx.MessageBox(
-                "Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self
-            )
+            wx.MessageBox("Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
         self._on_disconnect(None)
         try:
@@ -463,7 +467,7 @@ class MainFrame(wx.Frame):
     def _on_local_path_enter(self, event: wx.CommandEvent) -> None:
         path = self.local_path_bar.GetValue().strip()
         if path and Path(path).is_dir():
-            self._local_cwd = str(Path(path).resolve())
+            self._set_local_cwd(path)
             self._refresh_local_files()
         else:
             wx.MessageBox("Invalid directory path.", "Error", wx.OK | wx.ICON_ERROR, self)
@@ -484,7 +488,7 @@ class MainFrame(wx.Frame):
     def _on_home_dir(self, event: wx.CommandEvent) -> None:
         """Navigate to home directory in the focused pane."""
         if self._is_local_focused() or not self._client:
-            self._local_cwd = str(Path.home())
+            self._set_local_cwd(str(Path.home()))
             self._refresh_local_files()
             self._announce(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
@@ -498,9 +502,7 @@ class MainFrame(wx.Frame):
             self._refresh_remote_files()
             self._announce(f"Home: {self._client.cwd}")
         except Exception as e:
-            wx.MessageBox(
-                f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self
-            )
+            wx.MessageBox(f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_refresh(self, event: wx.CommandEvent) -> None:
         if self._is_local_focused():
@@ -566,6 +568,14 @@ class MainFrame(wx.Frame):
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
             )
+
+    def _set_local_cwd(self, path: str) -> None:
+        self._local_cwd = str(Path(path).expanduser().resolve())
+        self._persist_local_folder_setting()
+
+    def _persist_local_folder_setting(self) -> None:
+        if update_last_local_folder(self._settings, self._local_cwd):
+            save_settings(self._settings)
 
     # Keep _refresh_files for backward compat (calls remote refresh)
     def _refresh_files(self) -> None:
@@ -678,14 +688,18 @@ class MainFrame(wx.Frame):
     def _on_remote_item_activated(self, event: wx.ListEvent) -> None:
         f = self._get_selected_remote_file()
         if not f:
-            logger.warning("Remote item activated but no file selected (index: %s)", event.GetIndex())
+            logger.warning(
+                "Remote item activated but no file selected (index: %s)", event.GetIndex()
+            )
             return
         if not self._client:
             logger.warning("Remote item activated but no client")
             return
         logger.info(
             "Remote item activated: name=%r, is_dir=%s, path=%r",
-            f.name, f.is_dir, f.path,
+            f.name,
+            f.is_dir,
+            f.path,
         )
         if f.is_dir:
             try:
@@ -706,7 +720,7 @@ class MainFrame(wx.Frame):
         if not f:
             return
         if f.is_dir:
-            self._local_cwd = f.path
+            self._set_local_cwd(f.path)
             self._refresh_local_files()
         else:
             # Activate file on local = upload if connected
@@ -759,9 +773,7 @@ class MainFrame(wx.Frame):
             self._client.chdir(f.path)
             self._refresh_remote_files()
         except Exception as e:
-            wx.MessageBox(
-                f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
-            )
+            wx.MessageBox(f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_remote_context_menu(self, event: wx.ContextMenuEvent) -> None:
         """Show context menu for the remote file list."""
@@ -877,7 +889,7 @@ class MainFrame(wx.Frame):
     def _go_local_parent_dir(self) -> None:
         new_path = str(parent_local(self._local_cwd))
         if new_path != self._local_cwd:
-            self._local_cwd = new_path
+            self._set_local_cwd(new_path)
             self._refresh_local_files()
 
     # Keep old name for compat
@@ -957,14 +969,10 @@ class MainFrame(wx.Frame):
             filename = p.name
             remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
             if p.is_dir():
-                self._transfer_manager.add_recursive_upload(
-                    self._client, str(p), remote_path
-                )
+                self._transfer_manager.add_recursive_upload(self._client, str(p), remote_path)
             else:
                 total = os.path.getsize(str(p))
-                self._transfer_manager.add_upload(
-                    self._client, str(p), remote_path, total
-                )
+                self._transfer_manager.add_upload(self._client, str(p), remote_path, total)
             count += 1
         if count:
             self._announce(f"Uploading {count} item{'s' if count != 1 else ''} from clipboard")
@@ -1152,6 +1160,7 @@ class MainFrame(wx.Frame):
         dlg = SettingsDialog(self, self._settings)
         if dlg.ShowModal() == wx.ID_OK:
             self._settings = dlg.get_settings()
+            update_last_local_folder(self._settings, self._local_cwd)
             save_settings(self._settings)
             self._populate_file_list(
                 self.remote_file_list,

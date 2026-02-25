@@ -50,11 +50,18 @@ class SpeechSettings:
 
 
 @dataclass
+class AppSettings:
+    remember_last_local_folder_on_startup: bool = True
+    last_local_folder: str | None = None
+
+
+@dataclass
 class Settings:
     transfer: TransferSettings = field(default_factory=TransferSettings)
     display: DisplaySettings = field(default_factory=DisplaySettings)
     connection: ConnectionDefaults = field(default_factory=ConnectionDefaults)
     speech: SpeechSettings = field(default_factory=SpeechSettings)
+    app: AppSettings = field(default_factory=AppSettings)
 
 
 def load_settings(config_dir: Path = DEFAULT_CONFIG_DIR) -> Settings:
@@ -75,7 +82,46 @@ def save_settings(settings: Settings, config_dir: Path = DEFAULT_CONFIG_DIR) -> 
     config_dir.mkdir(parents=True, exist_ok=True)
     settings_path = config_dir / "settings.json"
     data = asdict(settings)
+    if not settings.app.remember_last_local_folder_on_startup:
+        data["app"]["last_local_folder"] = None
     settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def resolve_startup_local_folder(settings: Settings, fallback: str | None = None) -> str:
+    """Return the local folder to use on startup, falling back safely when needed."""
+    fallback_path = str(Path.home() if fallback is None else Path(fallback))
+    if not settings.app.remember_last_local_folder_on_startup:
+        return fallback_path
+
+    saved = settings.app.last_local_folder
+    if not saved:
+        return fallback_path
+
+    path = Path(saved).expanduser()
+    if path.is_dir():
+        return str(path.resolve())
+
+    logger.warning("Saved local folder is unavailable: %s", saved)
+    settings.app.last_local_folder = None
+    return fallback_path
+
+
+def update_last_local_folder(settings: Settings, path: str) -> bool:
+    """Update remembered local folder according to current app settings.
+
+    Returns True if settings were mutated.
+    """
+    if not settings.app.remember_last_local_folder_on_startup:
+        if settings.app.last_local_folder is not None:
+            settings.app.last_local_folder = None
+            return True
+        return False
+
+    resolved = str(Path(path).expanduser().resolve())
+    if settings.app.last_local_folder == resolved:
+        return False
+    settings.app.last_local_folder = resolved
+    return True
 
 
 def _dict_to_settings(data: dict) -> Settings:
@@ -107,6 +153,13 @@ def _dict_to_settings(data: dict) -> Settings:
                 k: v
                 for k, v in data.get("speech", {}).items()
                 if k in SpeechSettings.__dataclass_fields__
+            }
+        ),
+        app=AppSettings(
+            **{
+                k: v
+                for k, v in data.get("app", {}).items()
+                if k in AppSettings.__dataclass_fields__
             }
         ),
     )

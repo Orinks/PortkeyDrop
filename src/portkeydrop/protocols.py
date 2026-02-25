@@ -33,6 +33,7 @@ class Protocol(Enum):
 
 class HostKeyPolicy(Enum):
     """SSH host key verification policy."""
+
     AUTO_ADD = "auto_add"
     STRICT = "strict"
     PROMPT = "prompt"
@@ -401,7 +402,9 @@ class SFTPClient(TransferClient):
                 pageant_status = "not-checked"
                 if platform.system() == "Windows":
                     try:
-                        pageant_status = "available" if list(paramiko.Agent().get_keys()) else "running-no-keys"
+                        pageant_status = (
+                            "available" if list(paramiko.Agent().get_keys()) else "running-no-keys"
+                        )
                     except Exception as e:
                         pageant_status = f"error:{e}"
                 logger.debug(
@@ -435,7 +438,11 @@ class SFTPClient(TransferClient):
                 "Decrypt the key or use an agent/password."
             ) from e
         except paramiko.AuthenticationException as e:
-            logger.error("SFTP authentication failed for %s. Methods attempted: %s", self._info.host, auth_methods)
+            logger.error(
+                "SFTP authentication failed for %s. Methods attempted: %s",
+                self._info.host,
+                auth_methods,
+            )
             if self._info.key_path:
                 message = (
                     f"Authentication failed with key file '{self._info.key_path}'. "
@@ -453,7 +460,12 @@ class SFTPClient(TransferClient):
                 )
             raise ConnectionError(f"SFTP connection failed: {message}") from e
         except paramiko.ssh_exception.NoValidConnectionsError as e:
-            logger.error("Could not reach SSH service at %s:%s: %s", self._info.host, self._info.effective_port, e)
+            logger.error(
+                "Could not reach SSH service at %s:%s: %s",
+                self._info.host,
+                self._info.effective_port,
+                e,
+            )
             raise ConnectionError(
                 f"SFTP connection failed: could not connect to {self._info.host}:{self._info.effective_port}. "
                 "Verify host/port and that the SSH service is running."

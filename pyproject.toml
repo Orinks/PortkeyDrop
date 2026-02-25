@@ -14,6 +14,13 @@ dependencies = [
 webdav = [
     "webdavclient3>=3.14",
 ]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
+    "pytest-xdist>=3.0",
+    "diff-cover>=9.0.0",
+    "ruff>=0.15.0",
+]
 
 [project.scripts]
 portkeydrop = "portkeydrop.main:main"
@@ -46,5 +53,7 @@ exclude_lines = [
 dev = [
     "pytest>=9.0",
     "pytest-cov>=7.0",
+    "pytest-xdist>=3.0",
     "ruff>=0.15.0",
+    "diff-cover>=9.0.0",
 ]

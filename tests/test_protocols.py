@@ -336,7 +336,6 @@ class TestSFTPClient:
         client.disconnect()  # Should not raise
         assert not client.connected
 
-
     @patch("paramiko.SSHClient")
     def test_list_dir_maps_file_attributes(self, mock_ssh_class):
         import stat as stat_mod
@@ -401,7 +400,9 @@ class TestSFTPClient:
             callback(10, 100)
 
         mock_sftp.getfo.side_effect = fake_getfo
-        client.download("/remote.bin", MagicMock(), callback=lambda t, n: download_calls.append((t, n)))
+        client.download(
+            "/remote.bin", MagicMock(), callback=lambda t, n: download_calls.append((t, n))
+        )
         assert download_calls == [(10, 100)]
 
         upload_calls: list[tuple[int, int]] = []
@@ -411,7 +412,9 @@ class TestSFTPClient:
             callback(4, file_size)
 
         mock_sftp.putfo.side_effect = fake_putfo
-        client.upload(io.BytesIO(b"data"), "/remote.txt", callback=lambda t, n: upload_calls.append((t, n)))
+        client.upload(
+            io.BytesIO(b"data"), "/remote.txt", callback=lambda t, n: upload_calls.append((t, n))
+        )
         assert upload_calls == [(4, 4)]
 
         client.delete("/a")
