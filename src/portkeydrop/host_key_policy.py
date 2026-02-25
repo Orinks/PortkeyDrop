@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover - exercised in headless tests
 try:
     from portkeydrop.dialogs.host_key_dialog import HostKeyDialog
 except Exception:  # pragma: no cover - wx may be unavailable in headless tests
+
     class HostKeyDialog:  # type: ignore[no-redef]
         REJECT = 0
         ACCEPT_ONCE = 1

@@ -66,9 +66,7 @@ class TestInteractiveHostKeyPolicy:
         import portkeydrop.host_key_policy as host_key_policy
 
         monkeypatch.setattr(host_key_policy, "HostKeyDialog", AcceptOnceDialog)
-        monkeypatch.setattr(
-            host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw)
-        )
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
 
         policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
         key = MagicMock()
@@ -101,9 +99,7 @@ class TestInteractiveHostKeyPolicy:
         import portkeydrop.host_key_policy as host_key_policy
 
         monkeypatch.setattr(host_key_policy, "HostKeyDialog", AcceptPermanentDialog)
-        monkeypatch.setattr(
-            host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw)
-        )
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
 
         policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
         key = MagicMock()
@@ -136,9 +132,7 @@ class TestInteractiveHostKeyPolicy:
         import portkeydrop.host_key_policy as host_key_policy
 
         monkeypatch.setattr(host_key_policy, "HostKeyDialog", RejectDialog)
-        monkeypatch.setattr(
-            host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw)
-        )
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
 
         policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
         key = MagicMock()
