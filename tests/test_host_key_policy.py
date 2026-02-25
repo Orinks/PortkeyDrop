@@ -1,5 +1,11 @@
-"""Tests for HostKeyPolicy enum and ConnectionInfo.host_key_policy field."""
+"""Tests for host key policies."""
 
+from unittest.mock import MagicMock
+
+import paramiko
+import pytest
+
+from portkeydrop.host_key_policy import InteractiveHostKeyPolicy
 from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol
 
 
@@ -39,3 +45,102 @@ class TestConnectionInfoHostKeyPolicy:
         )
         assert info.host == "example.com"
         assert info.host_key_policy is HostKeyPolicy.STRICT
+
+
+class TestInteractiveHostKeyPolicy:
+    def test_accept_once_adds_key_without_saving(self, monkeypatch):
+        class AcceptOnceDialog:
+            REJECT = 0
+            ACCEPT_ONCE = 1
+            ACCEPT_PERMANENT = 2
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def ShowModal(self):
+                return self.ACCEPT_ONCE
+
+            def Destroy(self):
+                pass
+
+        import portkeydrop.host_key_policy as host_key_policy
+
+        monkeypatch.setattr(host_key_policy, "HostKeyDialog", AcceptOnceDialog)
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+        policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
+        key = MagicMock()
+        key.get_name.return_value = "ssh-ed25519"
+        key.get_fingerprint.return_value = b"\x00\x01\x02"
+        client = MagicMock()
+        host_keys = MagicMock()
+        client.get_host_keys.return_value = host_keys
+
+        policy.missing_host_key(client, "example.com", key)
+
+        host_keys.add.assert_called_once_with("example.com", "ssh-ed25519", key)
+        client.save_host_keys.assert_not_called()
+
+    def test_accept_permanent_adds_and_saves(self, monkeypatch):
+        class AcceptPermanentDialog:
+            REJECT = 0
+            ACCEPT_ONCE = 1
+            ACCEPT_PERMANENT = 2
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def ShowModal(self):
+                return self.ACCEPT_PERMANENT
+
+            def Destroy(self):
+                pass
+
+        import portkeydrop.host_key_policy as host_key_policy
+
+        monkeypatch.setattr(host_key_policy, "HostKeyDialog", AcceptPermanentDialog)
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+        policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
+        key = MagicMock()
+        key.get_name.return_value = "ssh-rsa"
+        key.get_fingerprint.return_value = b"\xaa\xbb\xcc"
+        client = MagicMock()
+        host_keys = MagicMock()
+        client.get_host_keys.return_value = host_keys
+
+        policy.missing_host_key(client, "example.com", key)
+
+        host_keys.add.assert_called_once_with("example.com", "ssh-rsa", key)
+        client.save_host_keys.assert_called_once_with("/tmp/known_hosts")
+
+    def test_reject_raises_ssh_exception(self, monkeypatch):
+        class RejectDialog:
+            REJECT = 0
+            ACCEPT_ONCE = 1
+            ACCEPT_PERMANENT = 2
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def ShowModal(self):
+                return self.REJECT
+
+            def Destroy(self):
+                pass
+
+        import portkeydrop.host_key_policy as host_key_policy
+
+        monkeypatch.setattr(host_key_policy, "HostKeyDialog", RejectDialog)
+        monkeypatch.setattr(host_key_policy.wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+        policy = InteractiveHostKeyPolicy(None, "/tmp/known_hosts")
+        key = MagicMock()
+        key.get_name.return_value = "ssh-rsa"
+        key.get_fingerprint.return_value = b"\xaa\xbb\xcc"
+        client = MagicMock()
+        host_keys = MagicMock()
+        client.get_host_keys.return_value = host_keys
+
+        with pytest.raises(paramiko.SSHException, match="rejected by the user"):
+            policy.missing_host_key(client, "example.com", key)

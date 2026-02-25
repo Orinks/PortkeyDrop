@@ -6,7 +6,12 @@ from unittest import mock
 
 import paramiko
 
-from portkeydrop.ssh_utils import check_ssh_agent_available, create_ssh_client
+from portkeydrop import __version__
+from portkeydrop.ssh_utils import (
+    _portkeydrop_transport_init,
+    check_ssh_agent_available,
+    create_ssh_client,
+)
 
 
 class TestCheckSshAgentAvailable:
@@ -81,3 +86,21 @@ class TestCreateSshClient:
         client = create_ssh_client()
         assert client._allow_agent is True  # type: ignore[attr-defined]
         assert client._look_for_keys is True  # type: ignore[attr-defined]
+
+
+class TestSshBannerPatch:
+    """Tests for the paramiko Transport banner patch."""
+
+    def test_banner_patch_sets_local_version(self):
+        """_portkeydrop_transport_init patches local_version on the transport."""
+        mock_self = mock.MagicMock()
+        with mock.patch("portkeydrop.ssh_utils._original_transport_init"):
+            _portkeydrop_transport_init(mock_self)
+        assert mock_self.local_version == f"SSH-2.0-PortkeyDrop_{__version__}"
+
+    def test_banner_patch_calls_original_init(self):
+        """_portkeydrop_transport_init delegates to the original __init__."""
+        mock_self = mock.MagicMock()
+        with mock.patch("portkeydrop.ssh_utils._original_transport_init") as orig:
+            _portkeydrop_transport_init(mock_self, "arg1", kw="val")
+        orig.assert_called_once_with(mock_self, "arg1", kw="val")

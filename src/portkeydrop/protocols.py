@@ -15,6 +15,9 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
 
+from portkeydrop.host_key_policy import InteractiveHostKeyPolicy
+import portkeydrop.ssh_utils as _ssh_utils  # noqa: F401 — imported for side-effect (SSH banner patch)
+
 if TYPE_CHECKING:
     import paramiko
 
@@ -358,10 +361,30 @@ class SFTPClient(TransferClient):
                 self._ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 logger.debug("SFTP host key policy: auto-add (AutoAddPolicy)")
             elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
-                raise ConnectionError(
-                    "SFTP connection failed: host key policy 'prompt' is not supported yet. "
-                    "Use STRICT or AUTO_ADD."
+                from pathlib import Path
+
+                known_hosts = Path.home() / ".portkeydrop" / "known_hosts"
+                known_hosts.parent.mkdir(parents=True, exist_ok=True)
+                if known_hosts.exists():
+                    try:
+                        self._ssh_client.load_host_keys(str(known_hosts))
+                    except Exception:
+                        logger.debug("Could not load known_hosts from %s", known_hosts)
+
+                parent_win = None
+                try:
+                    import wx
+
+                    top_level = wx.GetTopLevelWindows()
+                    if top_level:
+                        parent_win = top_level[0]
+                except Exception:
+                    parent_win = None
+
+                self._ssh_client.set_missing_host_key_policy(
+                    InteractiveHostKeyPolicy(parent_win, known_hosts)
                 )
+                logger.debug("SFTP host key policy: prompt (InteractiveHostKeyPolicy)")
             else:
                 raise ConnectionError(
                     f"SFTP connection failed: unknown host key policy '{self._info.host_key_policy}'."
