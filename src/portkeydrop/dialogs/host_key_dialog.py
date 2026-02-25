@@ -20,9 +20,7 @@ class HostKeyDialog(sc.SizedDialog):
         pane = self.GetContentsPane()
         pane.SetSizerType("vertical")
 
-        wx.StaticText(
-            pane, label=f"The host key for {hostname!r} is not in your known hosts."
-        )
+        wx.StaticText(pane, label=f"The host key for {hostname!r} is not in your known hosts.")
         wx.StaticText(pane, label=f"Key type: {key_type}")
         wx.StaticText(pane, label=f"Fingerprint: {fingerprint}")
         wx.StaticText(pane, label="Do you want to connect?")
@@ -34,9 +32,7 @@ class HostKeyDialog(sc.SizedDialog):
         accept_once_btn = wx.Button(btn_pane, label="Accept &Once")
         reject_btn = wx.Button(btn_pane, label="&Reject")
 
-        accept_perm_btn.Bind(
-            wx.EVT_BUTTON, lambda e: self.EndModal(self.ACCEPT_PERMANENT)
-        )
+        accept_perm_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(self.ACCEPT_PERMANENT))
         accept_once_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(self.ACCEPT_ONCE))
         reject_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(self.REJECT))
 
