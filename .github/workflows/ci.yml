@@ -87,32 +87,17 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: pip
 
-    - name: Install system dependencies (wxPython + xvfb for headless)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          gcc \
-          pkg-config \
-          python3-dev \
-          libgtk-3-dev \
-          libnotify-dev \
-          libsdl2-dev \
-          libwebkit2gtk-4.1-dev \
-          freeglut3-dev \
-          xvfb
-
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 wxPython
         pip install -e ".[dev]"
 
-    - name: Run tests with coverage (headless via xvfb)
+    - name: Run tests with coverage
       env:
         PYTHONPATH: src
       run: |
         mkdir -p reports
-        xvfb-run -a pytest tests/ -n auto -v --tb=short -m "not integration" \
+        pytest tests/ -n auto -v --tb=short -m "not integration" \
           --junitxml=reports/junit.xml \
           --cov=src/portkeydrop \
           --cov-report=xml:reports/coverage.xml \
