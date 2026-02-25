@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path, PurePosixPath
 
 import wx
@@ -439,20 +440,35 @@ class MainFrame(wx.Frame):
             wx.MessageBox("Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
         self._on_disconnect(None)
-        try:
-            self._client = create_client(info)
-            self._client.connect()
-            self._remote_home = self._client.cwd
-            self._update_status("Connected", self._client.cwd)
-            self._update_title()
-            self._announce(f"Connected to {info.host}")
-            self._refresh_remote_files()
-            self._toolbar_panel.Hide()
-            self.GetSizer().Layout()
-            self.local_file_list.SetFocus()
-        except Exception as e:
-            wx.MessageBox(f"Connection failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
-            self._client = None
+        self._update_status(f"Connecting to {info.host}…", "")
+
+        def _connect_worker() -> None:
+            try:
+                client = create_client(info)
+                client.connect()
+                wx.CallAfter(self._on_connect_success, client)
+            except Exception as exc:
+                wx.CallAfter(self._on_connect_failure, exc)
+
+        threading.Thread(target=_connect_worker, daemon=True).start()
+
+    def _on_connect_success(self, client) -> None:
+        """Called on the main thread when a background connection succeeds."""
+        self._client = client
+        self._remote_home = client.cwd
+        self._update_status("Connected", client.cwd)
+        self._update_title()
+        self._announce(f"Connected to {client._info.host}")
+        self._refresh_remote_files()
+        self._toolbar_panel.Hide()
+        self.GetSizer().Layout()
+        self.local_file_list.SetFocus()
+
+    def _on_connect_failure(self, exc: Exception) -> None:
+        """Called on the main thread when a background connection fails."""
+        self._client = None
+        self._update_status("Disconnected", "")
+        wx.MessageBox(f"Connection failed: {exc}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_disconnect(self, event) -> None:
         if self._client:
