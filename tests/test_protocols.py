@@ -262,6 +262,69 @@ class TestFTPClient:
 
         mock_ftp.rename.assert_called_with("/old.txt", "/new.txt")
 
+    @patch("ftplib.FTP")
+    def test_is_directory_returns_false_on_exception(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.side_effect = Exception("failure")
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client.connect()
+
+        assert not client._is_directory("/remote")
+
+    @patch("ftplib.FTP")
+    def test_upload_raises_when_remote_size_mismatch(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.size.return_value = 5
+
+        def fake_storbinary(cmd, file_obj, block_size, callback):
+            callback(file_obj.read())
+
+        mock_ftp.storbinary.side_effect = fake_storbinary
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client.connect()
+
+        import io
+
+        with pytest.raises(RuntimeError, match="Remote upload verification failed"):
+            client.upload(io.BytesIO(b"data"), "/remote.bin")
+
+    def test_delete_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._path_exists = MagicMock(return_value=True)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.delete("/file.txt")
+
+    def test_rmdir_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._path_exists = MagicMock(return_value=True)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.rmdir("/dir")
+
+    def test_mkdir_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._is_directory = MagicMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.mkdir("/dir")
+
 
 class TestSFTPClient:
     def test_not_connected_initially(self):
@@ -529,6 +592,36 @@ class TestSFTPClient:
 
         with pytest.raises(RuntimeError, match="verification failed"):
             client.mkdir("/not-a-dir")
+
+    @patch("paramiko.SSHClient")
+    def test_delete_raises_when_remote_stat_succeeds(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_sftp.stat.return_value = MagicMock()
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.delete("/file")
+
+    @patch("paramiko.SSHClient")
+    def test_rmdir_raises_when_remote_stat_succeeds(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_sftp.stat.return_value = MagicMock()
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.rmdir("/dir")
 
 
 class TestParentDir:
