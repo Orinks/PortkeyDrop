@@ -189,7 +189,11 @@ def test_rename_remote_updates_status(app_module):
     remote.path = "/remote/old.txt"
     frame._get_selected_remote_file.return_value = remote
     frame._client.rename = MagicMock()
-    dialog = MagicMock(ShowModal=MagicMock(return_value=fake_wx.ID_OK), GetValue=MagicMock(return_value="new.txt"), Destroy=MagicMock())
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        GetValue=MagicMock(return_value="new.txt"),
+        Destroy=MagicMock(),
+    )
     with patch.object(fake_wx, "TextEntryDialog", return_value=dialog):
         frame._rename_remote()
 
@@ -206,7 +210,11 @@ def test_rename_remote_handles_error(app_module):
     remote.path = "/remote/old.txt"
     frame._get_selected_remote_file.return_value = remote
     frame._client.rename.side_effect = RuntimeError("boom")
-    dialog = MagicMock(ShowModal=MagicMock(return_value=fake_wx.ID_OK), GetValue=MagicMock(return_value="new.txt"), Destroy=MagicMock())
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        GetValue=MagicMock(return_value="new.txt"),
+        Destroy=MagicMock(),
+    )
     fake_wx.MessageBox.reset_mock()
 
     with patch.object(fake_wx, "TextEntryDialog", return_value=dialog):
@@ -221,7 +229,11 @@ def test_mkdir_remote_updates_status(app_module):
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
     frame._client.mkdir = MagicMock()
-    dialog = MagicMock(ShowModal=MagicMock(return_value=fake_wx.ID_OK), GetValue=MagicMock(return_value="new-dir"), Destroy=MagicMock())
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        GetValue=MagicMock(return_value="new-dir"),
+        Destroy=MagicMock(),
+    )
 
     with patch.object(fake_wx, "TextEntryDialog", return_value=dialog):
         frame._mkdir_remote()
@@ -235,7 +247,11 @@ def test_mkdir_remote_reports_error(app_module):
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
     frame._client.mkdir.side_effect = RuntimeError("boom")
-    dialog = MagicMock(ShowModal=MagicMock(return_value=fake_wx.ID_OK), GetValue=MagicMock(return_value="new-dir"), Destroy=MagicMock())
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        GetValue=MagicMock(return_value="new-dir"),
+        Destroy=MagicMock(),
+    )
 
     with patch.object(fake_wx, "TextEntryDialog", return_value=dialog):
         frame._mkdir_remote()

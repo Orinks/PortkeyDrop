@@ -183,7 +183,9 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     return fake_wx, fake_adv
 
 
-def load_module_with_fake_wx(module_name: str, monkeypatch) -> tuple[types.ModuleType, types.ModuleType]:
+def load_module_with_fake_wx(
+    module_name: str, monkeypatch
+) -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx, fake_adv = _create_fake_wx()
     monkeypatch.setitem(sys.modules, "wx", fake_wx)
     monkeypatch.setitem(sys.modules, "wx.adv", fake_adv)
