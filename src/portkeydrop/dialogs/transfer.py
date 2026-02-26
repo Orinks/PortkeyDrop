@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_TRANSFER_EVENT_BINDER = None
+_TRANSFER_EVENT_TYPE = None
+
 
 class TransferDirection(Enum):
     UPLOAD = "upload"
@@ -318,7 +321,8 @@ class TransferManager:
             try:
                 import wx
 
-                evt = wx.PyCommandEvent(wx.NewEventType(), -1)
+                _binder, evt_type = _get_wx_event_binder()
+                evt = wx.PyCommandEvent(evt_type, -1)
                 wx.PostEvent(self._notify_window, evt)
             except Exception:
                 pass
@@ -326,10 +330,19 @@ class TransferManager:
 
 def _get_wx_event_binder():
     """Lazy creation of wx event type and binder."""
+    global _TRANSFER_EVENT_BINDER, _TRANSFER_EVENT_TYPE
+    if _TRANSFER_EVENT_BINDER is not None and _TRANSFER_EVENT_TYPE is not None:
+        return _TRANSFER_EVENT_BINDER, _TRANSFER_EVENT_TYPE
     import wx
 
-    evt_type = wx.NewEventType()
-    return wx.PyEventBinder(evt_type, 1), evt_type
+    _TRANSFER_EVENT_TYPE = wx.NewEventType()
+    _TRANSFER_EVENT_BINDER = wx.PyEventBinder(_TRANSFER_EVENT_TYPE, 1)
+    return _TRANSFER_EVENT_BINDER, _TRANSFER_EVENT_TYPE
+
+
+def get_transfer_event_binder():
+    binder, _event_type = _get_wx_event_binder()
+    return binder
 
 
 def create_transfer_dialog(parent, transfer_manager: TransferManager):

@@ -209,6 +209,22 @@ class FTPClient(TransferClient):
             raise ConnectionError("Not connected")
         return self._ftp
 
+    def _path_exists(self, path: str) -> bool:
+        ftp = self._ensure_connected()
+        try:
+            ftp.sendcmd(f"MLST {path}")
+            return True
+        except Exception:
+            return False
+
+    def _is_directory(self, path: str) -> bool:
+        ftp = self._ensure_connected()
+        try:
+            response = ftp.sendcmd(f"MLST {path}")
+            return "type=dir" in response.lower()
+        except Exception:
+            return False
+
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         ftp = self._ensure_connected()
         files: list[RemoteFile] = []
@@ -287,22 +303,36 @@ class FTPClient(TransferClient):
                 callback(transferred, total)
 
         ftp.storbinary(f"STOR {remote_path}", local_file, block_size, read_callback)
+        remote_size = ftp.size(remote_path)
+        if remote_size is None or remote_size != total:
+            raise RuntimeError(
+                f"Remote upload verification failed for {remote_path}: expected {total} bytes, "
+                f"got {remote_size if remote_size is not None else 'unknown'}."
+            )
 
     def delete(self, path: str) -> None:
         ftp = self._ensure_connected()
         ftp.delete(path)
+        if self._path_exists(path):
+            raise RuntimeError(f"Remote delete verification failed for {path}.")
 
     def rmdir(self, path: str) -> None:
         ftp = self._ensure_connected()
         ftp.rmd(path)
+        if self._path_exists(path):
+            raise RuntimeError(f"Remote directory delete verification failed for {path}.")
 
     def mkdir(self, path: str) -> None:
         ftp = self._ensure_connected()
         ftp.mkd(path)
+        if not self._is_directory(path):
+            raise RuntimeError(f"Remote mkdir verification failed for {path}.")
 
     def rename(self, old_path: str, new_path: str) -> None:
         ftp = self._ensure_connected()
         ftp.rename(old_path, new_path)
+        if not self._path_exists(new_path):
+            raise RuntimeError(f"Remote rename verification failed for {new_path}.")
 
     def stat(self, path: str) -> RemoteFile:
         ftp = self._ensure_connected()
@@ -602,22 +632,50 @@ class SFTPClient(TransferClient):
                 callback(transferred, total_bytes)
 
         sftp.putfo(local_file, remote_path, file_size=total, callback=progress)
+        attr = sftp.stat(remote_path)
+        if (attr.st_size or 0) != total:
+            raise RuntimeError(
+                f"Remote upload verification failed for {remote_path}: expected {total} bytes, "
+                f"got {attr.st_size if attr.st_size is not None else 'unknown'}."
+            )
 
     def delete(self, path: str) -> None:
         sftp = self._ensure_connected()
         sftp.remove(path)
+        try:
+            sftp.stat(path)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if getattr(exc, "errno", None) == 2:
+                return
+            raise
+        raise RuntimeError(f"Remote delete verification failed for {path}.")
 
     def rmdir(self, path: str) -> None:
         sftp = self._ensure_connected()
         sftp.rmdir(path)
+        try:
+            sftp.stat(path)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if getattr(exc, "errno", None) == 2:
+                return
+            raise
+        raise RuntimeError(f"Remote directory delete verification failed for {path}.")
 
     def mkdir(self, path: str) -> None:
         sftp = self._ensure_connected()
         sftp.mkdir(path)
+        attr = sftp.stat(path)
+        if not attr.st_mode or not stat.S_ISDIR(attr.st_mode):
+            raise RuntimeError(f"Remote mkdir verification failed for {path}.")
 
     def rename(self, old_path: str, new_path: str) -> None:
         sftp = self._ensure_connected()
         sftp.rename(old_path, new_path)
+        sftp.stat(new_path)
 
     def stat(self, path: str) -> RemoteFile:
         sftp = self._ensure_connected()

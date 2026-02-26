@@ -224,6 +224,7 @@ class TestFTPClient:
     def test_mkdir(self, mock_ftp_class):
         mock_ftp = MagicMock()
         mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.return_value = "250-Listing\r\n type=dir; /new_dir\r\n250 End"
         mock_ftp_class.return_value = mock_ftp
 
         info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
@@ -237,6 +238,7 @@ class TestFTPClient:
     def test_delete(self, mock_ftp_class):
         mock_ftp = MagicMock()
         mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.side_effect = Exception("not found")
         mock_ftp_class.return_value = mock_ftp
 
         info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
@@ -250,6 +252,7 @@ class TestFTPClient:
     def test_rename(self, mock_ftp_class):
         mock_ftp = MagicMock()
         mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.return_value = "250-Listing\r\n type=file; /new.txt\r\n250 End"
         mock_ftp_class.return_value = mock_ftp
 
         info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
@@ -258,6 +261,69 @@ class TestFTPClient:
         client.rename("/old.txt", "/new.txt")
 
         mock_ftp.rename.assert_called_with("/old.txt", "/new.txt")
+
+    @patch("ftplib.FTP")
+    def test_is_directory_returns_false_on_exception(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.side_effect = Exception("failure")
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client.connect()
+
+        assert not client._is_directory("/remote")
+
+    @patch("ftplib.FTP")
+    def test_upload_raises_when_remote_size_mismatch(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.size.return_value = 5
+
+        def fake_storbinary(cmd, file_obj, block_size, callback):
+            callback(file_obj.read())
+
+        mock_ftp.storbinary.side_effect = fake_storbinary
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client.connect()
+
+        import io
+
+        with pytest.raises(RuntimeError, match="Remote upload verification failed"):
+            client.upload(io.BytesIO(b"data"), "/remote.bin")
+
+    def test_delete_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._path_exists = MagicMock(return_value=True)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.delete("/file.txt")
+
+    def test_rmdir_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._path_exists = MagicMock(return_value=True)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.rmdir("/dir")
+
+    def test_mkdir_raises_when_verification_fails(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client._ftp = MagicMock()
+        client._connected = True
+        client._is_directory = MagicMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.mkdir("/dir")
 
 
 class TestSFTPClient:
@@ -381,6 +447,7 @@ class TestSFTPClient:
     @patch("paramiko.SSHClient")
     def test_chdir_download_upload_and_file_ops(self, mock_ssh_class):
         import io
+        import stat as stat_mod
 
         mock_ssh = MagicMock()
         mock_sftp = MagicMock()
@@ -412,6 +479,23 @@ class TestSFTPClient:
             callback(4, file_size)
 
         mock_sftp.putfo.side_effect = fake_putfo
+        file_attr = MagicMock(st_mode=stat_mod.S_IFREG | 0o644, st_size=4)
+        dir_attr = MagicMock(st_mode=stat_mod.S_IFDIR | 0o755, st_size=0)
+
+        def stat_side_effect(path: str):
+            if path == "/remote.txt":
+                return file_attr
+            if path == "/a":
+                raise FileNotFoundError(path)
+            if path == "/b":
+                if mock_sftp.rmdir.called:
+                    raise FileNotFoundError(path)
+                return dir_attr
+            if path == "/new":
+                return file_attr
+            raise FileNotFoundError(path)
+
+        mock_sftp.stat.side_effect = stat_side_effect
         client.upload(
             io.BytesIO(b"data"), "/remote.txt", callback=lambda t, n: upload_calls.append((t, n))
         )
@@ -425,6 +509,20 @@ class TestSFTPClient:
         mock_sftp.mkdir.assert_called_once_with("/b")
         mock_sftp.rmdir.assert_called_once_with("/b")
         mock_sftp.rename.assert_called_once_with("/old", "/new")
+
+    @patch("ftplib.FTP")
+    def test_ftp_rename_raises_when_target_not_found_after_rename(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.pwd.return_value = "/"
+        mock_ftp.sendcmd.side_effect = Exception("550 not found")
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
+        client = FTPClient(info)
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.rename("/old.txt", "/new.txt")
 
     @patch("paramiko.SSHClient")
     @patch("os.path.exists", return_value=True)
@@ -458,6 +556,72 @@ class TestSFTPClient:
         assert remote.path == "/remote/file.txt"
         assert remote.size == 42
         assert remote.is_dir is False
+
+    @patch("paramiko.SSHClient")
+    def test_upload_raises_when_remote_size_mismatch(self, mock_ssh_class):
+        import io
+        import stat as stat_mod
+
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+
+        mock_sftp.stat.return_value = MagicMock(st_mode=stat_mod.S_IFREG | 0o644, st_size=3)
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.upload(io.BytesIO(b"data"), "/remote.txt")
+
+    @patch("paramiko.SSHClient")
+    def test_mkdir_raises_when_created_path_is_not_directory(self, mock_ssh_class):
+        import stat as stat_mod
+
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_sftp.stat.return_value = MagicMock(st_mode=stat_mod.S_IFREG | 0o644, st_size=10)
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.mkdir("/not-a-dir")
+
+    @patch("paramiko.SSHClient")
+    def test_delete_raises_when_remote_stat_succeeds(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_sftp.stat.return_value = MagicMock()
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.delete("/file")
+
+    @patch("paramiko.SSHClient")
+    def test_rmdir_raises_when_remote_stat_succeeds(self, mock_ssh_class):
+        mock_ssh = MagicMock()
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/"
+        mock_ssh.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_ssh
+        mock_sftp.stat.return_value = MagicMock()
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.rmdir("/dir")
 
 
 class TestParentDir:
