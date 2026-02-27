@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FileZilla3>
+  <Servers>
+    <Server>
+      <Name>Prod SFTP</Name>
+      <Host>sftp.example.com</Host>
+      <Port>2222</Port>
+      <Protocol>1</Protocol>
+      <User>alice</User>
+      <Pass encoding="base64">c2VjcmV0</Pass>
+      <RemoteDir>1 0 4 home 5 alice</RemoteDir>
+      <Comments>Main production host</Comments>
+    </Server>
+    <Server>
+      <Name>Legacy FTP</Name>
+      <Host>ftp.example.com</Host>
+      <Port>21</Port>
+      <Protocol>0</Protocol>
+      <User>bob</User>
+      <Pass>plaintext</Pass>
+      <RemoteDir>/incoming</RemoteDir>
+    </Server>
+  </Servers>
+</FileZilla3>
