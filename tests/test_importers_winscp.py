@@ -54,3 +54,111 @@ def test_load_from_source_winscp_none_path_tries_registry():
             mock_reg.return_value = []
             load_from_source("winscp", None)
             mock_reg.assert_called_once()
+
+
+def test_detect_ini_path_appdata(monkeypatch):
+    monkeypatch.setenv("APPDATA", "/fake/appdata")
+    from portkeydrop.importers.winscp import detect_ini_path
+
+    assert str(detect_ini_path()) == "/fake/appdata/WinSCP.ini"
+
+
+def test_detect_ini_path_no_appdata(monkeypatch):
+    monkeypatch.delenv("APPDATA", raising=False)
+    from portkeydrop.importers.winscp import detect_ini_path
+
+    assert detect_ini_path().name == "WinSCP.ini"
+
+
+def test_parse_ini_skips_non_session_sections(tmp_path):
+    from portkeydrop.importers.winscp import parse_ini_file
+
+    ini = tmp_path / "w.ini"
+    ini.write_text(
+        "[Configuration]\nKey=Value\n[Sessions\\MyHost]\nHostName=h.com\nPortNumber=22\nUserName=u\n"
+    )
+    assert len(parse_ini_file(ini)) == 1
+
+
+def test_parse_ini_skips_missing_hostname(tmp_path):
+    from portkeydrop.importers.winscp import parse_ini_file
+
+    ini = tmp_path / "w.ini"
+    ini.write_text("[Sessions\\NoHost]\nPortNumber=22\nUserName=u\n")
+    assert parse_ini_file(ini) == []
+
+
+def test_parse_ini_scp_mapped_to_sftp(tmp_path):
+    from portkeydrop.importers.winscp import parse_ini_file
+
+    ini = tmp_path / "w.ini"
+    ini.write_text(
+        "[Sessions\\H]\nHostName=scp.example.com\nPortNumber=22\nUserName=u\nFSProtocol=1\n"
+    )
+    assert parse_ini_file(ini)[0].protocol == "sftp"
+
+
+def test_parse_ini_invalid_port(tmp_path):
+    from portkeydrop.importers.winscp import parse_ini_file
+
+    ini = tmp_path / "w.ini"
+    ini.write_text("[Sessions\\H]\nHostName=h.com\nPortNumber=notanumber\nUserName=u\n")
+    assert parse_ini_file(ini)[0].port == 0
+
+
+def test_parse_registry_sessions_non_windows():
+    import sys
+    from unittest.mock import patch
+    from portkeydrop.importers.winscp import parse_registry_sessions
+
+    with patch.object(sys, "platform", "linux"):
+        assert parse_registry_sessions() == []
+
+
+def test_parse_registry_sessions_key_missing():
+    import sys
+    from unittest.mock import MagicMock, patch
+    from portkeydrop.importers.winscp import parse_registry_sessions
+
+    winreg_mock = MagicMock()
+    winreg_mock.OpenKey.side_effect = OSError
+    winreg_mock.HKEY_CURRENT_USER = 0
+    with patch.dict("sys.modules", {"winreg": winreg_mock}):
+        with patch.object(sys, "platform", "win32"):
+            assert parse_registry_sessions() == []
+
+
+def test_detect_protocol_ftps_flag():
+    from portkeydrop.importers.winscp import _detect_protocol
+
+    assert _detect_protocol({"Ftps": "1", "FSProtocol": "", "FileProtocol": ""}) == "ftps"
+
+
+def test_detect_protocol_file_protocol_ftp():
+    from portkeydrop.importers.winscp import _detect_protocol
+
+    assert _detect_protocol({"FileProtocol": "ftp", "FSProtocol": "", "Ftps": ""}) == "ftp"
+
+
+def test_detect_protocol_default_sftp():
+    from portkeydrop.importers.winscp import _detect_protocol
+
+    assert _detect_protocol({"FSProtocol": "", "FileProtocol": "", "Ftps": ""}) == "sftp"
+
+
+def test_detect_protocol_numeric_ftp():
+    from portkeydrop.importers.winscp import _detect_protocol
+
+    assert _detect_protocol({"FSProtocol": "5", "FileProtocol": "", "Ftps": ""}) == "ftp"
+
+
+def test_decode_name_url_encoded():
+    from portkeydrop.importers.winscp import _decode_name
+
+    assert _decode_name("My%20Server") == "My Server"
+
+
+def test_decode_name_backslash():
+    from portkeydrop.importers.winscp import _decode_name
+
+    assert _decode_name("path%5Cto") == "path\\to"
