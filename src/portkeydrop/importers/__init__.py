@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import cyberduck, filezilla, winscp
 from .models import ImportedSite
+
+WINSCP_REGISTRY_SENTINEL = r"Registry (HKCU\Software\Martin Prikryl\WinSCP 2\Sessions)"
 
 
 @dataclass(frozen=True)
@@ -23,11 +26,27 @@ SOURCES = [
 ]
 
 
-def detect_default_path(source: str) -> Path | None:
-    """Return the default path for the requested source client."""
+def _winscp_registry_available() -> bool:
+    """Check whether WinSCP sessions exist in the Windows Registry."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        key_path = r"Software\Martin Prikryl\WinSCP 2\Sessions"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path):
+            return True
+    except Exception:
+        return False
+
+
+def detect_default_path(source: str) -> Path | str | None:
+    """Return the default path (or sentinel) for the requested source client."""
     if source == "filezilla":
         return filezilla.detect_path()
     if source == "winscp":
+        if _winscp_registry_available():
+            return WINSCP_REGISTRY_SENTINEL
         ini_path = winscp.detect_ini_path()
         return ini_path
     if source == "cyberduck":

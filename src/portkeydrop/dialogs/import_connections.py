@@ -6,7 +6,12 @@ from pathlib import Path
 
 import wx
 
-from portkeydrop.importers import SOURCES, detect_default_path, load_from_source
+from portkeydrop.importers import (
+    SOURCES,
+    WINSCP_REGISTRY_SENTINEL,
+    detect_default_path,
+    load_from_source,
+)
 from portkeydrop.importers.models import ImportedSite
 
 
@@ -35,7 +40,11 @@ class ImportConnectionsDialog(wx.Dialog):
         self.step_title = wx.StaticText(self, label="")
         root.Add(self.step_title, 0, wx.ALL, 8)
 
-        self.pages = [self._build_source_page(), self._build_path_page(), self._build_preview_page()]
+        self.pages = [
+            self._build_source_page(),
+            self._build_path_page(),
+            self._build_preview_page(),
+        ]
         for page in self.pages:
             root.Add(page, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
 
@@ -131,8 +140,12 @@ class ImportConnectionsDialog(wx.Dialog):
 
     def _on_source_change(self, event: wx.CommandEvent) -> None:
         self._source = SOURCES[self.source_radio.GetSelection()].key
+        self._run_autodetect()
 
     def _on_autodetect(self, event: wx.CommandEvent) -> None:
+        self._run_autodetect()
+
+    def _run_autodetect(self) -> None:
         source = SOURCES[self.source_radio.GetSelection()].key
         default_path = detect_default_path(source)
         if default_path is not None:
@@ -201,7 +214,8 @@ class ImportConnectionsDialog(wx.Dialog):
 
     def _load_preview(self) -> bool:
         input_path = self.path_text.GetValue().strip()
-        path = Path(input_path).expanduser() if input_path else None
+        use_registry = input_path == WINSCP_REGISTRY_SENTINEL
+        path = None if use_registry else (Path(input_path).expanduser() if input_path else None)
 
         source = SOURCES[self.source_radio.GetSelection()].key
         if source == "from_file" and not path:
