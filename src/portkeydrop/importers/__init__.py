@@ -40,6 +40,24 @@ def _winscp_registry_available() -> bool:
         return False
 
 
+def is_source_available(source: str) -> bool:
+    """Return True if the given import source has detectable config on this machine."""
+    if source == "filezilla":
+        return filezilla.detect_path().exists()
+    if source == "winscp":
+        return _winscp_registry_available() or winscp.detect_ini_path().exists()
+    if source == "cyberduck":
+        return cyberduck.detect_bookmarks_dir().exists()
+    if source == "from_file":
+        return True
+    return False
+
+
+def available_sources() -> list[ImportSource]:
+    """Return only the sources that have detectable config on this machine."""
+    return [s for s in SOURCES if is_source_available(s.key)]
+
+
 def detect_default_path(source: str) -> Path | str | None:
     """Return the default path (or sentinel) for the requested source client."""
     if source == "filezilla":

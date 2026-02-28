@@ -203,3 +203,75 @@ def test_load_from_unknown_path_directory_with_ducks(tmp_path):
 
 def test_load_from_unknown_path_empty_directory(tmp_path):
     assert _load_from_unknown_path(tmp_path) == []
+
+
+def test_is_source_available_from_file_always_true():
+    from portkeydrop.importers import is_source_available
+
+    assert is_source_available("from_file") is True
+
+
+def test_is_source_available_unknown_returns_false():
+    from portkeydrop.importers import is_source_available
+
+    assert is_source_available("bogus") is False
+
+
+def test_is_source_available_filezilla_exists(tmp_path):
+    from portkeydrop.importers import is_source_available
+
+    f = tmp_path / "sitemanager.xml"
+    f.touch()
+    with patch("portkeydrop.importers.filezilla.detect_path", return_value=f):
+        assert is_source_available("filezilla") is True
+
+
+def test_is_source_available_filezilla_missing(tmp_path):
+    from portkeydrop.importers import is_source_available
+
+    with patch(
+        "portkeydrop.importers.filezilla.detect_path", return_value=tmp_path / "missing.xml"
+    ):
+        assert is_source_available("filezilla") is False
+
+
+def test_is_source_available_winscp_registry():
+    from portkeydrop.importers import is_source_available
+
+    with patch("portkeydrop.importers._winscp_registry_available", return_value=True):
+        assert is_source_available("winscp") is True
+
+
+def test_is_source_available_winscp_ini(tmp_path):
+    from portkeydrop.importers import is_source_available
+
+    ini = tmp_path / "WinSCP.ini"
+    ini.touch()
+    with patch("portkeydrop.importers._winscp_registry_available", return_value=False):
+        with patch("portkeydrop.importers.winscp.detect_ini_path", return_value=ini):
+            assert is_source_available("winscp") is True
+
+
+def test_is_source_available_winscp_nothing(tmp_path):
+    from portkeydrop.importers import is_source_available
+
+    with patch("portkeydrop.importers._winscp_registry_available", return_value=False):
+        with patch(
+            "portkeydrop.importers.winscp.detect_ini_path", return_value=tmp_path / "missing.ini"
+        ):
+            assert is_source_available("winscp") is False
+
+
+def test_is_source_available_cyberduck_exists(tmp_path):
+    from portkeydrop.importers import is_source_available
+
+    with patch("portkeydrop.importers.cyberduck.detect_bookmarks_dir", return_value=tmp_path):
+        assert is_source_available("cyberduck") is True
+
+
+def test_available_sources_returns_from_file_always():
+    from portkeydrop.importers import available_sources
+
+    with patch("portkeydrop.importers.is_source_available", side_effect=lambda s: s == "from_file"):
+        sources = available_sources()
+    assert any(s.key == "from_file" for s in sources)

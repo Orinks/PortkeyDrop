@@ -9,6 +9,7 @@ import wx
 from portkeydrop.importers import (
     SOURCES,
     WINSCP_REGISTRY_SENTINEL,
+    available_sources,
     detect_default_path,
     load_from_source,
 )
@@ -40,6 +41,8 @@ class ImportConnectionsDialog(wx.Dialog):
         self.step_title = wx.StaticText(self, label="")
         root.Add(self.step_title, 0, wx.ALL, 8)
 
+        self._available_sources = available_sources()
+        self._auto_advance = False
         self.pages = [
             self._build_source_page(),
             self._build_path_page(),
@@ -77,7 +80,22 @@ class ImportConnectionsDialog(wx.Dialog):
         panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        choices = [source.label for source in SOURCES]
+        self._available_sources = available_sources()
+        choices = [source.label for source in self._available_sources]
+
+        if not choices:
+            choices = ["From file..."]
+
+        if (
+            len(choices) == 1
+            and self._available_sources
+            and self._available_sources[0].key != "from_file"
+        ):
+            # Only one client detected — note it for auto-skip
+            self._auto_advance = True
+        else:
+            self._auto_advance = False
+
         self.source_radio = wx.RadioBox(
             panel,
             label="Choose source client",
@@ -86,6 +104,15 @@ class ImportConnectionsDialog(wx.Dialog):
             style=wx.RA_SPECIFY_ROWS,
         )
         sizer.Add(self.source_radio, 0, wx.EXPAND | wx.ALL, 4)
+
+        if not self._available_sources or all(
+            s.key == "from_file" for s in self._available_sources
+        ):
+            note = wx.StaticText(
+                panel,
+                label="No supported FTP clients detected. You can still import from a file.",
+            )
+            sizer.Add(note, 0, wx.ALL, 4)
 
         panel.SetSizer(sizer)
         return panel
@@ -183,7 +210,7 @@ class ImportConnectionsDialog(wx.Dialog):
 
     def _on_next(self, event: wx.CommandEvent) -> None:
         if self._step == 0:
-            self._source = SOURCES[self.source_radio.GetSelection()].key
+            self._source = self._available_sources[self.source_radio.GetSelection()].key
             self._step = 1
             self._update_step_ui()
             return
