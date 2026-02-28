@@ -126,6 +126,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.YES_NO = 102
     fake_wx.ICON_WARNING = 103
     fake_wx.ICON_ERROR = 104
+    fake_wx.ICON_INFORMATION = 105
     fake_wx.ID_EXIT = 200
     fake_wx.ID_ABOUT = 201
 

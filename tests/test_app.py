@@ -260,6 +260,77 @@ def test_mkdir_remote_reports_error(app_module):
     fake_wx.MessageBox.assert_called()
 
 
+def test_import_connections_adds_non_duplicates(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    existing = SimpleNamespace(host="dup.example.com", port=22, username="alice", protocol="sftp")
+    frame._site_manager = MagicMock(sites=[existing], add=MagicMock())
+
+    imported_site = SimpleNamespace(
+        name="New Site",
+        protocol="ftp",
+        host="new.example.com",
+        port=21,
+        username="bob",
+        password="pw",
+        key_path="",
+        initial_dir="/",
+        notes="",
+    )
+
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        selected_sites=[imported_site],
+        Destroy=MagicMock(),
+    )
+    fake_wx.MessageBox.reset_mock()
+
+    with patch.object(app, "ImportConnectionsDialog", return_value=dialog):
+        frame._on_import_connections(None)
+
+    frame._site_manager.add.assert_called_once()
+    fake_wx.MessageBox.assert_called_once()
+    message = fake_wx.MessageBox.call_args.args[0]
+    assert "Imported 1 connection" in message
+
+
+def test_import_connections_skips_duplicates(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    existing = SimpleNamespace(host="dup.example.com", port=22, username="alice", protocol="sftp")
+    frame._site_manager = MagicMock(sites=[existing], add=MagicMock())
+
+    duplicate = SimpleNamespace(
+        name="Duplicate Site",
+        protocol="sftp",
+        host="dup.example.com",
+        port=22,
+        username="alice",
+        password="pw",
+        key_path="",
+        initial_dir="/",
+        notes="",
+    )
+
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        selected_sites=[duplicate],
+        Destroy=MagicMock(),
+    )
+    fake_wx.MessageBox.reset_mock()
+
+    with patch.object(app, "ImportConnectionsDialog", return_value=dialog):
+        frame._on_import_connections(None)
+
+    frame._site_manager.add.assert_not_called()
+    fake_wx.MessageBox.assert_called_once()
+    message = fake_wx.MessageBox.call_args.args[0]
+    assert "Imported 0 connections" in message
+    assert "Skipped 1 duplicate" in message
+
+
 def test_on_transfer_update_reports_latest_status(app_module):
     import importlib
 

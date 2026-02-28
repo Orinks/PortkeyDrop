@@ -12,6 +12,7 @@ import wx
 from portkeydrop.dialogs.properties import PropertiesDialog
 from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
+from portkeydrop.dialogs.import_connections import ImportConnectionsDialog
 from portkeydrop.dialogs.site_manager import SiteManagerDialog
 from portkeydrop.dialogs.transfer import (
     TransferDirection,
@@ -62,6 +63,7 @@ ID_HOME_DIR = wx.NewIdRef()
 ID_FILTER = wx.NewIdRef()
 ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
+ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -151,6 +153,12 @@ class MainFrame(wx.Frame):
         sites_menu.AppendSeparator()
         sites_menu.Append(
             ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
+        sites_menu.AppendSeparator()
+        sites_menu.Append(
+            ID_IMPORT_CONNECTIONS,
+            "&Import Sites...",
+            "Import sites from other FTP/SFTP clients",
         )
         menubar.Append(sites_menu, "S&ites")
 
@@ -330,6 +338,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_properties, id=ID_PROPERTIES)
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
+        self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
 
@@ -423,6 +432,70 @@ class MainFrame(wx.Frame):
             self._site_manager.add(site)
             self._announce(f"Site '{name}' saved")
         dlg.Destroy()
+
+    def _on_import_connections(self, event: wx.CommandEvent) -> None:
+        dlg = ImportConnectionsDialog(self)
+        result = dlg.ShowModal()
+        selected_sites = dlg.selected_sites if result == wx.ID_OK else []
+        dlg.Destroy()
+
+        if not selected_sites:
+            return
+
+        duplicate_names: list[str] = []
+        imported_count = 0
+
+        existing = {
+            (
+                site.host.strip().lower(),
+                self._effective_site_port(site.protocol, site.port),
+                site.username.strip().lower(),
+            )
+            for site in self._site_manager.sites
+        }
+
+        for imported in selected_sites:
+            key = (
+                imported.host.strip().lower(),
+                self._effective_site_port(imported.protocol, imported.port),
+                imported.username.strip().lower(),
+            )
+            if key in existing:
+                duplicate_names.append(imported.name or imported.host)
+                continue
+
+            site = Site(
+                name=imported.name or imported.host,
+                protocol=imported.protocol,
+                host=imported.host,
+                port=imported.port,
+                username=imported.username,
+                password=imported.password,
+                key_path=imported.key_path,
+                initial_dir=imported.initial_dir or "/",
+                notes=imported.notes,
+            )
+            self._site_manager.add(site)
+            existing.add(key)
+            imported_count += 1
+
+        message = f"Imported {imported_count} connection{'s' if imported_count != 1 else ''}."
+        if duplicate_names:
+            dup_preview = ", ".join(duplicate_names[:5])
+            if len(duplicate_names) > 5:
+                dup_preview += ", ..."
+            message += (
+                f"\nSkipped {len(duplicate_names)} duplicate"
+                f"{'s' if len(duplicate_names) != 1 else ''}: {dup_preview}"
+            )
+
+        wx.MessageBox(message, "Import Sites", wx.OK | wx.ICON_INFORMATION, self)
+
+    def _effective_site_port(self, protocol: str, port: int) -> int:
+        if port > 0:
+            return port
+        defaults = {"sftp": 22, "ftp": 21, "ftps": 990}
+        return defaults.get(protocol, 22)
 
     def _host_key_policy(self) -> HostKeyPolicy:
         """Map the verify_host_keys setting string to a HostKeyPolicy enum value."""
