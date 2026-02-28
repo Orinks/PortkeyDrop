@@ -102,12 +102,6 @@ class MainFrame(wx.Frame):
         file_menu.Append(ID_CONNECT, "&Connect\tCtrl+Enter", "Connect to server")
         file_menu.Append(ID_DISCONNECT, "&Disconnect\tCtrl+Q", "Disconnect from server")
         file_menu.AppendSeparator()
-        file_menu.Append(
-            ID_IMPORT_CONNECTIONS,
-            "&Import Sites...",
-            "Import sites from other FTP/SFTP clients",
-        )
-        file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
         file_menu.AppendSeparator()
         file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Exit application")
@@ -159,6 +153,12 @@ class MainFrame(wx.Frame):
         sites_menu.AppendSeparator()
         sites_menu.Append(
             ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
+        sites_menu.AppendSeparator()
+        sites_menu.Append(
+            ID_IMPORT_CONNECTIONS,
+            "&Import Sites...",
+            "Import sites from other FTP/SFTP clients",
         )
         menubar.Append(sites_menu, "S&ites")
 
