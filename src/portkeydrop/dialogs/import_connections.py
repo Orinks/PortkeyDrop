@@ -21,7 +21,7 @@ class ImportConnectionsDialog(wx.Dialog):
     def __init__(self, parent: wx.Window | None) -> None:
         super().__init__(
             parent,
-            title="Import Connections",
+            title="Import Sites",
             size=(680, 480),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
@@ -203,7 +203,7 @@ class ImportConnectionsDialog(wx.Dialog):
         if not selected:
             wx.MessageBox(
                 "Select at least one connection to import.",
-                "Import Connections",
+                "Import Sites",
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
@@ -221,7 +221,7 @@ class ImportConnectionsDialog(wx.Dialog):
         if source == "from_file" and not path:
             wx.MessageBox(
                 "Choose a file or folder for 'From file...' import.",
-                "Import Connections",
+                "Import Sites",
                 wx.OK | wx.ICON_WARNING,
                 self,
             )
@@ -235,7 +235,7 @@ class ImportConnectionsDialog(wx.Dialog):
         if path and not path.exists():
             wx.MessageBox(
                 f"Path does not exist:\n{path}",
-                "Import Connections",
+                "Import Sites",
                 wx.OK | wx.ICON_WARNING,
                 self,
             )
@@ -246,7 +246,7 @@ class ImportConnectionsDialog(wx.Dialog):
         except Exception as exc:
             wx.MessageBox(
                 f"Failed to parse configuration: {exc}",
-                "Import Connections",
+                "Import Sites",
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -255,7 +255,7 @@ class ImportConnectionsDialog(wx.Dialog):
         if not self._loaded_sites:
             wx.MessageBox(
                 "No connections were found in the selected source.",
-                "Import Connections",
+                "Import Sites",
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )

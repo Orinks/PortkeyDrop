@@ -104,7 +104,7 @@ class MainFrame(wx.Frame):
         file_menu.AppendSeparator()
         file_menu.Append(
             ID_IMPORT_CONNECTIONS,
-            "&Import Connections...",
+            "&Import Sites...",
             "Import sites from other FTP/SFTP clients",
         )
         file_menu.AppendSeparator()
@@ -489,7 +489,7 @@ class MainFrame(wx.Frame):
                 f"{'s' if len(duplicate_names) != 1 else ''}: {dup_preview}"
             )
 
-        wx.MessageBox(message, "Import Connections", wx.OK | wx.ICON_INFORMATION, self)
+        wx.MessageBox(message, "Import Sites", wx.OK | wx.ICON_INFORMATION, self)
 
     def _effective_site_port(self, protocol: str, port: int) -> int:
         if port > 0:
