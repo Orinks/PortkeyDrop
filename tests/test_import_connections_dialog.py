@@ -27,6 +27,9 @@ class _Window:
     def Show(self, show=True) -> None:
         self._shown = show
 
+    def SetFocus(self) -> None:
+        pass
+
     def Enable(self, enable=True) -> None:
         self._enabled = enable
 
