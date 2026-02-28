@@ -289,6 +289,15 @@ class ImportConnectionsDialog(wx.Dialog):
         self.import_btn.Show(self._step == 2)
         self.Layout()
 
+        # Move focus to the first meaningful control on each page so screen
+        # readers announce the new step without the user having to navigate.
+        if self._step == 0:
+            self.source_radio.SetFocus()
+        elif self._step == 1:
+            self.path_text.SetFocus()
+        elif self._step == 2:
+            self.preview_list.SetFocus()
+
     def _file_wildcard_for_source(self, source: str) -> str:
         if source == "filezilla":
             return "FileZilla XML (*.xml)|*.xml|All files (*.*)|*.*"
