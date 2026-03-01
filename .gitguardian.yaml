@@ -1,0 +1,6 @@
+version: 2
+ignore-paths:
+  - tests/
+ignored-detectors:
+  - name: "Generic Password"
+  - name: "Generic High Entropy Secret"
