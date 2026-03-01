@@ -520,42 +520,52 @@ def test_refresh_remote_files_worker_error(app_module):
     assert done.is_set()
 
 
-def test_main_debug_flag(monkeypatch):
-    """--debug flag should set log level to DEBUG."""
+def test_main_debug_flag(monkeypatch, tmp_path):
+    """--debug and --log flags configure logging correctly."""
     import logging
     import sys
-    from portkeydrop import main as main_mod
 
-    monkeypatch.setattr(sys, "argv", ["portkeydrop", "--debug"])
-    monkeypatch.setattr(main_mod, "main", lambda: None)
+    log_file = tmp_path / "debug.log"
+    monkeypatch.setattr(sys, "argv", ["portkeydrop", "--debug", f"--log={log_file}"])
 
-    # Re-run just the logging setup portion
-    handlers = [logging.StreamHandler()]
     debug = "--debug" in sys.argv
+    log_path = None
+    for arg in sys.argv:
+        if arg.startswith("--log="):
+            log_path = arg.split("=", 1)[1]
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_path:
+        fh = logging.FileHandler(log_path, encoding="utf-8")
+        handlers.append(fh)
+
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.WARNING,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
         handlers=handlers,
         force=True,
     )
+
     assert logging.getLogger().level == logging.DEBUG
-    # restore
+    file_handlers = [h for h in handlers if isinstance(h, logging.FileHandler)]
+    assert len(file_handlers) == 1
+    file_handlers[0].close()
     logging.basicConfig(level=logging.WARNING, force=True)
 
 
-def test_main_log_flag(monkeypatch, tmp_path):
-    """--log=<file> flag should add a FileHandler."""
+def test_main_no_flags(monkeypatch):
+    """No flags → WARNING level, no file handler."""
     import logging
     import sys
 
-    log_file = tmp_path / "test.log"
-    monkeypatch.setattr(sys, "argv", ["portkeydrop", f"--log={log_file}"])
+    monkeypatch.setattr(sys, "argv", ["portkeydrop"])
 
-    handlers = [logging.StreamHandler()]
-    for arg in sys.argv:
-        if arg.startswith("--log="):
-            handlers.append(logging.FileHandler(arg.split("=", 1)[1], encoding="utf-8"))
-
-    fh = [h for h in handlers if isinstance(h, logging.FileHandler)]
-    assert len(fh) == 1
-    fh[0].close()
+    debug = "--debug" in sys.argv
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.WARNING,
+        handlers=handlers,
+        force=True,
+    )
+    assert not debug
+    assert logging.getLogger().level == logging.WARNING

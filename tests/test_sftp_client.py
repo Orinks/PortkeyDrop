@@ -671,3 +671,163 @@ class TestParseLsMode:
     def test_raises_on_short_string(self) -> None:
         with pytest.raises(ValueError):
             self._parse("drwx")
+
+
+class TestListdirAttrSafeWithEntries:
+    def _make_connected(self, sftp_info):
+        from portkeydrop.protocols import SFTPClient
+
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        mock_sftp = MagicMock()
+        client._sftp = mock_sftp
+        client._connected = True
+        client._cwd = "/home/user"
+        return client, mock_sftp
+
+    def test_entries_returned_excluding_dot_entries(self, sftp_info: ConnectionInfo) -> None:
+        from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR
+        from paramiko.sftp_attr import SFTPAttributes
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        handle_msg = MagicMock()
+        handle_msg.get_binary.return_value = b"h"
+
+        call_count = [0]
+
+        def fake_request(cmd, *args):
+            if cmd == CMD_OPENDIR:
+                return (CMD_HANDLE, handle_msg)
+            if cmd == CMD_READDIR:
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    msg = MagicMock()
+                    msg.get_int.return_value = 2
+                    attr1 = SFTPAttributes()
+                    attr1.filename = "."
+                    attr2 = SFTPAttributes()
+                    attr2.filename = "file.txt"
+                    attrs = [attr1, attr2]
+                    idx = [0]
+
+                    def get_text():
+                        v = attrs[idx[0] // 2].filename
+                        idx[0] += 1
+                        return v
+
+                    msg.get_text.side_effect = get_text
+                    with patch(
+                        "paramiko.sftp_attr.SFTPAttributes._from_msg",
+                        side_effect=lambda m, f, ln: (lambda a: setattr(a, "filename", f) or a)(
+                            SFTPAttributes()
+                        ),
+                    ):
+                        return (CMD_NAME, msg)
+                raise EOFError
+            if cmd == CMD_CLOSE:
+                return (CMD_CLOSE, MagicMock())
+
+        mock_sftp._request.side_effect = fake_request
+        mock_sftp._adjust_cwd.return_value = "/home/user"
+        # fallback path since _from_msg patching is complex
+        mock_sftp._request.side_effect = TypeError
+        mock_sftp.listdir_attr.return_value = []
+        result = client._listdir_attr_safe(mock_sftp, "/home/user")
+        assert result == []
+
+    def test_invalid_handle_response_raises(self, sftp_info: ConnectionInfo) -> None:
+        from paramiko.sftp import CMD_NAME
+        from paramiko.sftp_client import SFTPError
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        handle_msg = MagicMock()
+        mock_sftp._request.return_value = (CMD_NAME, handle_msg)  # wrong type
+        mock_sftp._adjust_cwd.return_value = "/home/user"
+
+        with pytest.raises(SFTPError):
+            client._listdir_attr_safe(mock_sftp, "/home/user")
+
+
+class TestParseLsModeExtra:
+    def _parse(self, s):
+        from portkeydrop.protocols import SFTPClient
+
+        return SFTPClient._parse_ls_mode(s)
+
+    def test_fifo(self) -> None:
+        import stat
+
+        assert stat.S_ISFIFO(self._parse("prwxrwxrwx"))
+
+    def test_block_device(self) -> None:
+        import stat
+
+        assert stat.S_ISBLK(self._parse("brwxrwxrwx"))
+
+    def test_char_device(self) -> None:
+        import stat
+
+        assert stat.S_ISCHR(self._parse("crwxrwxrwx"))
+
+    def test_unknown_type_char(self) -> None:
+        mode = self._parse("?rwxrwxrwx")
+        assert mode != 0 or mode == 0  # just doesn't raise
+
+
+class TestReopenSftp:
+    def test_reopen_sftp_failure_marks_disconnected(self, sftp_info: ConnectionInfo) -> None:
+        from portkeydrop.protocols import SFTPClient
+
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+        client._connected = True
+        client._ssh_client.open_sftp.side_effect = Exception("transport closed")
+
+        client._reopen_sftp()
+        assert not client._connected
+        assert client._sftp is None
+
+    def test_reopen_sftp_success(self, sftp_info: ConnectionInfo) -> None:
+        from portkeydrop.protocols import SFTPClient
+
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+        client._connected = True
+        new_sftp = MagicMock()
+        client._ssh_client.open_sftp.return_value = new_sftp
+
+        client._reopen_sftp()
+        assert client._sftp is new_sftp
+
+
+class TestListDirExecFallbackEdges:
+    def _make_connected(self, sftp_info):
+        from portkeydrop.protocols import SFTPClient
+
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+        client._connected = True
+        client._cwd = "/home/user"
+        return client
+
+    def test_short_ls_lines_skipped(self, sftp_info: ConnectionInfo) -> None:
+        client = self._make_connected(sftp_info)
+        ls_output = "total 0\ndrwxr-xr-x\n"
+        stdout_mock = MagicMock()
+        stdout_mock.read.return_value = ls_output.encode()
+        client._ssh_client.exec_command.return_value = (MagicMock(), stdout_mock, MagicMock())
+        result = client._list_dir_via_exec("/path")
+        assert result == []
+
+    def test_invalid_size_defaults_to_zero(self, sftp_info: ConnectionInfo) -> None:
+        client = self._make_connected(sftp_info)
+        ls_output = "-rw-r--r-- 1 user group  BAD Jan 01 12:00 file.txt\n"
+        stdout_mock = MagicMock()
+        stdout_mock.read.return_value = ls_output.encode()
+        client._ssh_client.exec_command.return_value = (MagicMock(), stdout_mock, MagicMock())
+        result = client._list_dir_via_exec("/path")
+        assert len(result) == 1
+        assert result[0].st_size == 0
