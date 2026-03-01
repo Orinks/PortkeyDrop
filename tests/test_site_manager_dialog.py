@@ -120,6 +120,9 @@ class _StaticText(_Window):
 
 
 class _FlexGridSizer(_Sizer):
+    def __init__(self, *a, **kw):
+        pass
+
     def AddGrowableCol(self, *a):
         pass
 
@@ -128,6 +131,9 @@ class _FlexGridSizer(_Sizer):
 
 
 class _BoxSizer(_Sizer):
+    def __init__(self, *a, **kw):
+        pass
+
     def Add(self, *a, **kw):
         pass
 
@@ -171,11 +177,15 @@ def _make_fake_wx():
     wx.ID_OK = 5100
     wx.CANCEL = 5101
     wx.ALIGN_CENTER_VERTICAL = 1
-    wx.LEFT = 2
-    wx.EXPAND = 4
-    wx.ALL = 8
-    wx.VERTICAL = 16
-    wx.HORIZONTAL = 32
+    wx.ALIGN_RIGHT = 2
+    wx.LEFT = 4
+    wx.RIGHT = 8
+    wx.TOP = 16
+    wx.BOTTOM = 32
+    wx.EXPAND = 64
+    wx.ALL = 128
+    wx.VERTICAL = 256
+    wx.HORIZONTAL = 512
     wx.TE_PASSWORD = 64
     wx.DEFAULT_DIALOG_STYLE = 128
     wx.RESIZE_BORDER = 256
@@ -250,3 +260,20 @@ class TestTogglePassword:
         mod.SiteManagerDialog._on_toggle_password(dlg, MagicMock())
 
         assert dlg.password_text.GetValue() == "mypassword"
+
+
+class TestSiteManagerDialogInit:
+    def test_init_creates_show_password_btn(self, dialog_module):
+        """__init__ should wire up the Show password button."""
+        from portkeydrop.sites import SiteManager
+
+        mod, fake_wx = dialog_module
+        site_manager = MagicMock(spec=SiteManager)
+        site_manager.sites = []
+
+        dlg = mod.SiteManagerDialog(None, site_manager)
+
+        assert hasattr(dlg, "show_password_btn")
+        assert dlg.show_password_btn._label == "S&how"
+        assert dlg.show_password_btn._name == "Show password"
+        assert hasattr(dlg, "password_text")
