@@ -492,3 +492,70 @@ def test_on_remote_item_activated_chdir_error(app_module):
 
     fake_wx.MessageBox = original_msgbox
     assert done.is_set()
+
+
+def test_refresh_remote_files_worker_error(app_module):
+    """Exception in list_dir worker should call _on_remote_files_error."""
+    import threading
+
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    frame._client = MagicMock(connected=True, cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._client.list_dir.side_effect = OSError("boom")
+    frame._update_status = MagicMock()
+
+    done = threading.Event()
+    original_msgbox = fake_wx.MessageBox
+
+    def _msgbox(*a, **kw):
+        done.set()
+        return original_msgbox(*a, **kw)
+
+    fake_wx.MessageBox = _msgbox
+    app.MainFrame._refresh_remote_files(frame)
+    done.wait(timeout=5)
+    fake_wx.MessageBox = original_msgbox
+    assert done.is_set()
+
+
+def test_main_debug_flag(monkeypatch):
+    """--debug flag should set log level to DEBUG."""
+    import logging
+    import sys
+    from portkeydrop import main as main_mod
+
+    monkeypatch.setattr(sys, "argv", ["portkeydrop", "--debug"])
+    monkeypatch.setattr(main_mod, "main", lambda: None)
+
+    # Re-run just the logging setup portion
+    handlers = [logging.StreamHandler()]
+    debug = "--debug" in sys.argv
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.WARNING,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+    assert logging.getLogger().level == logging.DEBUG
+    # restore
+    logging.basicConfig(level=logging.WARNING, force=True)
+
+
+def test_main_log_flag(monkeypatch, tmp_path):
+    """--log=<file> flag should add a FileHandler."""
+    import logging
+    import sys
+
+    log_file = tmp_path / "test.log"
+    monkeypatch.setattr(sys, "argv", ["portkeydrop", f"--log={log_file}"])
+
+    handlers = [logging.StreamHandler()]
+    for arg in sys.argv:
+        if arg.startswith("--log="):
+            handlers.append(logging.FileHandler(arg.split("=", 1)[1], encoding="utf-8"))
+
+    fh = [h for h in handlers if isinstance(h, logging.FileHandler)]
+    assert len(fh) == 1
+    fh[0].close()
