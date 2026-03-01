@@ -5,7 +5,8 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +186,6 @@ def _make_fake_wx():
     wx.EVT_LISTBOX = object()
     wx.MessageBox = MagicMock(return_value=wx.OK)
     return wx
-
-
-import pytest
 
 
 @pytest.fixture
