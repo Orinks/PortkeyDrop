@@ -8,9 +8,21 @@ import sys
 
 def main() -> None:
     """Launch Portkey Drop."""
+
+    debug = "--debug" in sys.argv
+    log_file = None
+    for arg in sys.argv:
+        if arg.startswith("--log="):
+            log_file = arg.split("=", 1)[1]
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.DEBUG if debug else logging.WARNING,
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+        handlers=handlers,
     )
     try:
         import wx  # noqa: F401

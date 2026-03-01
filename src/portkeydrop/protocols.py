@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import ssl
+import threading
 import stat
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -374,6 +375,7 @@ class SFTPClient(TransferClient):
         super().__init__(info)
         self._ssh_client: paramiko.SSHClient | None = None
         self._sftp: paramiko.SFTPClient | None = None
+        self._sftp_lock = threading.Lock()
 
     def connect(self) -> None:
         import paramiko
@@ -558,24 +560,218 @@ class SFTPClient(TransferClient):
             raise ConnectionError("Not connected")
         return self._sftp
 
+    def _sftp_call(self, fn: Callable, *args, **kwargs):
+        """Call an SFTP function with lock serialisation and debug logging.
+
+        The lock ensures calls are serialised (paramiko SFTP is not thread-safe).
+        """
+        name = fn.__name__ if hasattr(fn, "__name__") else str(fn)
+        with self._sftp_lock:
+            logger.debug("SFTP call: %s args=%s", name, args)
+            try:
+                result = fn(*args, **kwargs)
+                logger.debug("SFTP call completed: %s", name)
+                return result
+            except Exception as e:
+                logger.debug("SFTP call failed: %s → %s: %s", name, type(e).__name__, e)
+                raise
+
+    def _reopen_sftp(self) -> None:
+        """Close and reopen the SFTP channel without dropping the SSH session.
+
+        Called after a per-operation timeout to interrupt the stuck background
+        thread and give future calls a clean SFTP session.
+        """
+        try:
+            if self._sftp:
+                self._sftp.close()
+        except Exception:
+            pass
+        try:
+            if self._ssh_client:
+                self._sftp = self._ssh_client.open_sftp()
+                logger.debug("_reopen_sftp: SFTP channel reopened")
+        except Exception:
+            logger.warning("_reopen_sftp: failed to reopen SFTP channel — marking disconnected")
+            self._connected = False
+            self._sftp = None
+
+    def _listdir_attr_safe(self, sftp: paramiko.SFTPClient, path: str) -> list:
+        """Like sftp.listdir_attr() but treats READDIR count=0 as EOF.
+
+        Paramiko loops forever when a server returns count=0 (empty batch)
+        instead of an SSH_FX_EOF status — common on NAS devices for dirs like
+        .ssh. WinSCP handles this correctly; we replicate that behaviour here.
+        """
+        from paramiko.sftp import (
+            CMD_CLOSE,
+            CMD_HANDLE,
+            CMD_NAME,
+            CMD_OPENDIR,
+            CMD_READDIR,
+        )
+        from paramiko.sftp_attr import SFTPAttributes as _SFTPAttributes
+        from paramiko.sftp_client import SFTPError
+
+        adjusted = sftp._adjust_cwd(path)
+        try:
+            t, msg = sftp._request(CMD_OPENDIR, adjusted)
+        except (TypeError, ValueError, AttributeError):
+            # _request not available (e.g. in tests with MagicMock) — fall back
+            return sftp.listdir_attr(path)
+        if t != CMD_HANDLE:
+            raise SFTPError("Expected handle")
+        handle = msg.get_binary()
+        filelist = []
+        try:
+            while True:
+                try:
+                    t, msg = sftp._request(CMD_READDIR, handle)
+                except EOFError:
+                    break
+                if t != CMD_NAME:
+                    raise SFTPError("Expected name response")
+                count = msg.get_int()
+                if count == 0:  # ← the fix: empty batch = EOF on some NAS servers
+                    break
+                for _ in range(count):
+                    filename = msg.get_text()
+                    longname = msg.get_text()
+                    attr = _SFTPAttributes._from_msg(msg, filename, longname)
+                    if filename not in (".", ".."):
+                        filelist.append(attr)
+        finally:
+            sftp._request(CMD_CLOSE, handle)
+        return filelist
+
+    def _list_dir_via_exec(self, path: str) -> list:
+        """Fallback directory listing using exec_command('ls -la').
+
+        Used when SFTP READDIR hangs (e.g. NAS quirks on .ssh).
+        Returns a list of paramiko.SFTPAttributes-like objects.
+        """
+        import shlex
+        import paramiko
+
+        logger.debug("_list_dir_via_exec: listing '%s' via exec", path)
+        if not self._ssh_client:
+            return []
+        try:
+            _, stdout, _ = self._ssh_client.exec_command(f"ls -la {shlex.quote(path)}", timeout=10)
+            output = stdout.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.warning("exec fallback failed for '%s': %s", path, e)
+            return []
+
+        entries = []
+        for line in output.splitlines():
+            parts = line.split(None, 8)
+            # ls -la lines: permissions links owner group size month day time/year name
+            if len(parts) < 9:
+                continue
+            perms, _, owner, group, size_str, *_, name = parts
+            if name in (".", "..") or not perms:
+                continue
+            # Parse permissions string into st_mode integer
+            try:
+                mode = self._parse_ls_mode(perms)
+            except Exception:
+                continue
+            attr = paramiko.SFTPAttributes()
+            attr.filename = name
+            attr.longname = line
+            attr.st_mode = mode
+            try:
+                attr.st_size = int(size_str)
+            except ValueError:
+                attr.st_size = 0
+            attr.st_uid = 0
+            attr.st_gid = 0
+            attr.st_mtime = 0
+            entries.append(attr)
+
+        logger.debug("_list_dir_via_exec: got %d entries for '%s'", len(entries), path)
+        return entries
+
+    @staticmethod
+    def _parse_ls_mode(perms: str) -> int:
+        """Convert a 10-char ls permission string (e.g. drwxr-xr-x) to st_mode int."""
+        import stat as _stat
+
+        if len(perms) < 10:
+            raise ValueError(f"bad perms string: {perms!r}")
+        type_char = perms[0]
+        mode = 0
+        if type_char == "d":
+            mode |= _stat.S_IFDIR
+        elif type_char == "l":
+            mode |= _stat.S_IFLNK
+        elif type_char == "-":
+            mode |= _stat.S_IFREG
+        elif type_char == "s":
+            mode |= _stat.S_IFSOCK
+        elif type_char == "p":
+            mode |= _stat.S_IFIFO
+        elif type_char == "b":
+            mode |= _stat.S_IFBLK
+        elif type_char == "c":
+            mode |= _stat.S_IFCHR
+        bits = [
+            _stat.S_IRUSR,
+            _stat.S_IWUSR,
+            _stat.S_IXUSR,
+            _stat.S_IRGRP,
+            _stat.S_IWGRP,
+            _stat.S_IXGRP,
+            _stat.S_IROTH,
+            _stat.S_IWOTH,
+            _stat.S_IXOTH,
+        ]
+        for i, bit in enumerate(bits):
+            if perms[i + 1] not in ("-", "T", "S"):
+                mode |= bit
+        return mode
+
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         sftp = self._ensure_connected()
-        target = path if path != "." else self._cwd
+        target = (path if path != "." else self._cwd).rstrip("/") or "/"
         files: list[RemoteFile] = []
-        for attr in sftp.listdir_attr(target):
+        logger.debug("list_dir: requesting entries for '%s'", target)
+        try:
+            entries = self._listdir_attr_safe(sftp, target)
+        except PermissionError:
+            raise
+        except OSError as e:
+            import errno as _errno
+
+            if e.errno in (_errno.EACCES, _errno.EPERM):
+                raise PermissionError(f"Permission denied: cannot list '{target}'") from e
+            raise
+        logger.debug("list_dir: got %d entries for '%s'", len(entries), target)
+        for attr in entries:
             if attr.filename in (".", ".."):
                 continue
-            is_dir = bool(attr.st_mode is not None and stat.S_ISDIR(attr.st_mode))
+            mode = attr.st_mode
+            # Skip special files (sockets, FIFOs, devices) — stat()-ing them can hang
+            if mode is not None and (
+                stat.S_ISSOCK(mode)
+                or stat.S_ISFIFO(mode)
+                or stat.S_ISBLK(mode)
+                or stat.S_ISCHR(mode)
+            ):
+                logger.debug("Skipping special file: %s (mode=%s)", attr.filename, oct(mode))
+                continue
+            is_dir = bool(mode is not None and stat.S_ISDIR(mode))
             # Follow symlinks to check if target is a directory
             full_path = f"{target.rstrip('/')}/{attr.filename}"
-            is_link = bool(attr.st_mode is not None and stat.S_ISLNK(attr.st_mode))
+            is_link = bool(mode is not None and stat.S_ISLNK(mode))
             if is_link:
                 try:
-                    target_attr = sftp.stat(full_path)
+                    target_attr = self._sftp_call(sftp.stat, full_path)
                     if target_attr.st_mode is not None and stat.S_ISDIR(target_attr.st_mode):
                         is_dir = True
                 except Exception:
-                    pass  # broken symlink or permission error; leave as file
+                    pass  # broken symlink, permission error, or special file; leave as file
             if not is_dir and hasattr(attr, "longname") and attr.longname.startswith("d"):
                 is_dir = True
             logger.debug(
@@ -603,9 +799,19 @@ class SFTPClient(TransferClient):
         return files
 
     def chdir(self, path: str) -> str:
+        logger.debug("chdir: '%s'", path)
         sftp = self._ensure_connected()
-        sftp.chdir(path)
-        self._cwd = sftp.normalize(".")
+        try:
+            self._sftp_call(sftp.chdir, path)
+            logger.debug("chdir: sftp.chdir done, normalizing")
+            self._cwd = self._sftp_call(sftp.normalize, ".")
+            logger.debug("chdir: done, cwd='%s'", self._cwd)
+        except OSError as e:
+            import errno as _errno
+
+            if e.errno in (_errno.EACCES, _errno.EPERM):
+                raise PermissionError(f"Permission denied: cannot access '{path}'") from e
+            raise
         return self._cwd
 
     def download(
