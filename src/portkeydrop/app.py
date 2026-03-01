@@ -619,34 +619,50 @@ class MainFrame(wx.Frame):
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
             return
-        try:
-            self._update_status("Loading...", self._client.cwd)
-            wx.Yield()
-            self._remote_files = self._client.list_dir()
-            self._apply_sort(self._remote_files)
-            # Insert ".." entry at the top to navigate to parent
-            if self._client.cwd != "/":
-                parent_path = str(PurePosixPath(self._client.cwd).parent)
-                parent_entry = RemoteFile(name="..", path=parent_path, is_dir=True)
-                self._remote_files.insert(0, parent_entry)
-            self._populate_file_list(
-                self.remote_file_list,
-                self._get_visible_files(self._remote_files, self._remote_filter_text),
-            )
-            self._update_status("Connected", self._client.cwd)
-            self.remote_path_bar.SetValue(self._client.cwd)
-            self._update_title()
-            # Select first item so screen readers announce the new directory
-            if self.remote_file_list.GetItemCount() > 0:
-                self.remote_file_list.Select(0)
-                self.remote_file_list.Focus(0)
-                self.remote_file_list.SetFocus()
-            count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
-            if self._settings.display.announce_file_count:
-                self._announce(f"{self._client.cwd}: {count} items")
-        except Exception as e:
-            self._update_status("Connected", self._client.cwd)
-            wx.MessageBox(f"Failed to list directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
+        self._update_status("Loading...", self._client.cwd)
+        client = self._client
+
+        def _worker():
+            try:
+                files = client.list_dir()
+                wx.CallAfter(self._on_remote_files_loaded, files, client.cwd)
+            except Exception as e:
+                wx.CallAfter(self._on_remote_files_error, e, client.cwd)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
+        self._apply_sort(files)
+        # Insert ".." entry at the top to navigate to parent
+        if cwd != "/":
+            parent_path = str(PurePosixPath(cwd).parent)
+            parent_entry = RemoteFile(name="..", path=parent_path, is_dir=True)
+            files.insert(0, parent_entry)
+        self._remote_files = files
+        self._populate_file_list(
+            self.remote_file_list,
+            self._get_visible_files(self._remote_files, self._remote_filter_text),
+        )
+        self._update_status("Connected", cwd)
+        self.remote_path_bar.SetValue(cwd)
+        self._update_title()
+        # Select first item so screen readers announce the new directory
+        if self.remote_file_list.GetItemCount() > 0:
+            self.remote_file_list.Select(0)
+            self.remote_file_list.Focus(0)
+            self.remote_file_list.SetFocus()
+        count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
+        if self._settings.display.announce_file_count:
+            self._announce(f"{cwd}: {count} items")
+
+    def _on_remote_files_error(self, e: Exception, cwd: str) -> None:
+        if isinstance(e, PermissionError):
+            self._update_status("Connected", cwd)
+            msg = "Permission denied: cannot list this directory."
+        else:
+            self._update_status("Connected", cwd)
+            msg = str(e)
+        wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
         try:
@@ -808,15 +824,25 @@ class MainFrame(wx.Frame):
             f.path,
         )
         if f.is_dir:
-            try:
-                self._announce(f"Opening {f.name}...")
-                self._client.chdir(f.path)
-                self._refresh_remote_files()
-            except Exception as e:
-                logger.exception("Failed to open remote directory %s", f.path)
-                wx.MessageBox(
-                    f"Failed to open directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
-                )
+            self._announce(f"Opening {f.name}...")
+            self._update_status("Loading...", f.path)
+            client = self._client
+            path = f.path
+
+            def _chdir_worker():
+                try:
+                    client.chdir(path)
+                    wx.CallAfter(self._refresh_remote_files)
+                except Exception as e:
+                    logger.exception("Failed to open remote directory %s", path)
+                    wx.CallAfter(
+                        wx.MessageBox,
+                        f"Failed to open directory: {e}",
+                        "Error",
+                        wx.OK | wx.ICON_ERROR,
+                    )
+
+            threading.Thread(target=_chdir_worker, daemon=True).start()
         else:
             self._announce(f"{f.name} detected as file, not directory")
             self._on_download(None)

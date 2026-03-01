@@ -337,3 +337,176 @@ class TestSFTPClientDisconnect:
         client.disconnect()  # Should not raise
         assert client._sftp is None
         assert client._ssh_client is None
+
+
+class TestSFTPClientSftpCall:
+    def test_sftp_call_returns_result(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+
+        result = client._sftp_call(lambda: 42)
+        assert result == 42
+
+    def test_sftp_call_passes_args(self, sftp_info: ConnectionInfo) -> None:
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+
+        result = client._sftp_call(lambda a, b: a + b, 3, 4)
+        assert result == 7
+
+    def test_sftp_call_timeout_raises(self, sftp_info: ConnectionInfo) -> None:
+        import socket
+
+        sftp_info.timeout = 1
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+
+        # socket.timeout should propagate as-is (no longer converted here)
+        def raises_socket_timeout():
+            raise socket.timeout("timed out")
+
+        with pytest.raises(socket.timeout):
+            client._sftp_call(raises_socket_timeout)
+
+    def test_sftp_call_uses_fallback_timeout_when_none(self, sftp_info: ConnectionInfo) -> None:
+        """If timeout is None, should use 30s fallback (not hang forever)."""
+        sftp_info.timeout = None  # type: ignore[assignment]
+        client = SFTPClient(sftp_info)
+        client._ssh_client = MagicMock()
+        client._sftp = MagicMock()
+
+        # Just verify it doesn't error on None timeout — we can't wait 30s in tests,
+        # so confirm it runs a fast fn successfully with None timeout.
+        result = client._sftp_call(lambda: "ok")
+        assert result == "ok"
+
+
+class TestSFTPClientListDir:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+        client = SFTPClient(sftp_info)
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/home/user"
+        client._ssh_client = MagicMock()
+        client._sftp = mock_sftp
+        client._cwd = "/home/user"
+        return client, mock_sftp
+
+    def test_list_dir_returns_files(self, sftp_info: ConnectionInfo) -> None:
+        import stat as stat_mod
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        attr = MagicMock()
+        attr.filename = "file.txt"
+        attr.st_mode = stat_mod.S_IFREG | 0o644
+        attr.st_size = 100
+        attr.st_mtime = 0
+        attr.st_uid = 1000
+        attr.st_gid = 1000
+        attr.longname = "-rw-r--r-- 1 user group 100 Jan 1 file.txt"
+        mock_sftp.listdir_attr.return_value = [attr]
+
+        files = client.list_dir()
+        assert len(files) == 1
+        assert files[0].name == "file.txt"
+        assert files[0].is_dir is False
+
+    def test_list_dir_permission_error(self, sftp_info: ConnectionInfo) -> None:
+        import errno
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        err = IOError()
+        err.errno = errno.EACCES
+        mock_sftp.listdir_attr.side_effect = err
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            client.list_dir("/restricted")
+
+    def test_list_dir_reraises_other_oserror(self, sftp_info: ConnectionInfo) -> None:
+        import errno
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        err = IOError()
+        err.errno = errno.ENOENT
+        mock_sftp.listdir_attr.side_effect = err
+
+        with pytest.raises(IOError):
+            client.list_dir("/gone")
+
+
+class TestSFTPClientChdir:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+        client = SFTPClient(sftp_info)
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/home/user/subdir"
+        client._ssh_client = MagicMock()
+        client._sftp = mock_sftp
+        client._cwd = "/home/user"
+        return client, mock_sftp
+
+    def test_chdir_updates_cwd(self, sftp_info: ConnectionInfo) -> None:
+        client, mock_sftp = self._make_connected(sftp_info)
+        result = client.chdir("/home/user/subdir")
+        assert result == "/home/user/subdir"
+        assert client._cwd == "/home/user/subdir"
+
+    def test_chdir_permission_error(self, sftp_info: ConnectionInfo) -> None:
+        import errno
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        err = IOError()
+        err.errno = errno.EPERM
+        mock_sftp.chdir.side_effect = err
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            client.chdir("/restricted")
+
+
+class TestSFTPClientListDirSpecialFiles:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+        client = SFTPClient(sftp_info)
+        mock_sftp = MagicMock()
+        mock_sftp.normalize.return_value = "/home/user"
+        client._ssh_client = MagicMock()
+        client._sftp = mock_sftp
+        client._cwd = "/home/user"
+        return client, mock_sftp
+
+    def test_socket_file_skipped(self, sftp_info: ConnectionInfo) -> None:
+        import stat as stat_mod
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        attr = MagicMock()
+        attr.filename = "agent.sock"
+        attr.st_mode = stat_mod.S_IFSOCK | 0o600
+        attr.longname = "srw------- 1 user group 0 Jan 1 agent.sock"
+        mock_sftp.listdir_attr.return_value = [attr]
+
+        files = client.list_dir()
+        assert files == []
+
+    def test_fifo_file_skipped(self, sftp_info: ConnectionInfo) -> None:
+        import stat as stat_mod
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        attr = MagicMock()
+        attr.filename = "mypipe"
+        attr.st_mode = stat_mod.S_IFIFO | 0o644
+        attr.longname = "prw-r--r-- 1 user group 0 Jan 1 mypipe"
+        mock_sftp.listdir_attr.return_value = [attr]
+
+        files = client.list_dir()
+        assert files == []
+
+    def test_oserror_reraises(self, sftp_info: ConnectionInfo) -> None:
+        import errno
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        err = IOError()
+        err.errno = errno.ENOENT
+        mock_sftp.listdir_attr.side_effect = err
+
+        with pytest.raises(IOError):
+            client.list_dir("/gone")

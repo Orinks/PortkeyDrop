@@ -352,3 +352,143 @@ def test_on_transfer_update_reports_latest_status(app_module):
     frame._on_transfer_update(None)
 
     frame._update_status.assert_called_once_with("Download complete.", "/remote")
+
+
+# ── _refresh_remote_files threading ──────────────────────────────────────────
+
+
+def test_refresh_remote_files_spawns_thread(app_module):
+    """_refresh_remote_files should return immediately and spawn a worker thread."""
+    import threading
+
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(connected=True, cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = False
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame._remote_files = []
+
+    done = threading.Event()
+    real_files = [RemoteFile(name="f.txt", path="/home/user/f.txt")]
+    frame._client.list_dir.side_effect = lambda *a, **kw: done.set() or real_files
+
+    # Override refresh to use real implementation
+    app.MainFrame._refresh_remote_files(frame)
+    done.wait(timeout=5)
+
+    frame._client.list_dir.assert_called_once()
+
+
+def test_on_remote_files_loaded_populates_list(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = False
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=1))
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame._remote_files = []
+
+    files = [RemoteFile(name="f.txt", path="/home/user/f.txt")]
+    app.MainFrame._on_remote_files_loaded(frame, files, "/home/user")
+
+    frame._populate_file_list.assert_called_once()
+    frame._update_status.assert_called_with("Connected", "/home/user")
+    frame.remote_path_bar.SetValue.assert_called_with("/home/user")
+
+
+def test_on_remote_files_error_shows_messagebox(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(cwd="/home/user")
+
+    app.MainFrame._on_remote_files_error(frame, PermissionError("Permission denied"), "/home/user")
+
+    fake_wx.MessageBox.assert_called_once()
+    args = fake_wx.MessageBox.call_args[0]
+    assert "Permission denied" in args[0]
+
+
+def test_on_remote_files_error_timeout_message(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(cwd="/home/user")
+
+    app.MainFrame._on_remote_files_error(frame, TimeoutError("timed out"), "/home/user")
+
+    fake_wx.MessageBox.assert_called_once()
+    args = fake_wx.MessageBox.call_args[0]
+    assert "server did not respond" in args[0].lower() or "timed out" in args[0].lower()
+
+
+def test_on_remote_files_loaded_announces_count(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = True
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[MagicMock()])
+    frame._remote_files = []
+
+    files = [RemoteFile(name="f.txt", path="/home/user/f.txt")]
+    app.MainFrame._on_remote_files_loaded(frame, files, "/home/user")
+
+    frame._announce.assert_called_once()
+    assert "/home/user" in frame._announce.call_args[0][0]
+
+
+def test_on_remote_item_activated_chdir_error(app_module):
+    import threading
+
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    f = RemoteFile(name=".ssh", path="/home/user/.ssh", is_dir=True)
+    frame._get_selected_remote_file = MagicMock(return_value=f)
+    frame._client = MagicMock(connected=True)
+    frame._client.chdir.side_effect = PermissionError("Permission denied")
+    frame._update_status = MagicMock()
+
+    done = threading.Event()
+    original_msgbox = fake_wx.MessageBox
+
+    def _msgbox(*a, **kw):
+        done.set()
+        return original_msgbox(*a, **kw)
+
+    fake_wx.MessageBox = _msgbox
+
+    app.MainFrame._on_remote_item_activated(frame, MagicMock(GetIndex=MagicMock(return_value=0)))
+    done.wait(timeout=5)
+
+    fake_wx.MessageBox = original_msgbox
+    assert done.is_set()
