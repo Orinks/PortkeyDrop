@@ -70,7 +70,15 @@ class SiteManagerDialog(wx.Dialog):
             ctrl.SetName(ctrl_name)
             setattr(self, attr_name, ctrl)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
-            if attr_name == "key_path_text":
+            if attr_name == "password_text":
+                row = wx.BoxSizer(wx.HORIZONTAL)
+                row.Add(ctrl, 1, wx.EXPAND)
+                self.show_password_btn = wx.Button(self, label="S&how")
+                self.show_password_btn.SetName("Show password")
+                self.show_password_btn.Bind(wx.EVT_BUTTON, self._on_toggle_password)
+                row.Add(self.show_password_btn, 0, wx.LEFT, 4)
+                grid.Add(row, 1, wx.EXPAND)
+            elif attr_name == "key_path_text":
                 row = wx.BoxSizer(wx.HORIZONTAL)
                 row.Add(ctrl, 1, wx.EXPAND)
                 browse_btn = wx.Button(self, label="&Browse...")
@@ -145,6 +153,26 @@ class SiteManagerDialog(wx.Dialog):
             self._site_manager.remove(self._selected_site.id)
             self._selected_site = None
             self._refresh_site_list()
+
+    def _on_toggle_password(self, event: wx.CommandEvent) -> None:
+        """Toggle password field between masked and plain text."""
+        current_value = self.password_text.GetValue()
+        is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
+        sizer_item = self.password_text.GetContainingSizer()
+        new_style = 0 if is_masked else wx.TE_PASSWORD
+        new_ctrl = wx.TextCtrl(self, style=new_style)
+        new_ctrl.SetName("Password")
+        new_ctrl.SetValue(current_value)
+
+        if sizer_item:
+            sizer_item.Replace(self.password_text, new_ctrl)
+
+        self.password_text.Destroy()
+        self.password_text = new_ctrl
+        self.show_password_btn.SetLabel("H&ide" if is_masked else "S&how")
+        self.show_password_btn.SetName("Hide password" if is_masked else "Show password")
+        self.Layout()
+        new_ctrl.SetFocus()
 
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
