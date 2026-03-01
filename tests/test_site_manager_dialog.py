@@ -12,70 +12,144 @@ from unittest.mock import MagicMock, patch
 # Minimal wx stub for SiteManagerDialog
 # ---------------------------------------------------------------------------
 
+
 class _Window:
     def __init__(self, parent=None, **_kw):
         pass
-    def Bind(self, *a, **kw): pass
-    def SetName(self, *a): pass
-    def SetSizer(self, *a): pass
-    def Layout(self): pass
-    def SetFocus(self): pass
-    def Destroy(self): pass
-    def GetContainingSizer(self): return _Sizer()
-    def GetWindowStyle(self): return 0
-    def GetValue(self): return ""
-    def SetValue(self, v): self._value = v
-    def SetLabel(self, v): pass
+
+    def Bind(self, *a, **kw):
+        pass
+
+    def SetName(self, *a):
+        pass
+
+    def SetSizer(self, *a):
+        pass
+
+    def Layout(self):
+        pass
+
+    def SetFocus(self):
+        pass
+
+    def Destroy(self):
+        pass
+
+    def GetContainingSizer(self):
+        return _Sizer()
+
+    def GetWindowStyle(self):
+        return 0
+
+    def GetValue(self):
+        return ""
+
+    def SetValue(self, v):
+        self._value = v
+
+    def SetLabel(self, v):
+        pass
+
 
 class _Dialog(_Window):
     def __init__(self, parent=None, title="", size=None, style=0, **_kw):
         pass
-    def EndModal(self, r): pass
+
+    def EndModal(self, r):
+        pass
+
 
 class _Sizer:
-    def GetItem(self, ctrl): return self
-    def Replace(self, old, new): pass
-    def Add(self, *a, **kw): pass
+    def GetItem(self, ctrl):
+        return self
+
+    def Replace(self, old, new):
+        pass
+
+    def Add(self, *a, **kw):
+        pass
+
 
 class _TextCtrl(_Window):
     def __init__(self, parent=None, style=0, **_kw):
         self._style = style
         self._value = ""
-    def GetWindowStyle(self): return self._style
-    def GetValue(self): return self._value
-    def SetValue(self, v): self._value = v
-    def GetContainingSizer(self): return _Sizer()
-    def Destroy(self): pass
+
+    def GetWindowStyle(self):
+        return self._style
+
+    def GetValue(self):
+        return self._value
+
+    def SetValue(self, v):
+        self._value = v
+
+    def GetContainingSizer(self):
+        return _Sizer()
+
+    def Destroy(self):
+        pass
+
 
 class _Button(_Window):
     def __init__(self, parent=None, label="", **_kw):
         self._label = label
         self._name = ""
-    def SetLabel(self, v): self._label = v
-    def SetName(self, v): self._name = v
+
+    def SetLabel(self, v):
+        self._label = v
+
+    def SetName(self, v):
+        self._name = v
+
 
 class _Choice(_Window):
-    def __init__(self, *a, choices=None, **kw): self._choices = choices or []
-    def SetSelection(self, i): pass
-    def GetStringSelection(self): return self._choices[0] if self._choices else ""
+    def __init__(self, *a, choices=None, **kw):
+        self._choices = choices or []
+
+    def SetSelection(self, i):
+        pass
+
+    def GetStringSelection(self):
+        return self._choices[0] if self._choices else ""
+
 
 class _StaticText(_Window):
     pass
 
+
 class _FlexGridSizer(_Sizer):
-    def AddGrowableCol(self, *a): pass
-    def Add(self, *a, **kw): pass
+    def AddGrowableCol(self, *a):
+        pass
+
+    def Add(self, *a, **kw):
+        pass
+
 
 class _BoxSizer(_Sizer):
-    def Add(self, *a, **kw): pass
+    def Add(self, *a, **kw):
+        pass
+
 
 class _ListBox(_Window):
-    def __init__(self, *a, **kw): self._items = []
-    def Clear(self): self._items = []
-    def Append(self, label, data=None): self._items.append((label, data))
-    def GetSelection(self): return -1
-    def GetClientData(self, i): return None
-    def Bind(self, *a, **kw): pass
+    def __init__(self, *a, **kw):
+        self._items = []
+
+    def Clear(self):
+        self._items = []
+
+    def Append(self, label, data=None):
+        self._items.append((label, data))
+
+    def GetSelection(self):
+        return -1
+
+    def GetClientData(self, i):
+        return None
+
+    def Bind(self, *a, **kw):
+        pass
+
 
 def _make_fake_wx():
     wx = types.ModuleType("wx")
