@@ -159,8 +159,6 @@ class SiteManagerDialog(wx.Dialog):
         current_value = self.password_text.GetValue()
         is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
         sizer_item = self.password_text.GetContainingSizer()
-        parent_sizer = sizer_item.GetItem(self.password_text) if sizer_item else None
-
         new_style = 0 if is_masked else wx.TE_PASSWORD
         new_ctrl = wx.TextCtrl(self, style=new_style)
         new_ctrl.SetName("Password")
