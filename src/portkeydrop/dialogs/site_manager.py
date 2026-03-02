@@ -54,7 +54,7 @@ class SiteManagerDialog(wx.Dialog):
 
         fields = [
             ("Na&me:", "name_text", wx.TextCtrl, {}),
-            ("P&rotocol:", "protocol_choice", wx.Choice, {"choices": ["sftp", "ftp", "ftps"]}),
+            ("Pro&tocol:", "protocol_choice", wx.Choice, {"choices": ["sftp", "ftp", "ftps"]}),
             ("&Host:", "host_text", wx.TextCtrl, {}),
             ("Po&rt:", "port_text", wx.TextCtrl, {}),
             ("&Username:", "username_text", wx.TextCtrl, {}),
