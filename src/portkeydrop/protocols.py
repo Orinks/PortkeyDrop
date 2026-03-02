@@ -443,10 +443,22 @@ class SFTPClient(TransferClient):
                     raise ConnectionError(
                         f"SFTP connection failed: key file not found: {self._info.key_path}"
                     )
-                connect_kwargs["key_filename"] = key_path
-                connect_kwargs["allow_agent"] = False
-                connect_kwargs["look_for_keys"] = False
-                auth_methods = [f"key-file:{self._info.key_path}"]
+                from portkeydrop.ppk_utils import is_ppk_file, load_ppk_key
+                if is_ppk_file(key_path):
+                    # PuTTY PPK file — convert in-memory and pass as pkey object
+                    passphrase = self._info.password if self._info.password else None
+                    try:
+                        connect_kwargs["pkey"] = load_ppk_key(key_path, passphrase)
+                    except ValueError as exc:
+                        raise ConnectionError(f"SFTP connection failed: {exc}") from exc
+                    connect_kwargs["allow_agent"] = False
+                    connect_kwargs["look_for_keys"] = False
+                    auth_methods = [f"ppk-file:{self._info.key_path}"]
+                else:
+                    connect_kwargs["key_filename"] = key_path
+                    connect_kwargs["allow_agent"] = False
+                    connect_kwargs["look_for_keys"] = False
+                    auth_methods = [f"key-file:{self._info.key_path}"]
             elif self._info.password:
                 connect_kwargs["password"] = self._info.password
                 auth_methods.append("password")
