@@ -76,6 +76,7 @@ excludes = [
     "tests",
     "unittest",
     "pytest",
+    "paramiko",
 ]
 
 # Analysis
