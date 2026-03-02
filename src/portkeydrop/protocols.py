@@ -663,6 +663,10 @@ class SFTPClient(TransferClient):
                 is_dir = True
             elif getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
                 is_dir = True
+            elif attrs.permissions is None and getattr(attrs, "type", None) is None:
+                # Server returned no type info (e.g. Bitvise on .ssh) —
+                # assume directory and let the server reject if wrong.
+                is_dir = True
             if not is_dir:
                 raise NotADirectoryError(f"Not a directory: '{path}'")
             self._cwd = resolved
