@@ -584,6 +584,15 @@ class SFTPClient(TransferClient):
             if e.errno in (_errno.EACCES, _errno.EPERM):
                 raise PermissionError(f"Permission denied: cannot list '{target}'") from e
             raise
+        except Exception as e:
+            # asyncssh raises SFTPError (not OSError) for server-side errors.
+            # Map permission errors; surface everything else.
+            import asyncssh as _asyncssh
+            if isinstance(e, _asyncssh.SFTPError):
+                logger.warning("list_dir: SFTPError for '%s': code=%s msg=%s", target, getattr(e, "code", "?"), e)
+                if getattr(e, "code", None) in (3, 4):  # FX_PERMISSION_DENIED=3, FX_FAILURE=4
+                    raise PermissionError(f"Permission denied: cannot list '{target}'") from e
+            raise
         logger.debug("list_dir: got %d entries for '%s'", len(entries), target)
         for entry in entries:
             name = entry.filename
