@@ -38,4 +38,4 @@ Types: feat, fix, docs, style, refactor, test, chore
 
 - Three-tier password storage: keyring > encrypted vault > none
 - Accessibility: all interactive UI elements need aria labels
-- SFTP operations use `paramiko`
+- SFTP operations use `asyncssh`

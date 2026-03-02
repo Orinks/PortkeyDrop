@@ -1,11 +1,11 @@
-"""Tests for SFTPClient using SSHClient-based authentication."""
+"""Tests for SFTPClient using asyncssh-based authentication."""
 
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock, patch
+import stat as stat_mod
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import paramiko
 import pytest
 
 from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, SFTPClient
@@ -22,96 +22,93 @@ def sftp_info() -> ConnectionInfo:
     )
 
 
-def _make_mock_ssh() -> MagicMock:
-    mock_ssh = MagicMock()
-    mock_sftp = MagicMock()
-    mock_ssh.open_sftp.return_value = mock_sftp
-    mock_sftp.normalize.return_value = "/home/user"
-    return mock_ssh
+def _make_mock_conn() -> tuple[MagicMock, MagicMock]:
+    """Create mock asyncssh connection and SFTP client."""
+    mock_conn = AsyncMock()
+    mock_sftp = AsyncMock()
+    mock_conn.start_sftp_client.return_value = mock_sftp
+    mock_sftp.realpath.return_value = "/home/user"
+    return mock_conn, mock_sftp
 
 
 class TestSFTPClientInit:
-    def test_creates_ssh_client_attribute(self, sftp_info: ConnectionInfo) -> None:
+    def test_creates_conn_attribute(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        assert hasattr(client, "_ssh_client")
-        assert client._ssh_client is None
+        assert hasattr(client, "_conn")
+        assert client._conn is None
 
-    def test_no_transport_attribute(self, sftp_info: ConnectionInfo) -> None:
+    def test_has_event_loop(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        assert not hasattr(client, "_transport")
+        assert client._loop is not None
+        assert client._loop.is_running()
 
 
 class TestSFTPClientConnect:
-    @patch("paramiko.SSHClient")
-    def test_connect_with_password(self, mock_cls: MagicMock, sftp_info: ConnectionInfo) -> None:
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_with_password(
+        self, mock_connect: AsyncMock, sftp_info: ConnectionInfo
+    ) -> None:
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         client = SFTPClient(sftp_info)
         client.connect()
 
-        mock_ssh.connect.assert_called_once()
-        call_kwargs = mock_ssh.connect.call_args[1]
-        assert call_kwargs["hostname"] == "example.com"
+        mock_connect.assert_called_once()
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["host"] == "example.com"
         assert call_kwargs["username"] == "user"
         assert call_kwargs["password"] == "pass"
-        assert call_kwargs["allow_agent"] is True
-        assert call_kwargs["look_for_keys"] is True
         assert client._connected is True
 
     @patch("os.path.exists", return_value=True)
-    @patch("paramiko.SSHClient")
-    def test_connect_with_key_file(self, mock_cls: MagicMock, _mock_exists: MagicMock) -> None:
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_with_key_file(self, mock_connect: AsyncMock, _mock_exists: MagicMock) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
             username="user",
             key_path="/path/to/key",
         )
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         client = SFTPClient(info)
         client.connect()
 
-        call_kwargs = mock_ssh.connect.call_args[1]
-        assert call_kwargs["key_filename"] == "/path/to/key"
-        assert call_kwargs["allow_agent"] is False
-        assert call_kwargs["look_for_keys"] is False
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["client_keys"] == ["/path/to/key"]
+        assert call_kwargs["agent_path"] is None
 
-    @patch("paramiko.SSHClient")
-    def test_connect_agent_only(self, mock_cls: MagicMock) -> None:
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_agent_only(self, mock_connect: AsyncMock) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
             username="user",
         )
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         client = SFTPClient(info)
         client.connect()
 
-        call_kwargs = mock_ssh.connect.call_args[1]
-        assert call_kwargs["allow_agent"] is True
-        assert call_kwargs["look_for_keys"] is True
+        call_kwargs = mock_connect.call_args[1]
         assert "password" not in call_kwargs
-        assert "key_filename" not in call_kwargs
+        assert "client_keys" not in call_kwargs
 
-    @patch("paramiko.SSHClient")
-    def test_connect_failure(self, mock_cls: MagicMock, sftp_info: ConnectionInfo) -> None:
-        mock_ssh = MagicMock()
-        mock_cls.return_value = mock_ssh
-        mock_ssh.connect.side_effect = Exception("Auth failed")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_failure(self, mock_connect: AsyncMock, sftp_info: ConnectionInfo) -> None:
+        mock_connect.side_effect = Exception("Auth failed")
 
         client = SFTPClient(sftp_info)
         with pytest.raises(ConnectionError, match="SFTP connection failed"):
             client.connect()
         assert client._connected is False
 
-    @patch("paramiko.SSHClient")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_logs_authentication_methods(
-        self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_connect: AsyncMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
@@ -119,8 +116,8 @@ class TestSFTPClientConnect:
             username="user",
             password="pass",
         )
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         caplog.set_level(logging.DEBUG, logger="portkeydrop.protocols")
 
@@ -128,17 +125,16 @@ class TestSFTPClientConnect:
         client.connect()
 
         text = caplog.text
-        assert "SSH agent detection" in text
         assert "SFTP authentication methods to try: ssh-agent, default-key-files, password" in text
         assert "SSH authentication succeeded" in text
 
-    @patch("paramiko.SSHClient")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_logs_agent_unavailable_error(
-        self, mock_cls: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_connect: AsyncMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_ssh = MagicMock()
-        mock_cls.return_value = mock_ssh
-        mock_ssh.connect.side_effect = paramiko.SSHException("Error connecting to agent")
+        import asyncssh
+
+        mock_connect.side_effect = asyncssh.DisconnectError(11, "Error connecting to agent")
 
         caplog.set_level(logging.DEBUG, logger="portkeydrop.protocols")
 
@@ -148,13 +144,11 @@ class TestSFTPClientConnect:
         with pytest.raises(ConnectionError, match="SSH agent is unavailable or inaccessible"):
             client.connect()
 
-        assert "SSH agent appears unavailable or inaccessible" in caplog.text
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_auth_failure_message_for_agent_and_password(self, mock_connect: AsyncMock) -> None:
+        import asyncssh
 
-    @patch("paramiko.SSHClient")
-    def test_auth_failure_message_for_agent_and_password(self, mock_cls: MagicMock) -> None:
-        mock_ssh = MagicMock()
-        mock_cls.return_value = mock_ssh
-        mock_ssh.connect.side_effect = paramiko.AuthenticationException("denied")
+        mock_connect.side_effect = asyncssh.PermissionDenied("denied")
 
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
@@ -169,11 +163,11 @@ class TestSFTPClientConnect:
         ):
             client.connect()
 
-    @patch("paramiko.SSHClient")
-    def test_auth_failure_message_for_agent_only(self, mock_cls: MagicMock) -> None:
-        mock_ssh = MagicMock()
-        mock_cls.return_value = mock_ssh
-        mock_ssh.connect.side_effect = paramiko.AuthenticationException("denied")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_auth_failure_message_for_agent_only(self, mock_connect: AsyncMock) -> None:
+        import asyncssh
+
+        mock_connect.side_effect = asyncssh.PermissionDenied("denied")
 
         info = ConnectionInfo(protocol=Protocol.SFTP, host="example.com", username="user")
         client = SFTPClient(info)
@@ -183,47 +177,43 @@ class TestSFTPClientConnect:
 
 
 class TestSFTPClientHostKeyPolicy:
-    @patch("paramiko.SSHClient")
-    def test_auto_add_policy(self, mock_cls: MagicMock, sftp_info: ConnectionInfo) -> None:
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_auto_add_policy(self, mock_connect: AsyncMock, sftp_info: ConnectionInfo) -> None:
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         sftp_info.host_key_policy = HostKeyPolicy.AUTO_ADD
         client = SFTPClient(sftp_info)
         client.connect()
 
-        # Check that AutoAddPolicy was set
-        policy_calls = mock_ssh.set_missing_host_key_policy.call_args_list
-        assert len(policy_calls) == 1
-        policy_arg = policy_calls[0][0][0]
-        assert isinstance(policy_arg, paramiko.AutoAddPolicy)
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["known_hosts"] is None
 
-    @patch("paramiko.SSHClient")
-    def test_strict_policy(self, mock_cls: MagicMock, sftp_info: ConnectionInfo) -> None:
-        mock_ssh = _make_mock_ssh()
-        mock_cls.return_value = mock_ssh
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_strict_policy(self, mock_connect: AsyncMock, sftp_info: ConnectionInfo) -> None:
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
 
         sftp_info.host_key_policy = HostKeyPolicy.STRICT
         client = SFTPClient(sftp_info)
         client.connect()
 
-        policy_calls = mock_ssh.set_missing_host_key_policy.call_args_list
-        assert len(policy_calls) == 1
-        policy_arg = policy_calls[0][0][0]
-        assert isinstance(policy_arg, paramiko.RejectPolicy)
+        call_kwargs = mock_connect.call_args[1]
+        # Strict uses default known_hosts (no explicit override)
+        assert "known_hosts" not in call_kwargs
 
 
 class TestSFTPClientEnsureConnected:
-    def test_raises_when_ssh_client_is_none(self, sftp_info: ConnectionInfo) -> None:
+    def test_raises_when_conn_is_none(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        client._ssh_client = None
+        client._conn = None
         client._sftp = MagicMock()
         with pytest.raises(ConnectionError, match="Not connected"):
             client._ensure_connected()
 
     def test_raises_when_sftp_is_none(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
+        client._conn = MagicMock()
         client._sftp = None
         with pytest.raises(ConnectionError, match="Not connected"):
             client._ensure_connected()
@@ -236,7 +226,7 @@ class TestSFTPClientEnsureConnected:
     def test_returns_sftp_when_connected(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
         mock_sftp = MagicMock()
-        client._ssh_client = MagicMock()
+        client._conn = MagicMock()
         client._sftp = mock_sftp
         result = client._ensure_connected()
         assert result is mock_sftp
@@ -263,150 +253,104 @@ class TestSFTPClientEnsureConnected:
 class TestSFTPClientDisconnect:
     def test_disconnect_cleans_up(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        mock_ssh = MagicMock()
+        mock_conn = MagicMock()
         mock_sftp = MagicMock()
-        client._ssh_client = mock_ssh
+        client._conn = mock_conn
         client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()
 
-        assert client._ssh_client is None
+        assert client._conn is None
         assert client._sftp is None
         assert client._connected is False
 
     def test_disconnect_calls_close_on_both(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        mock_ssh = MagicMock()
+        mock_conn = MagicMock()
         mock_sftp = MagicMock()
-        client._ssh_client = mock_ssh
+        client._conn = mock_conn
         client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()
 
-        mock_sftp.close.assert_called_once()
-        mock_ssh.close.assert_called_once()
+        mock_sftp.exit.assert_called_once()
+        mock_conn.close.assert_called_once()
 
     def test_disconnect_handles_sftp_close_exception(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        mock_ssh = MagicMock()
+        mock_conn = MagicMock()
         mock_sftp = MagicMock()
-        mock_sftp.close.side_effect = Exception("SFTP close error")
-        client._ssh_client = mock_ssh
+        mock_sftp.exit.side_effect = Exception("SFTP close error")
+        client._conn = mock_conn
         client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()  # Should not raise
 
         assert client._sftp is None
-        assert client._ssh_client is None
-        mock_ssh.close.assert_called_once()
+        assert client._conn is None
+        mock_conn.close.assert_called_once()
 
-    def test_disconnect_handles_ssh_close_exception(self, sftp_info: ConnectionInfo) -> None:
+    def test_disconnect_handles_conn_close_exception(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        mock_ssh = MagicMock()
-        mock_ssh.close.side_effect = Exception("SSH close error")
+        mock_conn = MagicMock()
+        mock_conn.close.side_effect = Exception("SSH close error")
         mock_sftp = MagicMock()
-        client._ssh_client = mock_ssh
+        client._conn = mock_conn
         client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()  # Should not raise
 
         assert client._sftp is None
-        assert client._ssh_client is None
+        assert client._conn is None
 
     def test_disconnect_handles_both_close_exceptions(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
-        mock_ssh = MagicMock()
-        mock_ssh.close.side_effect = Exception("SSH close error")
+        mock_conn = MagicMock()
+        mock_conn.close.side_effect = Exception("SSH close error")
         mock_sftp = MagicMock()
-        mock_sftp.close.side_effect = Exception("SFTP close error")
-        client._ssh_client = mock_ssh
+        mock_sftp.exit.side_effect = Exception("SFTP close error")
+        client._conn = mock_conn
         client._sftp = mock_sftp
         client._connected = True
 
         client.disconnect()  # Should not raise
 
         assert client._sftp is None
-        assert client._ssh_client is None
+        assert client._conn is None
 
     def test_disconnect_when_not_connected(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
         client.disconnect()  # Should not raise
         assert client._sftp is None
-        assert client._ssh_client is None
-
-
-class TestSFTPClientSftpCall:
-    def test_sftp_call_returns_result(self, sftp_info: ConnectionInfo) -> None:
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-
-        result = client._sftp_call(lambda: 42)
-        assert result == 42
-
-    def test_sftp_call_passes_args(self, sftp_info: ConnectionInfo) -> None:
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-
-        result = client._sftp_call(lambda a, b: a + b, 3, 4)
-        assert result == 7
-
-    def test_sftp_call_timeout_raises(self, sftp_info: ConnectionInfo) -> None:
-        import socket
-
-        sftp_info.timeout = 1
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-
-        # socket.timeout should propagate as-is (no longer converted here)
-        def raises_socket_timeout():
-            raise socket.timeout("timed out")
-
-        with pytest.raises(socket.timeout):
-            client._sftp_call(raises_socket_timeout)
-
-    def test_sftp_call_uses_fallback_timeout_when_none(self, sftp_info: ConnectionInfo) -> None:
-        """If timeout is None, should use 30s fallback (not hang forever)."""
-        sftp_info.timeout = None  # type: ignore[assignment]
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-
-        # Just verify it doesn't error on None timeout — we can't wait 30s in tests,
-        # so confirm it runs a fast fn successfully with None timeout.
-        result = client._sftp_call(lambda: "ok")
-        assert result == "ok"
+        assert client._conn is None
 
 
 class TestSFTPClientListDir:
-    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
-        mock_sftp = MagicMock()
-        mock_sftp.normalize.return_value = "/home/user"
-        client._ssh_client = MagicMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/home/user"
+        client._conn = AsyncMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
 
     def test_list_dir_returns_files(self, sftp_info: ConnectionInfo) -> None:
-        import stat as stat_mod
-
         client, mock_sftp = self._make_connected(sftp_info)
-        attr = MagicMock()
-        attr.filename = "file.txt"
-        attr.st_mode = stat_mod.S_IFREG | 0o644
-        attr.st_size = 100
-        attr.st_mtime = 0
-        attr.st_uid = 1000
-        attr.st_gid = 1000
-        attr.longname = "-rw-r--r-- 1 user group 100 Jan 1 file.txt"
-        mock_sftp.listdir_attr.return_value = [attr]
+        entry = MagicMock()
+        entry.filename = "file.txt"
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFREG | 0o644
+        entry.attrs.size = 100
+        entry.attrs.mtime = 0
+        entry.attrs.uid = 1000
+        entry.attrs.gid = 1000
+        entry.longname = "-rw-r--r-- 1 user group 100 Jan 1 file.txt"
+        mock_sftp.readdir.return_value = [entry]
 
         files = client.list_dir()
         assert len(files) == 1
@@ -419,7 +363,7 @@ class TestSFTPClientListDir:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.EACCES
-        mock_sftp.listdir_attr.side_effect = err
+        mock_sftp.readdir.side_effect = err
 
         with pytest.raises(PermissionError, match="Permission denied"):
             client.list_dir("/restricted")
@@ -430,18 +374,18 @@ class TestSFTPClientListDir:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.ENOENT
-        mock_sftp.listdir_attr.side_effect = err
+        mock_sftp.readdir.side_effect = err
 
         with pytest.raises(IOError):
             client.list_dir("/gone")
 
 
 class TestSFTPClientChdir:
-    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
-        mock_sftp = MagicMock()
-        mock_sftp.normalize.return_value = "/home/user/subdir"
-        client._ssh_client = MagicMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/home/user/subdir"
+        client._conn = AsyncMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
@@ -458,44 +402,42 @@ class TestSFTPClientChdir:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.EPERM
-        mock_sftp.chdir.side_effect = err
+        mock_sftp.realpath.side_effect = err
 
         with pytest.raises(PermissionError, match="Permission denied"):
             client.chdir("/restricted")
 
 
 class TestSFTPClientListDirSpecialFiles:
-    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, MagicMock]:
+    def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
-        mock_sftp = MagicMock()
-        mock_sftp.normalize.return_value = "/home/user"
-        client._ssh_client = MagicMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/home/user"
+        client._conn = AsyncMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
 
     def test_socket_file_skipped(self, sftp_info: ConnectionInfo) -> None:
-        import stat as stat_mod
-
         client, mock_sftp = self._make_connected(sftp_info)
-        attr = MagicMock()
-        attr.filename = "agent.sock"
-        attr.st_mode = stat_mod.S_IFSOCK | 0o600
-        attr.longname = "srw------- 1 user group 0 Jan 1 agent.sock"
-        mock_sftp.listdir_attr.return_value = [attr]
+        entry = MagicMock()
+        entry.filename = "agent.sock"
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFSOCK | 0o600
+        entry.longname = "srw------- 1 user group 0 Jan 1 agent.sock"
+        mock_sftp.readdir.return_value = [entry]
 
         files = client.list_dir()
         assert files == []
 
     def test_fifo_file_skipped(self, sftp_info: ConnectionInfo) -> None:
-        import stat as stat_mod
-
         client, mock_sftp = self._make_connected(sftp_info)
-        attr = MagicMock()
-        attr.filename = "mypipe"
-        attr.st_mode = stat_mod.S_IFIFO | 0o644
-        attr.longname = "prw-r--r-- 1 user group 0 Jan 1 mypipe"
-        mock_sftp.listdir_attr.return_value = [attr]
+        entry = MagicMock()
+        entry.filename = "mypipe"
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFIFO | 0o644
+        entry.longname = "prw-r--r-- 1 user group 0 Jan 1 mypipe"
+        mock_sftp.readdir.return_value = [entry]
 
         files = client.list_dir()
         assert files == []
@@ -506,328 +448,7 @@ class TestSFTPClientListDirSpecialFiles:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.ENOENT
-        mock_sftp.listdir_attr.side_effect = err
+        mock_sftp.readdir.side_effect = err
 
         with pytest.raises(IOError):
             client.list_dir("/gone")
-
-
-class TestListdirAttrSafe:
-    def _make_connected(self, sftp_info):
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        mock_sftp = MagicMock()
-        client._sftp = mock_sftp
-        client._connected = True
-        client._cwd = "/home/user"
-        return client, mock_sftp
-
-    def test_count_zero_treated_as_eof(self, sftp_info: ConnectionInfo) -> None:
-        """count=0 in READDIR response should break the loop (fixes NAS hang)."""
-        from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR
-
-        client, mock_sftp = self._make_connected(sftp_info)
-
-        handle_msg = MagicMock()
-        handle_msg.get_binary.return_value = b"handle1"
-
-        readdir_msg = MagicMock()
-        readdir_msg.get_int.return_value = 0  # count=0 → should break
-
-        close_msg = MagicMock()
-
-        def fake_request(cmd, *args):
-            if cmd == CMD_OPENDIR:
-                return (CMD_HANDLE, handle_msg)
-            if cmd == CMD_READDIR:
-                return (CMD_NAME, readdir_msg)
-            if cmd == CMD_CLOSE:
-                return (CMD_CLOSE, close_msg)
-            raise ValueError(f"unexpected cmd {cmd}")
-
-        mock_sftp._request.side_effect = fake_request
-        mock_sftp._adjust_cwd.return_value = "/home/user"
-
-        result = client._listdir_attr_safe(mock_sftp, "/home/user")
-        assert result == []
-
-    def test_eoferror_breaks_loop(self, sftp_info: ConnectionInfo) -> None:
-        """EOFError on READDIR should terminate the loop normally."""
-        from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_OPENDIR, CMD_READDIR
-
-        client, mock_sftp = self._make_connected(sftp_info)
-
-        handle_msg = MagicMock()
-        handle_msg.get_binary.return_value = b"handle1"
-
-        def fake_request(cmd, *args):
-            if cmd == CMD_OPENDIR:
-                return (CMD_HANDLE, handle_msg)
-            if cmd == CMD_READDIR:
-                raise EOFError
-            if cmd == CMD_CLOSE:
-                return (CMD_CLOSE, MagicMock())
-            raise ValueError(f"unexpected cmd {cmd}")
-
-        mock_sftp._request.side_effect = fake_request
-        mock_sftp._adjust_cwd.return_value = "/home/user"
-
-        result = client._listdir_attr_safe(mock_sftp, "/home/user")
-        assert result == []
-
-    def test_falls_back_to_listdir_attr_when_request_unavailable(
-        self, sftp_info: ConnectionInfo
-    ) -> None:
-        """When _request raises TypeError (MagicMock), falls back to listdir_attr."""
-        import paramiko
-
-        client, mock_sftp = self._make_connected(sftp_info)
-        mock_sftp._adjust_cwd.return_value = "/home/user"
-        mock_sftp._request.side_effect = TypeError("not real paramiko")
-
-        attr = paramiko.SFTPAttributes()
-        attr.filename = "file.txt"
-        mock_sftp.listdir_attr.return_value = [attr]
-
-        result = client._listdir_attr_safe(mock_sftp, "/home/user")
-        assert len(result) == 1
-        assert result[0].filename == "file.txt"
-
-
-class TestListDirViaExec:
-    def _make_connected(self, sftp_info):
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-        client._connected = True
-        client._cwd = "/home/user"
-        return client
-
-    def test_parses_ls_output(self, sftp_info: ConnectionInfo) -> None:
-        client = self._make_connected(sftp_info)
-        ls_output = (
-            "total 8\n"
-            "drwxr-xr-x 2 user group 4096 Jan 01 12:00 subdir\n"
-            "-rw-r--r-- 1 user group  512 Jan 01 12:00 file.txt\n"
-        )
-        stdout_mock = MagicMock()
-        stdout_mock.read.return_value = ls_output.encode()
-        client._ssh_client.exec_command.return_value = (MagicMock(), stdout_mock, MagicMock())
-
-        result = client._list_dir_via_exec("/home/user")
-        names = [a.filename for a in result]
-        assert "subdir" in names
-        assert "file.txt" in names
-
-    def test_returns_empty_on_exec_exception(self, sftp_info: ConnectionInfo) -> None:
-        client = self._make_connected(sftp_info)
-        client._ssh_client.exec_command.side_effect = Exception("Channel closed")
-
-        result = client._list_dir_via_exec("/home/user")
-        assert result == []
-
-    def test_returns_empty_when_no_ssh_client(self, sftp_info: ConnectionInfo) -> None:
-        client = self._make_connected(sftp_info)
-        client._ssh_client = None
-
-        result = client._list_dir_via_exec("/home/user")
-        assert result == []
-
-
-class TestParseLsMode:
-    def _parse(self, s):
-        from portkeydrop.protocols import SFTPClient
-
-        return SFTPClient._parse_ls_mode(s)
-
-    def test_directory(self) -> None:
-        import stat
-
-        mode = self._parse("drwxr-xr-x")
-        assert stat.S_ISDIR(mode)
-
-    def test_regular_file(self) -> None:
-        import stat
-
-        mode = self._parse("-rw-r--r--")
-        assert stat.S_ISREG(mode)
-
-    def test_symlink(self) -> None:
-        import stat
-
-        mode = self._parse("lrwxrwxrwx")
-        assert stat.S_ISLNK(mode)
-
-    def test_socket(self) -> None:
-        import stat
-
-        mode = self._parse("srwxrwxrwx")
-        assert stat.S_ISSOCK(mode)
-
-    def test_raises_on_short_string(self) -> None:
-        with pytest.raises(ValueError):
-            self._parse("drwx")
-
-
-class TestListdirAttrSafeWithEntries:
-    def _make_connected(self, sftp_info):
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        mock_sftp = MagicMock()
-        client._sftp = mock_sftp
-        client._connected = True
-        client._cwd = "/home/user"
-        return client, mock_sftp
-
-    def test_entries_returned_excluding_dot_entries(self, sftp_info: ConnectionInfo) -> None:
-        from paramiko.sftp import CMD_CLOSE, CMD_HANDLE, CMD_NAME, CMD_OPENDIR, CMD_READDIR
-        from paramiko.sftp_attr import SFTPAttributes
-
-        client, mock_sftp = self._make_connected(sftp_info)
-        handle_msg = MagicMock()
-        handle_msg.get_binary.return_value = b"h"
-
-        call_count = [0]
-
-        def fake_request(cmd, *args):
-            if cmd == CMD_OPENDIR:
-                return (CMD_HANDLE, handle_msg)
-            if cmd == CMD_READDIR:
-                call_count[0] += 1
-                if call_count[0] == 1:
-                    msg = MagicMock()
-                    msg.get_int.return_value = 2
-                    attr1 = SFTPAttributes()
-                    attr1.filename = "."
-                    attr2 = SFTPAttributes()
-                    attr2.filename = "file.txt"
-                    attrs = [attr1, attr2]
-                    idx = [0]
-
-                    def get_text():
-                        v = attrs[idx[0] // 2].filename
-                        idx[0] += 1
-                        return v
-
-                    msg.get_text.side_effect = get_text
-                    with patch(
-                        "paramiko.sftp_attr.SFTPAttributes._from_msg",
-                        side_effect=lambda m, f, ln: (lambda a: setattr(a, "filename", f) or a)(
-                            SFTPAttributes()
-                        ),
-                    ):
-                        return (CMD_NAME, msg)
-                raise EOFError
-            if cmd == CMD_CLOSE:
-                return (CMD_CLOSE, MagicMock())
-
-        mock_sftp._request.side_effect = fake_request
-        mock_sftp._adjust_cwd.return_value = "/home/user"
-        # fallback path since _from_msg patching is complex
-        mock_sftp._request.side_effect = TypeError
-        mock_sftp.listdir_attr.return_value = []
-        result = client._listdir_attr_safe(mock_sftp, "/home/user")
-        assert result == []
-
-    def test_invalid_handle_response_raises(self, sftp_info: ConnectionInfo) -> None:
-        from paramiko.sftp import CMD_NAME
-        from paramiko.sftp_client import SFTPError
-
-        client, mock_sftp = self._make_connected(sftp_info)
-        handle_msg = MagicMock()
-        mock_sftp._request.return_value = (CMD_NAME, handle_msg)  # wrong type
-        mock_sftp._adjust_cwd.return_value = "/home/user"
-
-        with pytest.raises(SFTPError):
-            client._listdir_attr_safe(mock_sftp, "/home/user")
-
-
-class TestParseLsModeExtra:
-    def _parse(self, s):
-        from portkeydrop.protocols import SFTPClient
-
-        return SFTPClient._parse_ls_mode(s)
-
-    def test_fifo(self) -> None:
-        import stat
-
-        assert stat.S_ISFIFO(self._parse("prwxrwxrwx"))
-
-    def test_block_device(self) -> None:
-        import stat
-
-        assert stat.S_ISBLK(self._parse("brwxrwxrwx"))
-
-    def test_char_device(self) -> None:
-        import stat
-
-        assert stat.S_ISCHR(self._parse("crwxrwxrwx"))
-
-    def test_unknown_type_char(self) -> None:
-        mode = self._parse("?rwxrwxrwx")
-        assert mode != 0 or mode == 0  # just doesn't raise
-
-
-class TestReopenSftp:
-    def test_reopen_sftp_failure_marks_disconnected(self, sftp_info: ConnectionInfo) -> None:
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-        client._connected = True
-        client._ssh_client.open_sftp.side_effect = Exception("transport closed")
-
-        client._reopen_sftp()
-        assert not client._connected
-        assert client._sftp is None
-
-    def test_reopen_sftp_success(self, sftp_info: ConnectionInfo) -> None:
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-        client._connected = True
-        new_sftp = MagicMock()
-        client._ssh_client.open_sftp.return_value = new_sftp
-
-        client._reopen_sftp()
-        assert client._sftp is new_sftp
-
-
-class TestListDirExecFallbackEdges:
-    def _make_connected(self, sftp_info):
-        from portkeydrop.protocols import SFTPClient
-
-        client = SFTPClient(sftp_info)
-        client._ssh_client = MagicMock()
-        client._sftp = MagicMock()
-        client._connected = True
-        client._cwd = "/home/user"
-        return client
-
-    def test_short_ls_lines_skipped(self, sftp_info: ConnectionInfo) -> None:
-        client = self._make_connected(sftp_info)
-        ls_output = "total 0\ndrwxr-xr-x\n"
-        stdout_mock = MagicMock()
-        stdout_mock.read.return_value = ls_output.encode()
-        client._ssh_client.exec_command.return_value = (MagicMock(), stdout_mock, MagicMock())
-        result = client._list_dir_via_exec("/path")
-        assert result == []
-
-    def test_invalid_size_defaults_to_zero(self, sftp_info: ConnectionInfo) -> None:
-        client = self._make_connected(sftp_info)
-        ls_output = "-rw-r--r-- 1 user group  BAD Jan 01 12:00 file.txt\n"
-        stdout_mock = MagicMock()
-        stdout_mock.read.return_value = ls_output.encode()
-        client._ssh_client.exec_command.return_value = (MagicMock(), stdout_mock, MagicMock())
-        result = client._list_dir_via_exec("/path")
-        assert len(result) == 1
-        assert result[0].st_size == 0

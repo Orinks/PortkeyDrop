@@ -55,9 +55,7 @@ hiddenimports = [
     "keyring.backends.Windows",
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
-    "paramiko",
-    "paramiko.transport",
-    "paramiko.sftp_client",
+    "asyncssh",
     "prismatoid",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
