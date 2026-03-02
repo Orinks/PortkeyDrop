@@ -568,13 +568,48 @@ class SFTPClient(TransferClient):
     # Directory operations
     # ------------------------------------------------------------------
 
+    @staticmethod
+    async def _readdir_safe(sftp, path: str):
+        """Readdir loop that treats consecutive empty responses as EOF.
+
+        Some SFTP servers (e.g. Bitvise on the .ssh directory) return
+        FXP_NAME with count=0 indefinitely instead of FX_EOF. asyncssh's
+        default scandir() loops forever in this case. We break after
+        _MAX_EMPTY_READDIR consecutive empty batches — matching WinSCP behaviour.
+        """
+        import asyncssh as _asyncssh
+
+        _MAX_EMPTY = 3
+        dirpath = sftp.compose_path(path)
+        handle = await sftp._handler.opendir(dirpath)
+        entries = []
+        consecutive_empty = 0
+        at_end = False
+        try:
+            while not at_end:
+                names, at_end = await sftp._handler.readdir(handle)
+                if not names:
+                    consecutive_empty += 1
+                    logger.debug("_readdir_safe: empty batch %d for '%s'", consecutive_empty, path)
+                    if consecutive_empty >= _MAX_EMPTY:
+                        logger.warning("_readdir_safe: %d consecutive empty batches for '%s' — treating as EOF (Bitvise quirk)", _MAX_EMPTY, path)
+                        break
+                else:
+                    consecutive_empty = 0
+                    entries.extend(names)
+        except _asyncssh.SFTPEOFError:
+            pass
+        finally:
+            await sftp._handler.close(handle)
+        return entries
+
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         sftp = self._ensure_connected()
         target = (path if path != "." else self._cwd).rstrip("/") or "/"
         files: list[RemoteFile] = []
         logger.debug("list_dir: requesting entries for '%s'", target)
         try:
-            entries = self._run(sftp.readdir(target))
+            entries = self._run(self._readdir_safe(sftp, target))
             logger.debug("list_dir: readdir returned %d raw entries for '%s'", len(entries) if entries is not None else -1, target)
         except PermissionError:
             raise
