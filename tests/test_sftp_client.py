@@ -79,6 +79,57 @@ class TestSFTPClientConnect:
         call_kwargs = mock_connect.call_args[1]
         assert call_kwargs["client_keys"] == ["/path/to/key"]
         assert call_kwargs["agent_path"] is None
+        assert "passphrase" not in call_kwargs
+        assert "password" not in call_kwargs
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_with_key_and_password_fallback(
+        self, mock_connect: AsyncMock, _mock_exists: MagicMock
+    ) -> None:
+        """When both key_path and password are set, password is passed for
+        fallback auth and passphrase is omitted."""
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            password="secret",
+            key_path="/path/to/key",
+        )
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
+
+        client = SFTPClient(info)
+        client.connect()
+
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["client_keys"] == ["/path/to/key"]
+        assert call_kwargs["password"] == "secret"
+        assert "passphrase" not in call_kwargs
+        assert client._connected is True
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_with_key_and_password_logs_both_methods(
+        self, mock_connect: AsyncMock, _mock_exists: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            password="secret",
+            key_path="/path/to/key",
+        )
+        mock_conn, mock_sftp = _make_mock_conn()
+        mock_connect.return_value = mock_conn
+
+        caplog.set_level(logging.DEBUG, logger="portkeydrop.protocols")
+
+        client = SFTPClient(info)
+        client.connect()
+
+        assert "key-file:/path/to/key" in caplog.text
+        assert "password" in caplog.text
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_connect_agent_only(self, mock_connect: AsyncMock) -> None:
@@ -161,6 +212,27 @@ class TestSFTPClientConnect:
         with pytest.raises(
             ConnectionError, match="trying SSH agent, default key files, and password"
         ):
+            client.connect()
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_auth_failure_message_for_key_and_password(
+        self, mock_connect: AsyncMock, _mock_exists: MagicMock
+    ) -> None:
+        import asyncssh
+
+        mock_connect.side_effect = asyncssh.PermissionDenied("denied")
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            password="secret",
+            key_path="/path/to/key",
+        )
+        client = SFTPClient(info)
+
+        with pytest.raises(ConnectionError, match="and password fallback"):
             client.connect()
 
     @patch("asyncssh.connect", new_callable=AsyncMock)

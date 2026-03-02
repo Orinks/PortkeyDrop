@@ -444,12 +444,10 @@ class SFTPClient(TransferClient):
                         f"SFTP connection failed: key file not found: {self._info.key_path}"
                     )
                 # asyncssh handles OpenSSH + PPK v2/v3 natively
-                passphrase = self._info.password if self._info.password else None
                 connect_kwargs["client_keys"] = [key_path]
-                connect_kwargs["passphrase"] = passphrase
                 connect_kwargs["agent_path"] = None  # disable agent
                 auth_methods = [f"key-file:{self._info.key_path}"]
-            elif self._info.password:
+            if self._info.password:
                 connect_kwargs["password"] = self._info.password
                 auth_methods.append("password")
 
@@ -488,7 +486,14 @@ class SFTPClient(TransferClient):
                 self._info.host,
                 auth_methods,
             )
-            if self._info.key_path:
+            if self._info.key_path and self._info.password:
+                message = (
+                    f"Authentication failed with key file '{self._info.key_path}' "
+                    "and password fallback. "
+                    "Check key permissions, server authorized_keys, and verify "
+                    "username/password."
+                )
+            elif self._info.key_path:
                 message = (
                     f"Authentication failed with key file '{self._info.key_path}'. "
                     "Check key permissions, passphrase, and server authorized_keys."
