@@ -707,3 +707,117 @@ class TestSFTPBitviseCompliance:
         # 1 real batch + 3 empty batches = 4 readdir calls
         assert mock_handler.readdir.call_count == 4
         mock_handler.close.assert_awaited_once()
+
+    # ---- _readdir_safe: SFTPEOFError handling ----
+
+    def test_readdir_safe_handles_sftp_eof_error(self, sftp_info: ConnectionInfo) -> None:
+        """_readdir_safe catches SFTPEOFError and returns collected results."""
+        import asyncssh
+
+        client, mock_sftp = self._make_connected(sftp_info)
+
+        entry = MagicMock()
+        entry.filename = "data.csv"
+        entry.longname = ""
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFREG | 0o644
+        entry.attrs.type = _SFTP_TYPE_REGULAR
+        entry.attrs.size = 99
+        entry.attrs.mtime = 0
+        entry.attrs.uid = 1000
+        entry.attrs.gid = 1000
+
+        mock_sftp.compose_path.side_effect = lambda p: p
+        mock_handler = AsyncMock()
+        mock_handler.opendir.return_value = "fake-handle"
+        # First call returns an entry; second raises SFTPEOFError
+        mock_handler.readdir.side_effect = [
+            ([entry], False),
+            asyncssh.SFTPEOFError(),
+        ]
+        mock_handler.close.return_value = None
+        mock_sftp._handler = mock_handler
+
+        files = client.list_dir()
+        assert len(files) == 1
+        assert files[0].name == "data.csv"
+        mock_handler.close.assert_awaited_once()
+
+    # ---- _readdir_safe: bytes filename decode ----
+
+    def test_readdir_safe_decodes_bytes_filenames(self, sftp_info: ConnectionInfo) -> None:
+        """_readdir_safe decodes bytes filenames/longnames via sftp.decode."""
+        client, mock_sftp = self._make_connected(sftp_info)
+
+        entry = MagicMock()
+        entry.filename = b"report.txt"
+        entry.longname = b"-rw-r--r-- 1 user user 42 Jan 1 00:00 report.txt"
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFREG | 0o644
+        entry.attrs.type = _SFTP_TYPE_REGULAR
+        entry.attrs.size = 42
+        entry.attrs.mtime = 0
+        entry.attrs.uid = 1000
+        entry.attrs.gid = 1000
+
+        mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
+        mock_sftp.compose_path.side_effect = lambda p: p
+        mock_handler = AsyncMock()
+        mock_handler.opendir.return_value = "fake-handle"
+        mock_handler.readdir.return_value = ([entry], True)
+        mock_handler.close.return_value = None
+        mock_sftp._handler = mock_handler
+
+        files = client.list_dir()
+        assert len(files) == 1
+        assert files[0].name == "report.txt"
+        assert mock_sftp.decode.call_count == 2
+
+    # ---- list_dir: SFTPError exception mapping ----
+
+    def test_list_dir_sftp_error_permission_denied(self, sftp_info: ConnectionInfo) -> None:
+        """list_dir maps SFTPError code=3 (FX_PERMISSION_DENIED) to PermissionError."""
+        import asyncssh
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        _setup_readdir_error(mock_sftp, asyncssh.SFTPError(3, "Permission denied"))
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            client.list_dir("/secret")
+
+    def test_list_dir_sftp_error_failure_mapped_to_permission(
+        self, sftp_info: ConnectionInfo
+    ) -> None:
+        """list_dir maps SFTPError code=4 (FX_FAILURE) to PermissionError."""
+        import asyncssh
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        _setup_readdir_error(mock_sftp, asyncssh.SFTPError(4, "Failure"))
+
+        with pytest.raises(PermissionError, match="Permission denied"):
+            client.list_dir("/secret")
+
+    def test_list_dir_sftp_error_non_permission_reraises(self, sftp_info: ConnectionInfo) -> None:
+        """list_dir re-raises SFTPError with non-permission code unchanged."""
+        import asyncssh
+
+        client, mock_sftp = self._make_connected(sftp_info)
+        _setup_readdir_error(mock_sftp, asyncssh.SFTPError(7, "Connection lost"))
+
+        with pytest.raises(asyncssh.SFTPError):
+            client.list_dir("/data")
+
+    # ---- chdir: no type info fallback ----
+
+    def test_chdir_assumes_dir_when_no_type_info(self, sftp_info: ConnectionInfo) -> None:
+        """chdir assumes directory when stat returns permissions=None and type=None."""
+        client, mock_sftp = self._make_connected(sftp_info)
+        mock_sftp.realpath.return_value = "/home/user/.ssh"
+        stat_attrs = MagicMock()
+        stat_attrs.permissions = None
+        stat_attrs.type = None
+        mock_sftp.stat.return_value = stat_attrs
+
+        result = client.chdir("/home/user/.ssh")
+        assert result == "/home/user/.ssh"
+        assert client._cwd == "/home/user/.ssh"
