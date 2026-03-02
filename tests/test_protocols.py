@@ -668,6 +668,203 @@ class TestParentDir:
         assert result == "/"
 
 
+class TestSFTPClientNativeTransfer:
+    """Tests for asyncssh sftp.get()/put() with progress_handler."""
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_uses_native_get_with_progress(self, mock_connect):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        progress_calls: list[tuple[int, int]] = []
+
+        async def fake_get(remotepath, localpath, *, progress_handler=None, **kwargs):
+            if progress_handler:
+                progress_handler(remotepath, localpath, 0, 1000)
+                progress_handler(remotepath, localpath, 500, 1000)
+                progress_handler(remotepath, localpath, 1000, 1000)
+
+        mock_sftp.get = AsyncMock(side_effect=fake_get)
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        close_mock = MagicMock()
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/downloaded.bin"
+        mock_file.close = close_mock
+
+        client.download(
+            "/remote/file.bin",
+            mock_file,
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        mock_sftp.get.assert_awaited_once()
+        call_kwargs = mock_sftp.get.call_args
+        assert call_kwargs[0][0] == "/remote/file.bin"
+        assert call_kwargs[0][1] == "/tmp/downloaded.bin"
+        assert call_kwargs[1]["progress_handler"] is not None
+        assert progress_calls == [(0, 1000), (500, 1000), (1000, 1000)]
+        close_mock.assert_called_once()
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_no_callback_still_uses_native_get(self, mock_connect):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        close_mock = MagicMock()
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/downloaded.bin"
+        mock_file.close = close_mock
+
+        client.download("/remote/file.bin", mock_file)
+
+        mock_sftp.get.assert_awaited_once()
+        call_kwargs = mock_sftp.get.call_args
+        assert call_kwargs[1]["progress_handler"] is None
+        close_mock.assert_called_once()
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_bytesio_uses_chunked_fallback(self, mock_connect):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        mock_remote_file = AsyncMock()
+        mock_remote_file.read.side_effect = [b"hello", b""]
+        mock_open_cm = MagicMock()
+        mock_open_cm.__aenter__ = AsyncMock(return_value=mock_remote_file)
+        mock_open_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_sftp.open = MagicMock(return_value=mock_open_cm)
+        stat_attrs = MagicMock()
+        stat_attrs.size = 5
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        buf = io.BytesIO()
+        progress_calls: list[tuple[int, int]] = []
+        client.download(
+            "/remote.txt",
+            buf,
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        assert buf.getvalue() == b"hello"
+        assert progress_calls == [(5, 5)]
+        mock_sftp.get.assert_not_awaited()
+
+    @patch("os.path.getsize", return_value=4)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_upload_uses_native_put_with_progress(self, mock_connect, _mock_getsize):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        progress_calls: list[tuple[int, int]] = []
+
+        async def fake_put(localpath, remotepath, *, progress_handler=None, **kwargs):
+            if progress_handler:
+                progress_handler(localpath, remotepath, 0, 4)
+                progress_handler(localpath, remotepath, 4, 4)
+
+        mock_sftp.put = AsyncMock(side_effect=fake_put)
+
+        stat_attrs = MagicMock()
+        stat_attrs.size = 4
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        close_mock = MagicMock()
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/upload.bin"
+        mock_file.close = close_mock
+
+        client.upload(
+            mock_file,
+            "/remote/file.bin",
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        mock_sftp.put.assert_awaited_once()
+        call_kwargs = mock_sftp.put.call_args
+        assert call_kwargs[0][0] == "/tmp/upload.bin"
+        assert call_kwargs[0][1] == "/remote/file.bin"
+        assert call_kwargs[1]["progress_handler"] is not None
+        assert progress_calls == [(0, 4), (4, 4)]
+        close_mock.assert_called_once()
+
+    @patch("os.path.getsize", return_value=4)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_upload_verifies_remote_size(self, mock_connect, _mock_getsize):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        stat_attrs = MagicMock()
+        stat_attrs.size = 2  # Mismatch: expected 4
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/upload.bin"
+
+        with pytest.raises(RuntimeError, match="verification failed"):
+            client.upload(mock_file, "/remote.bin")
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_upload_bytesio_uses_chunked_fallback(self, mock_connect):
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        mock_write_file = AsyncMock()
+        mock_open_cm = MagicMock()
+        mock_open_cm.__aenter__ = AsyncMock(return_value=mock_write_file)
+        mock_open_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_sftp.open = MagicMock(return_value=mock_open_cm)
+
+        stat_attrs = MagicMock()
+        stat_attrs.size = 4
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        progress_calls: list[tuple[int, int]] = []
+        client.upload(
+            io.BytesIO(b"data"),
+            "/remote.txt",
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        assert progress_calls == [(4, 4)]
+        mock_sftp.put.assert_not_awaited()
+
+
 class TestProtocolEnum:
     def test_all_protocols(self):
         assert Protocol.FTP.value == "ftp"
