@@ -769,13 +769,7 @@ class SFTPClient(TransferClient):
 
         async def _download():
             async with sftp.open(remote_path, "rb") as rf:
-                # Use realpath to resolve symlinks before stat so we get the
-                # actual file size rather than the symlink size (0).
-                try:
-                    resolved = await sftp.realpath(remote_path)
-                    total = (await sftp.stat(resolved)).size or 0
-                except Exception:
-                    total = (await sftp.stat(remote_path)).size or 0
+                total = (await sftp.stat(remote_path)).size or 0
                 transferred = 0
                 while True:
                     chunk = await rf.read(8192)

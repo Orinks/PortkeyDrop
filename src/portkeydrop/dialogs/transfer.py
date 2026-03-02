@@ -165,7 +165,7 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total if total > 0 else item.total_bytes
+                    item.total_bytes = total
                     self._notify()
 
                 client.download(item.remote_path, f, callback=callback)
@@ -187,7 +187,7 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total if total > 0 else item.total_bytes
+                    item.total_bytes = total
                     self._notify()
 
                 client.upload(f, item.remote_path, callback=callback)
