@@ -31,6 +31,28 @@ def _make_mock_conn() -> tuple[MagicMock, MagicMock]:
     return mock_conn, mock_sftp
 
 
+def _setup_readdir(mock_sftp: AsyncMock, entries: list) -> None:
+    """Wire up _handler mocks so _readdir_safe returns *entries* in one batch.
+
+    _readdir_safe uses sftp._handler.opendir / readdir / close instead of the
+    high-level sftp.readdir wrapper.
+    """
+    mock_sftp.compose_path.side_effect = lambda p: p
+    mock_handler = AsyncMock()
+    mock_handler.opendir.return_value = "fake-handle"
+    mock_handler.readdir.return_value = (entries, True)  # (names, at_end)
+    mock_handler.close.return_value = None
+    mock_sftp._handler = mock_handler
+
+
+def _setup_readdir_error(mock_sftp: AsyncMock, error: Exception) -> None:
+    """Wire up _handler mocks so _readdir_safe raises *error* on opendir."""
+    mock_sftp.compose_path.side_effect = lambda p: p
+    mock_handler = AsyncMock()
+    mock_handler.opendir.side_effect = error
+    mock_sftp._handler = mock_handler
+
+
 class TestSFTPClientInit:
     def test_creates_conn_attribute(self, sftp_info: ConnectionInfo) -> None:
         client = SFTPClient(sftp_info)
@@ -350,7 +372,7 @@ class TestSFTPClientListDir:
         entry.attrs.uid = 1000
         entry.attrs.gid = 1000
         entry.longname = "-rw-r--r-- 1 user group 100 Jan 1 file.txt"
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert len(files) == 1
@@ -363,7 +385,7 @@ class TestSFTPClientListDir:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.EACCES
-        mock_sftp.readdir.side_effect = err
+        _setup_readdir_error(mock_sftp, err)
 
         with pytest.raises(PermissionError, match="Permission denied"):
             client.list_dir("/restricted")
@@ -374,7 +396,7 @@ class TestSFTPClientListDir:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.ENOENT
-        mock_sftp.readdir.side_effect = err
+        _setup_readdir_error(mock_sftp, err)
 
         with pytest.raises(IOError):
             client.list_dir("/gone")
@@ -445,7 +467,7 @@ class TestSFTPClientListDirSpecialFiles:
         entry.attrs = MagicMock()
         entry.attrs.permissions = stat_mod.S_IFSOCK | 0o600
         entry.longname = "srw------- 1 user group 0 Jan 1 agent.sock"
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert files == []
@@ -457,7 +479,7 @@ class TestSFTPClientListDirSpecialFiles:
         entry.attrs = MagicMock()
         entry.attrs.permissions = stat_mod.S_IFIFO | 0o644
         entry.longname = "prw-r--r-- 1 user group 0 Jan 1 mypipe"
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert files == []
@@ -468,7 +490,7 @@ class TestSFTPClientListDirSpecialFiles:
         client, mock_sftp = self._make_connected(sftp_info)
         err = IOError()
         err.errno = errno.ENOENT
-        mock_sftp.readdir.side_effect = err
+        _setup_readdir_error(mock_sftp, err)
 
         with pytest.raises(IOError):
             client.list_dir("/gone")
@@ -511,7 +533,7 @@ class TestSFTPBitviseCompliance:
         entry.attrs.uid = 1000
         entry.attrs.gid = 1000
         entry.longname = ""
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert len(files) == 1
@@ -533,7 +555,7 @@ class TestSFTPBitviseCompliance:
         entry.attrs.uid = 1000
         entry.attrs.gid = 1000
         entry.longname = ""
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert len(files) == 1
@@ -553,7 +575,7 @@ class TestSFTPBitviseCompliance:
         entry.attrs.uid = 1000
         entry.attrs.gid = 1000
         entry.longname = ""
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert len(files) == 1
@@ -577,7 +599,7 @@ class TestSFTPBitviseCompliance:
         target_attrs.permissions = None
         target_attrs.type = _SFTP_TYPE_DIRECTORY
         mock_sftp.stat.return_value = target_attrs
-        mock_sftp.readdir.return_value = [entry]
+        _setup_readdir(mock_sftp, [entry])
 
         files = client.list_dir()
         assert len(files) == 1
@@ -639,3 +661,49 @@ class TestSFTPBitviseCompliance:
         remote = client.stat("/home/user/.ssh")
         assert remote.is_dir is True
         assert remote.name == ".ssh"
+
+    # ---- _readdir_safe: Bitvise count=0 EOF quirk ----
+
+    def test_readdir_safe_treats_consecutive_empty_batches_as_eof(
+        self, sftp_info: ConnectionInfo
+    ) -> None:
+        """_readdir_safe stops after 3 consecutive empty readdir responses.
+
+        Bitvise may return FXP_NAME with count=0 (empty list, at_end=False)
+        indefinitely instead of FX_EOF.  _readdir_safe must break out after
+        _MAX_EMPTY (3) consecutive empty batches — matching WinSCP behaviour.
+        """
+        client, mock_sftp = self._make_connected(sftp_info)
+
+        entry = MagicMock()
+        entry.filename = "hello.txt"
+        entry.attrs = MagicMock()
+        entry.attrs.permissions = stat_mod.S_IFREG | 0o644
+        entry.attrs.type = _SFTP_TYPE_REGULAR
+        entry.attrs.size = 42
+        entry.attrs.mtime = 0
+        entry.attrs.uid = 1000
+        entry.attrs.gid = 1000
+        entry.longname = ""
+
+        mock_sftp.compose_path.side_effect = lambda p: p
+        mock_handler = AsyncMock()
+        mock_handler.opendir.return_value = "fake-handle"
+        # Batch 1: real entry, at_end=False
+        # Batches 2-4: empty, at_end=False  (Bitvise quirk — never sends EOF)
+        mock_handler.readdir.side_effect = [
+            ([entry], False),
+            ([], False),
+            ([], False),
+            ([], False),
+        ]
+        mock_handler.close.return_value = None
+        mock_sftp._handler = mock_handler
+
+        files = client.list_dir()
+
+        assert len(files) == 1
+        assert files[0].name == "hello.txt"
+        # 1 real batch + 3 empty batches = 4 readdir calls
+        assert mock_handler.readdir.call_count == 4
+        mock_handler.close.assert_awaited_once()
