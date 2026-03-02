@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# asyncssh SFTP v4+ file type constants (avoids import at module level)
+_SFTP_TYPE_DIRECTORY = 2
+_SFTP_TYPE_SYMLINK = 3
+
 ProgressCallback = Callable[[int, int], None]  # (bytes_transferred, total_bytes)
 
 
@@ -597,7 +601,13 @@ class SFTPClient(TransferClient):
                 continue
             is_dir = bool(mode is not None and stat.S_ISDIR(mode))
             full_path = f"{target.rstrip('/')}/{name}"
+            # SFTP v4+ file type field (separate from permissions) — used by
+            # strict servers like Bitvise that may not embed the type in the
+            # permission bits.
+            sftp_type = getattr(attrs, "type", None)
             is_link = bool(mode is not None and stat.S_ISLNK(mode))
+            if not is_link and sftp_type == _SFTP_TYPE_SYMLINK:
+                is_link = True
             if is_link:
                 try:
                     target_attrs = self._run(sftp.stat(full_path))
@@ -605,8 +615,13 @@ class SFTPClient(TransferClient):
                         target_attrs.permissions
                     ):
                         is_dir = True
+                    elif getattr(target_attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+                        is_dir = True
                 except Exception:
                     pass
+            # Fallback: use SFTP v4+ type field when permissions lack type bits
+            if not is_dir and sftp_type == _SFTP_TYPE_DIRECTORY:
+                is_dir = True
             longname = getattr(entry, "longname", "")
             if not is_dir and longname and longname.startswith("d"):
                 is_dir = True
@@ -639,8 +654,21 @@ class SFTPClient(TransferClient):
         logger.debug("chdir: '%s'", path)
         sftp = self._ensure_connected()
         try:
-            self._cwd = self._run(sftp.realpath(path))
+            resolved = self._run(sftp.realpath(path))
+            # Validate the target is a directory (strict servers like Bitvise
+            # require an explicit stat check — realpath only canonicalises).
+            attrs = self._run(sftp.stat(resolved))
+            is_dir = False
+            if attrs.permissions is not None and stat.S_ISDIR(attrs.permissions):
+                is_dir = True
+            elif getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+                is_dir = True
+            if not is_dir:
+                raise NotADirectoryError(f"Not a directory: '{path}'")
+            self._cwd = resolved
             logger.debug("chdir: done, cwd='%s'", self._cwd)
+        except (NotADirectoryError, PermissionError):
+            raise
         except OSError as e:
             import errno as _errno
 
@@ -749,6 +777,8 @@ class SFTPClient(TransferClient):
         attrs = self._run(sftp.stat(path))
         mode = attrs.permissions
         is_dir = stat.S_ISDIR(mode) if mode else False
+        if not is_dir and getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+            is_dir = True
         modified = datetime.fromtimestamp(attrs.mtime) if attrs.mtime else None
         perms = stat.filemode(mode) if mode else ""
         name = PurePosixPath(path).name

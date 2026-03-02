@@ -445,6 +445,11 @@ class TestSFTPClient:
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
         mock_sftp.realpath.side_effect = ["/", "/uploads"]
+        # chdir now validates with stat — return directory attributes
+        chdir_stat_attrs = MagicMock()
+        chdir_stat_attrs.permissions = stat_mod.S_IFDIR | 0o755
+        chdir_stat_attrs.type = None
+        mock_sftp.stat.return_value = chdir_stat_attrs
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
 
