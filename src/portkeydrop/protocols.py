@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import ftplib
 import logging
 import os
-import platform
 import ssl
-import threading
 import stat
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
 
-from portkeydrop.host_key_policy import InteractiveHostKeyPolicy
-import portkeydrop.ssh_utils as _ssh_utils  # noqa: F401 — imported for side-effect (SSH banner patch)
-
 if TYPE_CHECKING:
-    import paramiko
+    import asyncssh
 
 logger = logging.getLogger(__name__)
 
@@ -369,73 +366,76 @@ class FTPSClient(FTPClient):
 
 
 class SFTPClient(TransferClient):
-    """SFTP protocol client using paramiko."""
+    """SFTP protocol client using asyncssh.
+
+    Runs asyncssh in a dedicated event loop on a background thread so the
+    wx UI thread is never blocked.  Every public method dispatches work to
+    that loop via ``_run``.
+    """
 
     def __init__(self, info: ConnectionInfo) -> None:
         super().__init__(info)
-        self._ssh_client: paramiko.SSHClient | None = None
-        self._sftp: paramiko.SFTPClient | None = None
-        self._sftp_lock = threading.Lock()
+        self._conn: asyncssh.SSHClientConnection | None = None
+        self._sftp: asyncssh.SFTPClient | None = None
+        # Dedicated event loop running on a daemon thread
+        self._loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._thread.start()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _run(self, coro):
+        """Submit a coroutine to the background loop and block until done."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    def _ensure_connected(self) -> asyncssh.SFTPClient:
+        if not self._conn or not self._sftp:
+            raise ConnectionError("Not connected")
+        return self._sftp
+
+    # ------------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        import paramiko
+        import asyncssh
 
         self._connected = False
-        self._ssh_client = None
+        self._conn = None
         self._sftp = None
 
         try:
-            self._ssh_client = paramiko.SSHClient()
-            if self._info.host_key_policy == HostKeyPolicy.STRICT:
-                self._ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
-                logger.debug("SFTP host key policy: strict (RejectPolicy)")
-            elif self._info.host_key_policy == HostKeyPolicy.AUTO_ADD:
-                self._ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                logger.debug("SFTP host key policy: auto-add (AutoAddPolicy)")
-            elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
-                from pathlib import Path
+            connect_kwargs: dict[str, object] = {
+                "host": self._info.host,
+                "port": self._info.effective_port,
+                "username": self._info.username,
+                "login_timeout": self._info.timeout,
+            }
 
+            # --- Host key policy ---
+            if self._info.host_key_policy == HostKeyPolicy.AUTO_ADD:
+                connect_kwargs["known_hosts"] = None
+                logger.debug("SFTP host key policy: auto-add (known_hosts=None)")
+            elif self._info.host_key_policy == HostKeyPolicy.STRICT:
+                # Use default known_hosts (system files)
+                logger.debug("SFTP host key policy: strict (system known_hosts)")
+            elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
                 known_hosts = Path.home() / ".portkeydrop" / "known_hosts"
                 known_hosts.parent.mkdir(parents=True, exist_ok=True)
                 if known_hosts.exists():
-                    try:
-                        self._ssh_client.load_host_keys(str(known_hosts))
-                    except Exception:
-                        logger.debug("Could not load known_hosts from %s", known_hosts)
-
-                parent_win = None
-                try:
-                    import wx
-
-                    top_level = wx.GetTopLevelWindows()
-                    if top_level:
-                        parent_win = top_level[0]
-                except Exception:
-                    parent_win = None
-
-                self._ssh_client.set_missing_host_key_policy(
-                    InteractiveHostKeyPolicy(parent_win, known_hosts)
-                )
-                logger.debug("SFTP host key policy: prompt (InteractiveHostKeyPolicy)")
+                    connect_kwargs["known_hosts"] = str(known_hosts)
+                else:
+                    connect_kwargs["known_hosts"] = None
+                logger.debug("SFTP host key policy: prompt (known_hosts=%s)", known_hosts)
             else:
                 raise ConnectionError(
-                    f"SFTP connection failed: unknown host key policy '{self._info.host_key_policy}'."
+                    f"SFTP connection failed: unknown host key policy "
+                    f"'{self._info.host_key_policy}'."
                 )
 
-            try:
-                self._ssh_client.load_system_host_keys()
-                logger.debug("Loaded system host keys")
-            except Exception:
-                logger.debug("System host keys could not be loaded; continuing")
-
-            connect_kwargs: dict[str, object] = {
-                "hostname": self._info.host,
-                "port": self._info.effective_port,
-                "username": self._info.username,
-                "timeout": self._info.timeout,
-                "allow_agent": True,
-                "look_for_keys": True,
-            }
+            # --- Authentication ---
             auth_methods: list[str] = ["ssh-agent", "default-key-files"]
             if self._info.key_path:
                 key_path = os.path.expanduser(self._info.key_path)
@@ -443,69 +443,46 @@ class SFTPClient(TransferClient):
                     raise ConnectionError(
                         f"SFTP connection failed: key file not found: {self._info.key_path}"
                     )
-                from portkeydrop.ppk_utils import is_ppk_file, load_ppk_key
-
-                if is_ppk_file(key_path):
-                    # PuTTY PPK file — convert in-memory and pass as pkey object
-                    passphrase = self._info.password if self._info.password else None
-                    try:
-                        connect_kwargs["pkey"] = load_ppk_key(key_path, passphrase)
-                    except ValueError as exc:
-                        raise ConnectionError(f"SFTP connection failed: {exc}") from exc
-                    connect_kwargs["allow_agent"] = False
-                    connect_kwargs["look_for_keys"] = False
-                    auth_methods = [f"ppk-file:{self._info.key_path}"]
-                else:
-                    connect_kwargs["key_filename"] = key_path
-                    connect_kwargs["allow_agent"] = False
-                    connect_kwargs["look_for_keys"] = False
-                    auth_methods = [f"key-file:{self._info.key_path}"]
+                # asyncssh handles OpenSSH + PPK v2/v3 natively
+                passphrase = self._info.password if self._info.password else None
+                connect_kwargs["client_keys"] = [key_path]
+                connect_kwargs["passphrase"] = passphrase
+                connect_kwargs["agent_path"] = None  # disable agent
+                auth_methods = [f"key-file:{self._info.key_path}"]
             elif self._info.password:
                 connect_kwargs["password"] = self._info.password
                 auth_methods.append("password")
 
-            if bool(connect_kwargs["allow_agent"]):
-                auth_sock = os.environ.get("SSH_AUTH_SOCK")
-                open_ssh_pipe = r"\\.\pipe\openssh-ssh-agent"
-                pageant_status = "not-checked"
-                if platform.system() == "Windows":
-                    try:
-                        pageant_status = (
-                            "available" if list(paramiko.Agent().get_keys()) else "running-no-keys"
-                        )
-                    except Exception as e:
-                        pageant_status = f"error:{e}"
-                logger.debug(
-                    "SSH agent detection: ssh_auth_sock=%s sock_exists=%s win_openssh_pipe_exists=%s pageant=%s",
-                    auth_sock,
-                    bool(auth_sock and os.path.exists(auth_sock)),
-                    os.path.exists(open_ssh_pipe),
-                    pageant_status,
-                )
-
             logger.debug("SFTP authentication methods to try: %s", ", ".join(auth_methods))
-            self._ssh_client.connect(**connect_kwargs)
-            logger.debug("SSH authentication succeeded using one of: %s", ", ".join(auth_methods))
 
-            self._sftp = self._ssh_client.open_sftp()
+            async def _connect():
+                conn = await asyncssh.connect(**connect_kwargs)
+                sftp = await conn.start_sftp_client()
+                return conn, sftp
+
+            self._conn, self._sftp = self._run(_connect())
             if self._sftp is None:
                 raise ConnectionError("Failed to create SFTP session after SSH authentication")
-            self._cwd = self._sftp.normalize(".")
-            self._connected = True
 
-        except paramiko.BadHostKeyException as e:
+            self._cwd = self._run(self._sftp.realpath("."))
+            self._connected = True
+            logger.debug("SSH authentication succeeded using one of: %s", ", ".join(auth_methods))
+
+        except ConnectionError:
+            raise
+        except asyncssh.KeyExchangeFailed as e:
             logger.error("Host key verification failed for %s: %s", self._info.host, e)
             raise ConnectionError(
                 f"SFTP connection failed: host key verification failed for {self._info.host}. "
                 "Verify the server host key or adjust host key policy."
             ) from e
-        except paramiko.PasswordRequiredException as e:
+        except asyncssh.KeyImportError as e:
             logger.error("Private key requires passphrase: %s", e)
             raise ConnectionError(
                 "SFTP connection failed: the private key requires a passphrase. "
                 "Decrypt the key or use an agent/password."
             ) from e
-        except paramiko.AuthenticationException as e:
+        except asyncssh.PermissionDenied as e:
             logger.error(
                 "SFTP authentication failed for %s. Methods attempted: %s",
                 self._info.host,
@@ -518,16 +495,18 @@ class SFTPClient(TransferClient):
                 )
             elif self._info.password:
                 message = (
-                    "Authentication failed after trying SSH agent, default key files, and password. "
+                    "Authentication failed after trying SSH agent, default key files, "
+                    "and password. "
                     "Ensure your agent has the right key loaded or verify username/password."
                 )
             else:
                 message = (
                     "Authentication failed using SSH agent/default key files. "
-                    "Start your SSH agent and load a key, or provide a password/private key path."
+                    "Start your SSH agent and load a key, or provide a password/private "
+                    "key path."
                 )
             raise ConnectionError(f"SFTP connection failed: {message}") from e
-        except paramiko.ssh_exception.NoValidConnectionsError as e:
+        except asyncssh.ConnectionLost as e:
             logger.error(
                 "Could not reach SSH service at %s:%s: %s",
                 self._info.host,
@@ -535,10 +514,11 @@ class SFTPClient(TransferClient):
                 e,
             )
             raise ConnectionError(
-                f"SFTP connection failed: could not connect to {self._info.host}:{self._info.effective_port}. "
+                f"SFTP connection failed: could not connect to "
+                f"{self._info.host}:{self._info.effective_port}. "
                 "Verify host/port and that the SSH service is running."
             ) from e
-        except paramiko.SSHException as e:
+        except asyncssh.DisconnectError as e:
             error_text = str(e)
             if "agent" in error_text.lower():
                 logger.warning("SSH agent appears unavailable or inaccessible: %s", e)
@@ -549,6 +529,18 @@ class SFTPClient(TransferClient):
                 ) from e
             logger.error("SSH protocol error during SFTP connect: %s", e)
             raise ConnectionError(f"SFTP connection failed: SSH negotiation failed: {e}") from e
+        except OSError as e:
+            logger.error(
+                "Could not reach SSH service at %s:%s: %s",
+                self._info.host,
+                self._info.effective_port,
+                e,
+            )
+            raise ConnectionError(
+                f"SFTP connection failed: could not connect to "
+                f"{self._info.host}:{self._info.effective_port}. "
+                "Verify host/port and that the SSH service is running."
+            ) from e
         except Exception as e:
             logger.error("Unexpected SFTP connection failure: %s", e)
             raise ConnectionError(f"SFTP connection failed: {e}") from e
@@ -556,194 +548,21 @@ class SFTPClient(TransferClient):
     def disconnect(self) -> None:
         if self._sftp:
             try:
-                self._sftp.close()
+                self._sftp.exit()
             except Exception:
                 pass
-        if self._ssh_client:
+        if self._conn:
             try:
-                self._ssh_client.close()
+                self._conn.close()
             except Exception:
                 pass
         self._sftp = None
-        self._ssh_client = None
+        self._conn = None
         self._connected = False
 
-    def _ensure_connected(self) -> paramiko.SFTPClient:
-        if not self._ssh_client or not self._sftp:
-            raise ConnectionError("Not connected")
-        return self._sftp
-
-    def _sftp_call(self, fn: Callable, *args, **kwargs):
-        """Call an SFTP function with lock serialisation and debug logging.
-
-        The lock ensures calls are serialised (paramiko SFTP is not thread-safe).
-        """
-        name = fn.__name__ if hasattr(fn, "__name__") else str(fn)
-        with self._sftp_lock:
-            logger.debug("SFTP call: %s args=%s", name, args)
-            try:
-                result = fn(*args, **kwargs)
-                logger.debug("SFTP call completed: %s", name)
-                return result
-            except Exception as e:
-                logger.debug("SFTP call failed: %s → %s: %s", name, type(e).__name__, e)
-                raise
-
-    def _reopen_sftp(self) -> None:
-        """Close and reopen the SFTP channel without dropping the SSH session.
-
-        Called after a per-operation timeout to interrupt the stuck background
-        thread and give future calls a clean SFTP session.
-        """
-        try:
-            if self._sftp:
-                self._sftp.close()
-        except Exception:
-            pass
-        try:
-            if self._ssh_client:
-                self._sftp = self._ssh_client.open_sftp()
-                logger.debug("_reopen_sftp: SFTP channel reopened")
-        except Exception:
-            logger.warning("_reopen_sftp: failed to reopen SFTP channel — marking disconnected")
-            self._connected = False
-            self._sftp = None
-
-    def _listdir_attr_safe(self, sftp: paramiko.SFTPClient, path: str) -> list:
-        """Like sftp.listdir_attr() but treats READDIR count=0 as EOF.
-
-        Paramiko loops forever when a server returns count=0 (empty batch)
-        instead of an SSH_FX_EOF status — common on NAS devices for dirs like
-        .ssh. WinSCP handles this correctly; we replicate that behaviour here.
-        """
-        from paramiko.sftp import (
-            CMD_CLOSE,
-            CMD_HANDLE,
-            CMD_NAME,
-            CMD_OPENDIR,
-            CMD_READDIR,
-        )
-        from paramiko.sftp_attr import SFTPAttributes as _SFTPAttributes
-        from paramiko.sftp_client import SFTPError
-
-        adjusted = sftp._adjust_cwd(path)
-        try:
-            t, msg = sftp._request(CMD_OPENDIR, adjusted)
-        except (TypeError, ValueError, AttributeError):
-            # _request not available (e.g. in tests with MagicMock) — fall back
-            return sftp.listdir_attr(path)
-        if t != CMD_HANDLE:
-            raise SFTPError("Expected handle")
-        handle = msg.get_binary()
-        filelist = []
-        try:
-            while True:
-                try:
-                    t, msg = sftp._request(CMD_READDIR, handle)
-                except EOFError:
-                    break
-                if t != CMD_NAME:
-                    raise SFTPError("Expected name response")
-                count = msg.get_int()
-                if count == 0:  # ← the fix: empty batch = EOF on some NAS servers
-                    break
-                for _ in range(count):
-                    filename = msg.get_text()
-                    longname = msg.get_text()
-                    attr = _SFTPAttributes._from_msg(msg, filename, longname)
-                    if filename not in (".", ".."):
-                        filelist.append(attr)
-        finally:
-            sftp._request(CMD_CLOSE, handle)
-        return filelist
-
-    def _list_dir_via_exec(self, path: str) -> list:
-        """Fallback directory listing using exec_command('ls -la').
-
-        Used when SFTP READDIR hangs (e.g. NAS quirks on .ssh).
-        Returns a list of paramiko.SFTPAttributes-like objects.
-        """
-        import shlex
-        import paramiko
-
-        logger.debug("_list_dir_via_exec: listing '%s' via exec", path)
-        if not self._ssh_client:
-            return []
-        try:
-            _, stdout, _ = self._ssh_client.exec_command(f"ls -la {shlex.quote(path)}", timeout=10)
-            output = stdout.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            logger.warning("exec fallback failed for '%s': %s", path, e)
-            return []
-
-        entries = []
-        for line in output.splitlines():
-            parts = line.split(None, 8)
-            # ls -la lines: permissions links owner group size month day time/year name
-            if len(parts) < 9:
-                continue
-            perms, _, owner, group, size_str, *_, name = parts
-            if name in (".", "..") or not perms:
-                continue
-            # Parse permissions string into st_mode integer
-            try:
-                mode = self._parse_ls_mode(perms)
-            except Exception:
-                continue
-            attr = paramiko.SFTPAttributes()
-            attr.filename = name
-            attr.longname = line
-            attr.st_mode = mode
-            try:
-                attr.st_size = int(size_str)
-            except ValueError:
-                attr.st_size = 0
-            attr.st_uid = 0
-            attr.st_gid = 0
-            attr.st_mtime = 0
-            entries.append(attr)
-
-        logger.debug("_list_dir_via_exec: got %d entries for '%s'", len(entries), path)
-        return entries
-
-    @staticmethod
-    def _parse_ls_mode(perms: str) -> int:
-        """Convert a 10-char ls permission string (e.g. drwxr-xr-x) to st_mode int."""
-        import stat as _stat
-
-        if len(perms) < 10:
-            raise ValueError(f"bad perms string: {perms!r}")
-        type_char = perms[0]
-        mode = 0
-        if type_char == "d":
-            mode |= _stat.S_IFDIR
-        elif type_char == "l":
-            mode |= _stat.S_IFLNK
-        elif type_char == "-":
-            mode |= _stat.S_IFREG
-        elif type_char == "s":
-            mode |= _stat.S_IFSOCK
-        elif type_char == "p":
-            mode |= _stat.S_IFIFO
-        elif type_char == "b":
-            mode |= _stat.S_IFBLK
-        elif type_char == "c":
-            mode |= _stat.S_IFCHR
-        bits = [
-            _stat.S_IRUSR,
-            _stat.S_IWUSR,
-            _stat.S_IXUSR,
-            _stat.S_IRGRP,
-            _stat.S_IWGRP,
-            _stat.S_IXGRP,
-            _stat.S_IROTH,
-            _stat.S_IWOTH,
-            _stat.S_IXOTH,
-        ]
-        for i, bit in enumerate(bits):
-            if perms[i + 1] not in ("-", "T", "S"):
-                mode |= bit
-        return mode
+    # ------------------------------------------------------------------
+    # Directory operations
+    # ------------------------------------------------------------------
 
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         sftp = self._ensure_connected()
@@ -751,7 +570,7 @@ class SFTPClient(TransferClient):
         files: list[RemoteFile] = []
         logger.debug("list_dir: requesting entries for '%s'", target)
         try:
-            entries = self._listdir_attr_safe(sftp, target)
+            entries = self._run(sftp.readdir(target))
         except PermissionError:
             raise
         except OSError as e:
@@ -761,52 +580,57 @@ class SFTPClient(TransferClient):
                 raise PermissionError(f"Permission denied: cannot list '{target}'") from e
             raise
         logger.debug("list_dir: got %d entries for '%s'", len(entries), target)
-        for attr in entries:
-            if attr.filename in (".", ".."):
+        for entry in entries:
+            name = entry.filename
+            if name in (".", ".."):
                 continue
-            mode = attr.st_mode
-            # Skip special files (sockets, FIFOs, devices) — stat()-ing them can hang
+            attrs = entry.attrs
+            mode = attrs.permissions
+            # Skip special files (sockets, FIFOs, devices)
             if mode is not None and (
                 stat.S_ISSOCK(mode)
                 or stat.S_ISFIFO(mode)
                 or stat.S_ISBLK(mode)
                 or stat.S_ISCHR(mode)
             ):
-                logger.debug("Skipping special file: %s (mode=%s)", attr.filename, oct(mode))
+                logger.debug("Skipping special file: %s (mode=%s)", name, oct(mode))
                 continue
             is_dir = bool(mode is not None and stat.S_ISDIR(mode))
-            # Follow symlinks to check if target is a directory
-            full_path = f"{target.rstrip('/')}/{attr.filename}"
+            full_path = f"{target.rstrip('/')}/{name}"
             is_link = bool(mode is not None and stat.S_ISLNK(mode))
             if is_link:
                 try:
-                    target_attr = self._sftp_call(sftp.stat, full_path)
-                    if target_attr.st_mode is not None and stat.S_ISDIR(target_attr.st_mode):
+                    target_attrs = self._run(sftp.stat(full_path))
+                    if target_attrs.permissions is not None and stat.S_ISDIR(
+                        target_attrs.permissions
+                    ):
                         is_dir = True
                 except Exception:
-                    pass  # broken symlink, permission error, or special file; leave as file
-            if not is_dir and hasattr(attr, "longname") and attr.longname.startswith("d"):
+                    pass
+            longname = getattr(entry, "longname", "")
+            if not is_dir and longname and longname.startswith("d"):
                 is_dir = True
             logger.debug(
-                "listdir entry: %s st_mode=%s is_link=%s is_dir=%s longname=%r",
-                attr.filename,
-                oct(attr.st_mode) if attr.st_mode is not None else None,
+                "listdir entry: %s mode=%s is_link=%s is_dir=%s longname=%r",
+                name,
+                oct(mode) if mode is not None else None,
                 is_link,
                 is_dir,
-                getattr(attr, "longname", None),
+                longname,
             )
-            modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
-            perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
+            mtime = attrs.mtime
+            modified = datetime.fromtimestamp(mtime) if mtime else None
+            perms = stat.filemode(mode) if mode else ""
             files.append(
                 RemoteFile(
-                    name=attr.filename,
+                    name=name,
                     path=full_path,
-                    size=attr.st_size or 0,
+                    size=attrs.size or 0,
                     is_dir=is_dir,
                     modified=modified,
                     permissions=perms,
-                    owner=str(attr.st_uid or ""),
-                    group=str(attr.st_gid or ""),
+                    owner=str(attrs.uid or ""),
+                    group=str(attrs.gid or ""),
                 )
             )
         return files
@@ -815,9 +639,7 @@ class SFTPClient(TransferClient):
         logger.debug("chdir: '%s'", path)
         sftp = self._ensure_connected()
         try:
-            self._sftp_call(sftp.chdir, path)
-            logger.debug("chdir: sftp.chdir done, normalizing")
-            self._cwd = self._sftp_call(sftp.normalize, ".")
+            self._cwd = self._run(sftp.realpath(path))
             logger.debug("chdir: done, cwd='%s'", self._cwd)
         except OSError as e:
             import errno as _errno
@@ -827,16 +649,29 @@ class SFTPClient(TransferClient):
             raise
         return self._cwd
 
+    # ------------------------------------------------------------------
+    # Transfer operations
+    # ------------------------------------------------------------------
+
     def download(
         self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
     ) -> None:
         sftp = self._ensure_connected()
 
-        def progress(transferred: int, total_bytes: int) -> None:
-            if callback:
-                callback(transferred, total_bytes)
+        async def _download():
+            async with sftp.open(remote_path, "rb") as rf:
+                total = (await sftp.stat(remote_path)).size or 0
+                transferred = 0
+                while True:
+                    chunk = await rf.read(8192)
+                    if not chunk:
+                        break
+                    local_file.write(chunk)
+                    transferred += len(chunk)
+                    if callback:
+                        callback(transferred, total)
 
-        sftp.getfo(remote_path, local_file, callback=progress)
+        self._run(_download())
 
     def upload(
         self, local_file: BinaryIO, remote_path: str, callback: ProgressCallback | None = None
@@ -846,23 +681,36 @@ class SFTPClient(TransferClient):
         total = local_file.tell()
         local_file.seek(0)
 
-        def progress(transferred: int, total_bytes: int) -> None:
-            if callback:
-                callback(transferred, total_bytes)
+        async def _upload():
+            async with sftp.open(remote_path, "wb") as wf:
+                transferred = 0
+                while True:
+                    chunk = local_file.read(8192)
+                    if not chunk:
+                        break
+                    await wf.write(chunk)
+                    transferred += len(chunk)
+                    if callback:
+                        callback(transferred, total)
 
-        sftp.putfo(local_file, remote_path, file_size=total, callback=progress)
-        attr = sftp.stat(remote_path)
-        if (attr.st_size or 0) != total:
+        self._run(_upload())
+        remote_attrs = self._run(sftp.stat(remote_path))
+        remote_size = remote_attrs.size or 0
+        if remote_size != total:
             raise RuntimeError(
                 f"Remote upload verification failed for {remote_path}: expected {total} bytes, "
-                f"got {attr.st_size if attr.st_size is not None else 'unknown'}."
+                f"got {remote_size}."
             )
+
+    # ------------------------------------------------------------------
+    # File/dir management
+    # ------------------------------------------------------------------
 
     def delete(self, path: str) -> None:
         sftp = self._ensure_connected()
-        sftp.remove(path)
+        self._run(sftp.remove(path))
         try:
-            sftp.stat(path)
+            self._run(sftp.stat(path))
         except FileNotFoundError:
             return
         except OSError as exc:
@@ -873,9 +721,9 @@ class SFTPClient(TransferClient):
 
     def rmdir(self, path: str) -> None:
         sftp = self._ensure_connected()
-        sftp.rmdir(path)
+        self._run(sftp.rmdir(path))
         try:
-            sftp.stat(path)
+            self._run(sftp.stat(path))
         except FileNotFoundError:
             return
         except OSError as exc:
@@ -886,27 +734,28 @@ class SFTPClient(TransferClient):
 
     def mkdir(self, path: str) -> None:
         sftp = self._ensure_connected()
-        sftp.mkdir(path)
-        attr = sftp.stat(path)
-        if not attr.st_mode or not stat.S_ISDIR(attr.st_mode):
+        self._run(sftp.mkdir(path))
+        attrs = self._run(sftp.stat(path))
+        if not attrs.permissions or not stat.S_ISDIR(attrs.permissions):
             raise RuntimeError(f"Remote mkdir verification failed for {path}.")
 
     def rename(self, old_path: str, new_path: str) -> None:
         sftp = self._ensure_connected()
-        sftp.rename(old_path, new_path)
-        sftp.stat(new_path)
+        self._run(sftp.rename(old_path, new_path))
+        self._run(sftp.stat(new_path))
 
     def stat(self, path: str) -> RemoteFile:
         sftp = self._ensure_connected()
-        attr = sftp.stat(path)
-        is_dir = stat.S_ISDIR(attr.st_mode) if attr.st_mode else False
-        modified = datetime.fromtimestamp(attr.st_mtime) if attr.st_mtime else None
-        perms = stat.filemode(attr.st_mode) if attr.st_mode else ""
+        attrs = self._run(sftp.stat(path))
+        mode = attrs.permissions
+        is_dir = stat.S_ISDIR(mode) if mode else False
+        modified = datetime.fromtimestamp(attrs.mtime) if attrs.mtime else None
+        perms = stat.filemode(mode) if mode else ""
         name = PurePosixPath(path).name
         return RemoteFile(
             name=name,
             path=path,
-            size=attr.st_size or 0,
+            size=attrs.size or 0,
             is_dir=is_dir,
             modified=modified,
             permissions=perms,

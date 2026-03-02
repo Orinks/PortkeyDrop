@@ -4,14 +4,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-import paramiko
-
-from portkeydrop import __version__
-from portkeydrop.ssh_utils import (
-    _portkeydrop_transport_init,
-    check_ssh_agent_available,
-    create_ssh_client,
-)
+from portkeydrop.ssh_utils import check_ssh_agent_available
 
 
 class TestCheckSshAgentAvailable:
@@ -40,67 +33,8 @@ class TestCheckSshAgentAvailable:
                     mock_exists.side_effect = lambda p: p == r"\\.\pipe\openssh-ssh-agent"
                     assert check_ssh_agent_available() is True
 
-    def test_windows_pageant_detected(self):
-        with mock.patch.dict("os.environ", {}, clear=True):
-            with mock.patch("platform.system", return_value="Windows"):
-                with mock.patch("os.path.exists", return_value=False):
-                    mock_agent = mock.MagicMock()
-                    mock_agent.get_keys.return_value = [mock.MagicMock()]
-                    with mock.patch("paramiko.Agent", return_value=mock_agent):
-                        assert check_ssh_agent_available() is True
-
     def test_windows_no_agent(self):
         with mock.patch.dict("os.environ", {}, clear=True):
             with mock.patch("platform.system", return_value="Windows"):
                 with mock.patch("os.path.exists", return_value=False):
-                    mock_agent = mock.MagicMock()
-                    mock_agent.get_keys.return_value = []
-                    with mock.patch("paramiko.Agent", return_value=mock_agent):
-                        assert check_ssh_agent_available() is False
-
-
-class TestCreateSshClient:
-    """Tests for create_ssh_client()."""
-
-    def test_returns_ssh_client(self):
-        client = create_ssh_client()
-        assert isinstance(client, paramiko.SSHClient)
-
-    def test_auto_add_policy_by_default(self):
-        client = create_ssh_client()
-        assert isinstance(client._policy, paramiko.AutoAddPolicy)
-
-    def test_reject_policy_when_auto_add_disabled(self):
-        client = create_ssh_client(auto_add_host_key=False)
-        assert isinstance(client._policy, paramiko.RejectPolicy)
-
-    def test_allow_agent_stored(self):
-        client = create_ssh_client(allow_agent=False)
-        assert client._allow_agent is False  # type: ignore[attr-defined]
-
-    def test_look_for_keys_stored(self):
-        client = create_ssh_client(look_for_keys=False)
-        assert client._look_for_keys is False  # type: ignore[attr-defined]
-
-    def test_default_settings(self):
-        client = create_ssh_client()
-        assert client._allow_agent is True  # type: ignore[attr-defined]
-        assert client._look_for_keys is True  # type: ignore[attr-defined]
-
-
-class TestSshBannerPatch:
-    """Tests for the paramiko Transport banner patch."""
-
-    def test_banner_patch_sets_local_version(self):
-        """_portkeydrop_transport_init patches local_version on the transport."""
-        mock_self = mock.MagicMock()
-        with mock.patch("portkeydrop.ssh_utils._original_transport_init"):
-            _portkeydrop_transport_init(mock_self)
-        assert mock_self.local_version == f"SSH-2.0-PortkeyDrop_{__version__}"
-
-    def test_banner_patch_calls_original_init(self):
-        """_portkeydrop_transport_init delegates to the original __init__."""
-        mock_self = mock.MagicMock()
-        with mock.patch("portkeydrop.ssh_utils._original_transport_init") as orig:
-            _portkeydrop_transport_init(mock_self, "arg1", kw="val")
-        orig.assert_called_once_with(mock_self, "arg1", kw="val")
+                    assert check_ssh_agent_available() is False
