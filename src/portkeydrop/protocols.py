@@ -595,9 +595,15 @@ class SFTPClient(TransferClient):
                     names, at_end = await sftp._handler.readdir(handle)
                     if not names:
                         consecutive_empty += 1
-                        logger.debug("_readdir_safe: empty batch %d for '%s'", consecutive_empty, target)
+                        logger.debug(
+                            "_readdir_safe: empty batch %d for '%s'", consecutive_empty, target
+                        )
                         if consecutive_empty >= _MAX_EMPTY:
-                            logger.warning("_readdir_safe: treating %d consecutive empty batches as EOF for '%s'", _MAX_EMPTY, target)
+                            logger.warning(
+                                "_readdir_safe: treating %d consecutive empty batches as EOF for '%s'",
+                                _MAX_EMPTY,
+                                target,
+                            )
                             break
                     else:
                         consecutive_empty = 0
@@ -617,7 +623,11 @@ class SFTPClient(TransferClient):
 
         try:
             entries = self._run(_readdir_safe())
-            logger.debug("list_dir: readdir returned %d raw entries for '%s'", len(entries) if entries is not None else -1, target)
+            logger.debug(
+                "list_dir: readdir returned %d raw entries for '%s'",
+                len(entries) if entries is not None else -1,
+                target,
+            )
         except PermissionError:
             raise
         except OSError as e:
@@ -630,8 +640,14 @@ class SFTPClient(TransferClient):
             # asyncssh raises SFTPError (not OSError) for server-side errors.
             # Map permission errors; surface everything else.
             import asyncssh as _asyncssh
+
             if isinstance(e, _asyncssh.SFTPError):
-                logger.warning("list_dir: SFTPError for '%s': code=%s msg=%s", target, getattr(e, "code", "?"), e)
+                logger.warning(
+                    "list_dir: SFTPError for '%s': code=%s msg=%s",
+                    target,
+                    getattr(e, "code", "?"),
+                    e,
+                )
                 if getattr(e, "code", None) in (3, 4):  # FX_PERMISSION_DENIED=3, FX_FAILURE=4
                     raise PermissionError(f"Permission denied: cannot list '{target}'") from e
             raise
@@ -710,7 +726,12 @@ class SFTPClient(TransferClient):
             # Validate the target is a directory (strict servers like Bitvise
             # require an explicit stat check — realpath only canonicalises).
             attrs = self._run(sftp.stat(resolved))
-            logger.debug("chdir stat: path='%s' permissions=%s type=%s", resolved, attrs.permissions, getattr(attrs, "type", None))
+            logger.debug(
+                "chdir stat: path='%s' permissions=%s type=%s",
+                resolved,
+                attrs.permissions,
+                getattr(attrs, "type", None),
+            )
             is_dir = False
             if attrs.permissions is not None and stat.S_ISDIR(attrs.permissions):
                 is_dir = True
@@ -719,7 +740,9 @@ class SFTPClient(TransferClient):
             elif attrs.permissions is None and getattr(attrs, "type", None) is None:
                 # Server returned no type info (e.g. Bitvise on .ssh) —
                 # assume directory and let the server reject if wrong.
-                logger.debug("chdir: no type info from server, assuming directory for '%s'", resolved)
+                logger.debug(
+                    "chdir: no type info from server, assuming directory for '%s'", resolved
+                )
                 is_dir = True
             if not is_dir:
                 raise NotADirectoryError(f"Not a directory: '{path}'")
