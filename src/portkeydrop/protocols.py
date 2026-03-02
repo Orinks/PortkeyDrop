@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# asyncssh SFTP v4+ file type constants (avoids import at module level)
+_SFTP_TYPE_DIRECTORY = 2
+_SFTP_TYPE_SYMLINK = 3
+
 ProgressCallback = Callable[[int, int], None]  # (bytes_transferred, total_bytes)
 
 
@@ -569,8 +573,61 @@ class SFTPClient(TransferClient):
         target = (path if path != "." else self._cwd).rstrip("/") or "/"
         files: list[RemoteFile] = []
         logger.debug("list_dir: requesting entries for '%s'", target)
+
+        async def _readdir_safe():
+            """Readdir loop that treats consecutive empty responses as EOF.
+
+            Some SFTP servers (e.g. Bitvise on the .ssh directory) return
+            FXP_NAME with count=0 indefinitely instead of FX_EOF. asyncssh
+            loops forever in this case; we break after 3 consecutive empty
+            batches — matching WinSCP behaviour.
+            """
+            import asyncssh as _asyncssh
+
+            _MAX_EMPTY = 3
+            dirpath = sftp.compose_path(target)
+            handle = await sftp._handler.opendir(dirpath)
+            result = []
+            consecutive_empty = 0
+            at_end = False
+            try:
+                while not at_end:
+                    names, at_end = await sftp._handler.readdir(handle)
+                    if not names:
+                        consecutive_empty += 1
+                        logger.debug(
+                            "_readdir_safe: empty batch %d for '%s'", consecutive_empty, target
+                        )
+                        if consecutive_empty >= _MAX_EMPTY:
+                            logger.warning(
+                                "_readdir_safe: treating %d consecutive empty batches as EOF for '%s'",
+                                _MAX_EMPTY,
+                                target,
+                            )
+                            break
+                    else:
+                        consecutive_empty = 0
+                        # Decode filenames from bytes → str (same as asyncssh scandir does
+                        # internally when called with a str path).
+                        for entry in names:
+                            if entry.filename and isinstance(entry.filename, (bytes, bytearray)):
+                                entry.filename = sftp.decode(entry.filename)
+                            if entry.longname and isinstance(entry.longname, (bytes, bytearray)):
+                                entry.longname = sftp.decode(entry.longname)
+                        result.extend(names)
+            except _asyncssh.SFTPEOFError:
+                pass
+            finally:
+                await sftp._handler.close(handle)
+            return result
+
         try:
-            entries = self._run(sftp.readdir(target))
+            entries = self._run(_readdir_safe())
+            logger.debug(
+                "list_dir: readdir returned %d raw entries for '%s'",
+                len(entries) if entries is not None else -1,
+                target,
+            )
         except PermissionError:
             raise
         except OSError as e:
@@ -578,6 +635,21 @@ class SFTPClient(TransferClient):
 
             if e.errno in (_errno.EACCES, _errno.EPERM):
                 raise PermissionError(f"Permission denied: cannot list '{target}'") from e
+            raise
+        except Exception as e:
+            # asyncssh raises SFTPError (not OSError) for server-side errors.
+            # Map permission errors; surface everything else.
+            import asyncssh as _asyncssh
+
+            if isinstance(e, _asyncssh.SFTPError):
+                logger.warning(
+                    "list_dir: SFTPError for '%s': code=%s msg=%s",
+                    target,
+                    getattr(e, "code", "?"),
+                    e,
+                )
+                if getattr(e, "code", None) in (3, 4):  # FX_PERMISSION_DENIED=3, FX_FAILURE=4
+                    raise PermissionError(f"Permission denied: cannot list '{target}'") from e
             raise
         logger.debug("list_dir: got %d entries for '%s'", len(entries), target)
         for entry in entries:
@@ -597,7 +669,13 @@ class SFTPClient(TransferClient):
                 continue
             is_dir = bool(mode is not None and stat.S_ISDIR(mode))
             full_path = f"{target.rstrip('/')}/{name}"
+            # SFTP v4+ file type field (separate from permissions) — used by
+            # strict servers like Bitvise that may not embed the type in the
+            # permission bits.
+            sftp_type = getattr(attrs, "type", None)
             is_link = bool(mode is not None and stat.S_ISLNK(mode))
+            if not is_link and sftp_type == _SFTP_TYPE_SYMLINK:
+                is_link = True
             if is_link:
                 try:
                     target_attrs = self._run(sftp.stat(full_path))
@@ -605,8 +683,13 @@ class SFTPClient(TransferClient):
                         target_attrs.permissions
                     ):
                         is_dir = True
+                    elif getattr(target_attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+                        is_dir = True
                 except Exception:
                     pass
+            # Fallback: use SFTP v4+ type field when permissions lack type bits
+            if not is_dir and sftp_type == _SFTP_TYPE_DIRECTORY:
+                is_dir = True
             longname = getattr(entry, "longname", "")
             if not is_dir and longname and longname.startswith("d"):
                 is_dir = True
@@ -639,8 +722,34 @@ class SFTPClient(TransferClient):
         logger.debug("chdir: '%s'", path)
         sftp = self._ensure_connected()
         try:
-            self._cwd = self._run(sftp.realpath(path))
+            resolved = self._run(sftp.realpath(path))
+            # Validate the target is a directory (strict servers like Bitvise
+            # require an explicit stat check — realpath only canonicalises).
+            attrs = self._run(sftp.stat(resolved))
+            logger.debug(
+                "chdir stat: path='%s' permissions=%s type=%s",
+                resolved,
+                attrs.permissions,
+                getattr(attrs, "type", None),
+            )
+            is_dir = False
+            if attrs.permissions is not None and stat.S_ISDIR(attrs.permissions):
+                is_dir = True
+            elif getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+                is_dir = True
+            elif attrs.permissions is None and getattr(attrs, "type", None) is None:
+                # Server returned no type info (e.g. Bitvise on .ssh) —
+                # assume directory and let the server reject if wrong.
+                logger.debug(
+                    "chdir: no type info from server, assuming directory for '%s'", resolved
+                )
+                is_dir = True
+            if not is_dir:
+                raise NotADirectoryError(f"Not a directory: '{path}'")
+            self._cwd = resolved
             logger.debug("chdir: done, cwd='%s'", self._cwd)
+        except (NotADirectoryError, PermissionError):
+            raise
         except OSError as e:
             import errno as _errno
 
@@ -786,6 +895,8 @@ class SFTPClient(TransferClient):
         attrs = self._run(sftp.stat(path))
         mode = attrs.permissions
         is_dir = stat.S_ISDIR(mode) if mode else False
+        if not is_dir and getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+            is_dir = True
         modified = datetime.fromtimestamp(attrs.mtime) if attrs.mtime else None
         perms = stat.filemode(mode) if mode else ""
         name = PurePosixPath(path).name
