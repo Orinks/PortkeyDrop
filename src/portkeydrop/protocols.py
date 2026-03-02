@@ -575,6 +575,7 @@ class SFTPClient(TransferClient):
         logger.debug("list_dir: requesting entries for '%s'", target)
         try:
             entries = self._run(sftp.readdir(target))
+            logger.debug("list_dir: readdir returned %d raw entries for '%s'", len(entries) if entries is not None else -1, target)
         except PermissionError:
             raise
         except OSError as e:
@@ -658,6 +659,7 @@ class SFTPClient(TransferClient):
             # Validate the target is a directory (strict servers like Bitvise
             # require an explicit stat check — realpath only canonicalises).
             attrs = self._run(sftp.stat(resolved))
+            logger.debug("chdir stat: path='%s' permissions=%s type=%s", resolved, attrs.permissions, getattr(attrs, "type", None))
             is_dir = False
             if attrs.permissions is not None and stat.S_ISDIR(attrs.permissions):
                 is_dir = True
@@ -666,6 +668,7 @@ class SFTPClient(TransferClient):
             elif attrs.permissions is None and getattr(attrs, "type", None) is None:
                 # Server returned no type info (e.g. Bitvise on .ssh) —
                 # assume directory and let the server reject if wrong.
+                logger.debug("chdir: no type info from server, assuming directory for '%s'", resolved)
                 is_dir = True
             if not is_dir:
                 raise NotADirectoryError(f"Not a directory: '{path}'")
