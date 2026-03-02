@@ -601,6 +601,13 @@ class SFTPClient(TransferClient):
                             break
                     else:
                         consecutive_empty = 0
+                        # Decode filenames from bytes → str (same as asyncssh scandir does
+                        # internally when called with a str path).
+                        for entry in names:
+                            if entry.filename and isinstance(entry.filename, (bytes, bytearray)):
+                                entry.filename = sftp.decode(entry.filename)
+                            if entry.longname and isinstance(entry.longname, (bytes, bytearray)):
+                                entry.longname = sftp.decode(entry.longname)
                         result.extend(names)
             except _asyncssh.SFTPEOFError:
                 pass
