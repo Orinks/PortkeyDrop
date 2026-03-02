@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from io import StringIO
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -120,7 +118,6 @@ class TestProtocolsPpkIntegration:
 
     def test_ppk_file_uses_pkey_kwarg(self):
         """When key_path is a .ppk, connect is called with pkey= not key_filename=."""
-        import portkeydrop.protocols as proto
         import paramiko
 
         mock_pkey = MagicMock(spec=paramiko.RSAKey)
