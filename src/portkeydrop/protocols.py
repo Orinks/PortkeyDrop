@@ -768,6 +768,12 @@ class SFTPClient(TransferClient):
         sftp = self._ensure_connected()
         local_path = getattr(local_file, "name", None)
 
+        # Resolve symlinks so stat() returns the real file size
+        try:
+            resolved = self._run(sftp.realpath(remote_path))
+        except Exception:
+            resolved = remote_path
+
         if isinstance(local_path, str) and os.path.isabs(local_path):
             # asyncssh native get() — pipelined reads with progress reporting
             local_file.close()
@@ -779,14 +785,14 @@ class SFTPClient(TransferClient):
                     def handler(srcpath, dstpath, copied, total):
                         callback(copied, total)
 
-                await sftp.get(remote_path, local_path, progress_handler=handler)
+                await sftp.get(resolved, local_path, progress_handler=handler)
 
             self._run(_download())
         else:
             # Fallback for in-memory streams (BytesIO, etc.)
             async def _download():
-                async with sftp.open(remote_path, "rb") as rf:
-                    total = (await sftp.stat(remote_path)).size or 0
+                async with sftp.open(resolved, "rb") as rf:
+                    total = (await sftp.stat(resolved)).size or 0
                     transferred = 0
                     while True:
                         chunk = await rf.read(8192)

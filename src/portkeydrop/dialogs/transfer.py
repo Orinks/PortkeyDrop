@@ -165,7 +165,8 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total
+                    if total > 0:
+                        item.total_bytes = total
                     self._notify()
 
                 client.download(item.remote_path, f, callback=callback)
@@ -187,7 +188,8 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total
+                    if total > 0:
+                        item.total_bytes = total
                     self._notify()
 
                 client.upload(f, item.remote_path, callback=callback)
@@ -208,6 +210,15 @@ class TransferManager:
             # Collect all files first to calculate total size
             file_queue: list[tuple[str, str, int]] = []  # (remote, local, size)
             self._collect_remote_files(client, item.remote_path, item.local_path, file_queue)
+            # Re-stat files with size=0 to resolve symlink targets
+            for i, (remote_file, local_file, size) in enumerate(file_queue):
+                if size == 0:
+                    try:
+                        real_size = client.stat(remote_file).size
+                        if real_size > 0:
+                            file_queue[i] = (remote_file, local_file, real_size)
+                    except Exception:
+                        pass
             item.total_bytes = sum(size for _, _, size in file_queue)
             item.transferred_bytes = 0
             self._notify()

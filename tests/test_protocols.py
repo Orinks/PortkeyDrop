@@ -452,7 +452,7 @@ class TestSFTPClient:
     def test_chdir_download_upload_and_file_ops(self, mock_connect):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
-        mock_sftp.realpath.side_effect = ["/", "/uploads"]
+        mock_sftp.realpath.side_effect = ["/", "/uploads", "/remote.bin"]
         # chdir now validates with stat — return directory attributes
         chdir_stat_attrs = MagicMock()
         chdir_stat_attrs.permissions = stat_mod.S_IFDIR | 0o755
@@ -688,7 +688,7 @@ class TestSFTPClientNativeTransfer:
     def test_download_uses_native_get_with_progress(self, mock_connect):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
-        mock_sftp.realpath.return_value = "/"
+        mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
 
@@ -728,7 +728,7 @@ class TestSFTPClientNativeTransfer:
     def test_download_no_callback_still_uses_native_get(self, mock_connect):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
-        mock_sftp.realpath.return_value = "/"
+        mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
 
@@ -751,7 +751,7 @@ class TestSFTPClientNativeTransfer:
     def test_download_bytesio_uses_chunked_fallback(self, mock_connect):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
-        mock_sftp.realpath.return_value = "/"
+        mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
 
@@ -876,6 +876,126 @@ class TestSFTPClientNativeTransfer:
 
         assert progress_calls == [(4, 4)]
         mock_sftp.put.assert_not_awaited()
+
+
+class TestSFTPDownloadSymlinkResolution:
+    """Tests that SFTPClient.download() resolves symlinks via realpath."""
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_resolves_symlink_via_realpath(self, mock_connect):
+        """Native get() path uses the resolved path for symlinked files."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.side_effect = [
+            "/",  # connect
+            "/real/file.bin",  # download resolves symlink
+        ]
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        progress_calls: list[tuple[int, int]] = []
+
+        async def fake_get(remotepath, localpath, *, progress_handler=None, **kwargs):
+            if progress_handler:
+                progress_handler(remotepath, localpath, 500, 1000)
+                progress_handler(remotepath, localpath, 1000, 1000)
+
+        mock_sftp.get = AsyncMock(side_effect=fake_get)
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/downloaded.bin"
+        mock_file.close = MagicMock()
+
+        client.download(
+            "/symlink/file.bin",
+            mock_file,
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        # Verify get() was called with the resolved path
+        call_args = mock_sftp.get.call_args
+        assert call_args[0][0] == "/real/file.bin"
+        assert progress_calls == [(500, 1000), (1000, 1000)]
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_fallback_resolves_symlink_via_realpath(self, mock_connect):
+        """BytesIO fallback path uses the resolved path for symlinked files."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.side_effect = [
+            "/",  # connect
+            "/real/file.txt",  # download resolves symlink
+        ]
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        mock_remote_file = AsyncMock()
+        mock_remote_file.read.side_effect = [b"hello", b""]
+        mock_open_cm = MagicMock()
+        mock_open_cm.__aenter__ = AsyncMock(return_value=mock_remote_file)
+        mock_open_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_sftp.open = MagicMock(return_value=mock_open_cm)
+        stat_attrs = MagicMock()
+        stat_attrs.size = 5
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        buf = io.BytesIO()
+        progress_calls: list[tuple[int, int]] = []
+        client.download(
+            "/symlink/file.txt",
+            buf,
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        # Verify open() and stat() were called with the resolved path
+        mock_sftp.open.assert_called_once_with("/real/file.txt", "rb")
+        mock_sftp.stat.assert_called_once_with("/real/file.txt")
+        assert buf.getvalue() == b"hello"
+        assert progress_calls == [(5, 5)]
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_download_falls_back_to_original_path_when_realpath_fails(self, mock_connect):
+        """If realpath fails, download uses the original path."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.side_effect = [
+            "/",  # connect
+            OSError("realpath failed"),  # download fallback
+        ]
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        progress_calls: list[tuple[int, int]] = []
+
+        async def fake_get(remotepath, localpath, *, progress_handler=None, **kwargs):
+            if progress_handler:
+                progress_handler(remotepath, localpath, 100, 100)
+
+        mock_sftp.get = AsyncMock(side_effect=fake_get)
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/downloaded.bin"
+        mock_file.close = MagicMock()
+
+        client.download(
+            "/original/path.bin",
+            mock_file,
+            callback=lambda t, n: progress_calls.append((t, n)),
+        )
+
+        # Verify get() was called with the original path (fallback)
+        call_args = mock_sftp.get.call_args
+        assert call_args[0][0] == "/original/path.bin"
+        assert progress_calls == [(100, 100)]
 
 
 class TestProtocolEnum:
