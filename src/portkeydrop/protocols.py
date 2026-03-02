@@ -657,43 +657,80 @@ class SFTPClient(TransferClient):
         self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
     ) -> None:
         sftp = self._ensure_connected()
+        local_path = getattr(local_file, "name", None)
 
-        async def _download():
-            async with sftp.open(remote_path, "rb") as rf:
-                total = (await sftp.stat(remote_path)).size or 0
-                transferred = 0
-                while True:
-                    chunk = await rf.read(8192)
-                    if not chunk:
-                        break
-                    local_file.write(chunk)
-                    transferred += len(chunk)
-                    if callback:
-                        callback(transferred, total)
+        if isinstance(local_path, str) and os.path.isabs(local_path):
+            # asyncssh native get() — pipelined reads with progress reporting
+            local_file.close()
 
-        self._run(_download())
+            async def _download():
+                handler = None
+                if callback:
+
+                    def handler(srcpath, dstpath, copied, total):
+                        callback(copied, total)
+
+                await sftp.get(remote_path, local_path, progress_handler=handler)
+
+            self._run(_download())
+        else:
+            # Fallback for in-memory streams (BytesIO, etc.)
+            async def _download():
+                async with sftp.open(remote_path, "rb") as rf:
+                    total = (await sftp.stat(remote_path)).size or 0
+                    transferred = 0
+                    while True:
+                        chunk = await rf.read(8192)
+                        if not chunk:
+                            break
+                        local_file.write(chunk)
+                        transferred += len(chunk)
+                        if callback:
+                            callback(transferred, total)
+
+            self._run(_download())
 
     def upload(
         self, local_file: BinaryIO, remote_path: str, callback: ProgressCallback | None = None
     ) -> None:
         sftp = self._ensure_connected()
-        local_file.seek(0, 2)
-        total = local_file.tell()
-        local_file.seek(0)
+        local_path = getattr(local_file, "name", None)
 
-        async def _upload():
-            async with sftp.open(remote_path, "wb") as wf:
-                transferred = 0
-                while True:
-                    chunk = local_file.read(8192)
-                    if not chunk:
-                        break
-                    await wf.write(chunk)
-                    transferred += len(chunk)
-                    if callback:
-                        callback(transferred, total)
+        if isinstance(local_path, str) and os.path.isabs(local_path):
+            # asyncssh native put() — pipelined writes with progress reporting
+            total = os.path.getsize(local_path)
+            local_file.close()
 
-        self._run(_upload())
+            async def _upload():
+                handler = None
+                if callback:
+
+                    def handler(srcpath, dstpath, copied, total_bytes):
+                        callback(copied, total_bytes)
+
+                await sftp.put(local_path, remote_path, progress_handler=handler)
+
+            self._run(_upload())
+        else:
+            # Fallback for in-memory streams (BytesIO, etc.)
+            local_file.seek(0, 2)
+            total = local_file.tell()
+            local_file.seek(0)
+
+            async def _upload():
+                async with sftp.open(remote_path, "wb") as wf:
+                    transferred = 0
+                    while True:
+                        chunk = local_file.read(8192)
+                        if not chunk:
+                            break
+                        await wf.write(chunk)
+                        transferred += len(chunk)
+                        if callback:
+                            callback(transferred, total)
+
+            self._run(_upload())
+
         remote_attrs = self._run(sftp.stat(remote_path))
         remote_size = remote_attrs.size or 0
         if remote_size != total:
