@@ -427,7 +427,15 @@ class TestSFTPClient:
 
         dot_entry = MagicMock()
         dot_entry.filename = "."
-        mock_sftp.readdir.return_value = [dot_entry, file_entry, dir_entry]
+
+        # list_dir uses _readdir_safe which calls sftp._handler.opendir/readdir directly.
+        mock_handler = AsyncMock()
+        mock_sftp._handler = mock_handler
+        mock_sftp.compose_path.return_value = b"/home/user"
+        # First call returns entries, second call returns empty (EOF signal)
+        mock_handler.readdir.side_effect = [
+            ([dot_entry, file_entry, dir_entry], True),
+        ]
 
         client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
         client.connect()
