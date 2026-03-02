@@ -582,6 +582,8 @@ class SFTPClient(TransferClient):
             loops forever in this case; we break after 3 consecutive empty
             batches — matching WinSCP behaviour.
             """
+            import asyncssh as _asyncssh
+
             _MAX_EMPTY = 3
             dirpath = sftp.compose_path(target)
             handle = await sftp._handler.opendir(dirpath)
@@ -600,7 +602,7 @@ class SFTPClient(TransferClient):
                     else:
                         consecutive_empty = 0
                         result.extend(names)
-            except asyncssh.SFTPEOFError:
+            except _asyncssh.SFTPEOFError:
                 pass
             finally:
                 await sftp._handler.close(handle)
