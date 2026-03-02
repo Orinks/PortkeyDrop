@@ -444,6 +444,7 @@ class SFTPClient(TransferClient):
                         f"SFTP connection failed: key file not found: {self._info.key_path}"
                     )
                 from portkeydrop.ppk_utils import is_ppk_file, load_ppk_key
+
                 if is_ppk_file(key_path):
                     # PuTTY PPK file — convert in-memory and pass as pkey object
                     passphrase = self._info.password if self._info.password else None

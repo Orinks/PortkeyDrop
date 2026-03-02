@@ -43,8 +43,7 @@ def load_ppk_key(path: str, passphrase: str | None = None) -> paramiko.PKey:
         import puttykeys
     except ImportError as exc:
         raise ImportError(
-            "puttykeys is required for PPK key support. "
-            "Install it with: pip install puttykeys"
+            "puttykeys is required for PPK key support. Install it with: pip install puttykeys"
         ) from exc
 
     key_path = Path(path)
@@ -67,9 +66,7 @@ def load_ppk_key(path: str, passphrase: str | None = None) -> paramiko.PKey:
         pkey = paramiko.PKey.from_private_key(StringIO(openssh_pem))
     except paramiko.PasswordRequiredException:
         # Should not happen (puttykeys already decrypted), but handle gracefully
-        raise ValueError(
-            f"PPK key '{path}' requires a passphrase. Please provide one."
-        )
+        raise ValueError(f"PPK key '{path}' requires a passphrase. Please provide one.")
     except paramiko.SSHException as exc:
         raise ValueError(f"Could not load converted PPK key '{path}': {exc}") from exc
 
