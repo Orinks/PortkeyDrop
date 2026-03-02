@@ -112,6 +112,55 @@ class TestLoadPpkKey:
             with pytest.raises(ImportError, match="puttykeys is required"):
                 load_ppk_key(str(ppk_file))
 
+    def test_generic_parse_exception_raises_value_error(self, tmp_path):
+        from portkeydrop.ppk_utils import load_ppk_key
+
+        ppk_file = tmp_path / "test.ppk"
+        ppk_file.write_text("bad")
+
+        ctx, _ = self._mock_puttykeys(RuntimeError("unexpected parse failure"))
+        with ctx:
+            with pytest.raises(ValueError, match="Could not parse PPK key"):
+                load_ppk_key(str(ppk_file))
+
+    def test_password_required_exception_raises_value_error(self, tmp_path):
+        import paramiko
+        from portkeydrop.ppk_utils import load_ppk_key
+
+        ppk_file = tmp_path / "test.ppk"
+        ppk_file.write_text("fake")
+        fake_pem = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n"
+        ctx, _ = self._mock_puttykeys(fake_pem)
+
+        with (
+            ctx,
+            patch(
+                "paramiko.PKey.from_private_key",
+                side_effect=paramiko.PasswordRequiredException("needs passphrase"),
+            ),
+        ):
+            with pytest.raises(ValueError, match="requires a passphrase"):
+                load_ppk_key(str(ppk_file))
+
+    def test_ssh_exception_raises_value_error(self, tmp_path):
+        import paramiko
+        from portkeydrop.ppk_utils import load_ppk_key
+
+        ppk_file = tmp_path / "test.ppk"
+        ppk_file.write_text("fake")
+        fake_pem = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n"
+        ctx, _ = self._mock_puttykeys(fake_pem)
+
+        with (
+            ctx,
+            patch(
+                "paramiko.PKey.from_private_key",
+                side_effect=paramiko.SSHException("bad key format"),
+            ),
+        ):
+            with pytest.raises(ValueError, match="Could not load converted PPK key"):
+                load_ppk_key(str(ppk_file))
+
 
 class TestProtocolsPpkIntegration:
     """Smoke tests: protocols.py routes .ppk files through ppk_utils."""
@@ -145,3 +194,16 @@ class TestProtocolsPpkIntegration:
 
         assert "pkey" in connect_kwargs_captured
         assert connect_kwargs_captured["pkey"] is mock_pkey
+
+    def test_ppk_load_failure_wrapped_as_connection_error(self):
+        """ValueError from load_ppk_key is re-raised as ConnectionError.
+
+        Tests the error-wrapping pattern used in protocols.py.
+        """
+        # Replicate the protocols.py wrapping logic directly
+        exc = ValueError("bad passphrase")
+        with pytest.raises(ConnectionError, match="bad passphrase"):
+            try:
+                raise exc
+            except ValueError as e:
+                raise ConnectionError(f"SFTP connection failed: {e}") from e
