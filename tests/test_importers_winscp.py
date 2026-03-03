@@ -6,7 +6,11 @@ from portkeydrop.importers import (
     detect_default_path,
     load_from_source,
 )
-from portkeydrop.importers.winscp import parse_ini_file
+from portkeydrop.importers.winscp import (
+    _decrypt_winscp_password,
+    _safe_decrypt,
+    parse_ini_file,
+)
 
 
 def test_parse_winscp_ini_fixture():
@@ -21,6 +25,7 @@ def test_parse_winscp_ini_fixture():
     assert first.host == "sftp.example.com"
     assert first.port == 22
     assert first.username == "alice"
+    assert first.password == "s3cr3t"
     assert first.initial_dir == "/home/alice"
     assert first.key_path == "C:\\keys\\id_ed25519.ppk"
 
@@ -29,6 +34,7 @@ def test_parse_winscp_ini_fixture():
     assert second.protocol == "ftp"
     assert second.host == "ftp.example.com"
     assert second.port == 21
+    assert second.password == "hunter2"
 
 
 def test_detect_default_path_returns_sentinel_when_registry_available():
@@ -162,3 +168,44 @@ def test_decode_name_backslash():
     from portkeydrop.importers.winscp import _decode_name
 
     assert _decode_name("path%5Cto") == "path\\to"
+
+
+def test_decrypt_winscp_password_known_value():
+    """Decrypt a known WinSCP-encrypted password."""
+    encrypted = (
+        "00000A030B080601060C0609060306050703060607040700"
+        "020E060507080601060D0700060C0605020E0603060F060D"
+        "070303030603070203030704"
+    )
+    assert _decrypt_winscp_password("alice", "sftp.example.com", encrypted) == "s3cr3t"
+
+
+def test_decrypt_winscp_password_different_credentials():
+    encrypted = (
+        "00000A030B0A0602060F0602060607040700020E06050708"
+        "0601060D0700060C0605020E0603060F060D0608070506"
+        "0E0704060507020302"
+    )
+    assert _decrypt_winscp_password("bob", "ftp.example.com", encrypted) == "hunter2"
+
+
+def test_safe_decrypt_empty_password():
+    """Empty encrypted string returns empty password."""
+    assert _safe_decrypt("", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_invalid_hex():
+    """Malformed encrypted string returns empty password instead of crashing."""
+    assert _safe_decrypt("ZZZZ", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_truncated():
+    """Truncated encrypted data returns empty password instead of crashing."""
+    assert _safe_decrypt("0000", "alice", "host.com") == ""
+
+
+def test_parse_ini_missing_password_field(tmp_path):
+    """Sessions without a Password field get empty password."""
+    ini = tmp_path / "w.ini"
+    ini.write_text("[Sessions\\H]\nHostName=h.com\nPortNumber=22\nUserName=u\n")
+    assert parse_ini_file(ini)[0].password == ""
