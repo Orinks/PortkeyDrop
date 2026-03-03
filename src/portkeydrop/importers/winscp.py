@@ -183,27 +183,26 @@ def _decrypt_winscp_password(username: str, hostname: str, encrypted: str) -> st
     Algorithm reference: https://github.com/NetSPI/WinSCPPasswordDecryptor
     """
     key = username + hostname
-    encrypted_bytes = [int(encrypted[i : i + 2], 16) for i in range(0, len(encrypted), 2)]
+    encrypted_hex = [encrypted[i : i + 2] for i in range(0, len(encrypted), 2)]
 
-    flag = _decrypt_next(encrypted_bytes)
-    if flag == _MAGIC:
-        _decrypt_next(encrypted_bytes)  # skip byte
-        length = _decrypt_next(encrypted_bytes)
+    flag = _decrypt_next(encrypted_hex)
+    if flag == 0xFF:
+        _decrypt_next(encrypted_hex)  # skip byte
+        length = _decrypt_next(encrypted_hex)
     else:
         length = flag
 
     result: list[str] = []
     for _ in range(length):
-        result.append(chr(_decrypt_next(encrypted_bytes) ^ _MAGIC))
+        result.append(chr(_decrypt_next(encrypted_hex)))
 
     password = "".join(result)
-    if flag == _MAGIC:
+    if flag == 0xFF:
         password = password[len(key) :]
     return password
 
 
-def _decrypt_next(encrypted_bytes: list[int]) -> int:
-    """Consume two values from the byte list and return one decrypted byte."""
-    a = encrypted_bytes.pop(0)
-    b = encrypted_bytes.pop(0)
-    return (((a << 4) + b) ^ _MAGIC) & 0xFF
+def _decrypt_next(encrypted_hex: list[str]) -> int:
+    """Consume one hex-encoded byte and return one decrypted byte."""
+    b = int(encrypted_hex.pop(0), 16)
+    return (~(b ^ _MAGIC)) & 0xFF
