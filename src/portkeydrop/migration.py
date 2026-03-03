@@ -8,6 +8,7 @@ from pathlib import Path
 
 MIGRATION_ITEMS: list[tuple[str, str]] = [
     ("Sites & connections", "sites.json"),
+    ("Saved passwords (encrypted vault)", "vault.enc"),
     ("Known SSH hosts", "known_hosts"),
     ("App settings", "settings.json"),
 ]
