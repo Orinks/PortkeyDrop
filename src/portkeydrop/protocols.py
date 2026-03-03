@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
 
 if TYPE_CHECKING:
@@ -426,7 +426,9 @@ class SFTPClient(TransferClient):
                 # Use default known_hosts (system files)
                 logger.debug("SFTP host key policy: strict (system known_hosts)")
             elif self._info.host_key_policy == HostKeyPolicy.PROMPT:
-                known_hosts = Path.home() / ".portkeydrop" / "known_hosts"
+                from portkeydrop.portable import get_config_dir
+
+                known_hosts = get_config_dir() / "known_hosts"
                 known_hosts.parent.mkdir(parents=True, exist_ok=True)
                 if known_hosts.exists():
                     connect_kwargs["known_hosts"] = str(known_hosts)
