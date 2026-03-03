@@ -22,15 +22,11 @@ def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str
     data = key + password
 
     def enc(v: int) -> str:
-        """Encode header byte (flag, skip, length)."""
-        x = (v ^ _MAGIC) & 0xFF
-        return f"{(x >> 4):02x}{(x & 0xF):02x}"
+        """Encode one WinSCP-obfuscated byte as two hex chars."""
+        x = (~v & 0xFF) ^ _MAGIC
+        return f"{x:02X}"
 
-    def enc_data(v: int) -> str:
-        """Encode data character byte."""
-        return f"{(v >> 4):02x}{(v & 0xF):02x}"
-
-    return enc(_MAGIC) + enc(0) + enc(len(data)) + "".join(enc_data(ord(c)) for c in data)
+    return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
 
 
 def test_parse_winscp_ini_fixture(tmp_path):
