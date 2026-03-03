@@ -22,19 +22,19 @@ def test_parse_winscp_ini_fixture():
     first = sites[0]
     assert first.name == "Prod Server"
     assert first.protocol == "sftp"
-    assert first.host == "sftp.example.com"
+    assert first.host == "testhost.test"
     assert first.port == 22
-    assert first.username == "alice"
-    assert first.password == "s3cr3t"
+    assert first.username == "testuser"
+    assert first.password == "testpass"
     assert first.initial_dir == "/home/alice"
     assert first.key_path == "C:\\keys\\id_ed25519.ppk"
 
     second = sites[1]
     assert second.name == "FTP Server"
     assert second.protocol == "ftp"
-    assert second.host == "ftp.example.com"
+    assert second.host == "host.test"
     assert second.port == 21
-    assert second.password == "hunter2"
+    assert second.password == "mypassword"
 
 
 def test_detect_default_path_returns_sentinel_when_registry_available():
@@ -173,20 +173,20 @@ def test_decode_name_backslash():
 def test_decrypt_winscp_password_known_value():
     """Decrypt a known WinSCP-encrypted password."""
     encrypted = (
-        "00000A030B080601060C0609060306050703060607040700"
-        "020E060507080601060D0700060C0605020E0603060F060D"
-        "070303030603070203030704"
+        "00000A030B0E070406050703070407050703060507020704"
+        "0605070307040608060F07030704020E0704060507030704"
+        "07040605070307040700060107030703"
     )
-    assert _decrypt_winscp_password("alice", "sftp.example.com", encrypted) == "s3cr3t"
+    assert _decrypt_winscp_password("testuser", "testhost.test", encrypted) == "testpass"
 
 
 def test_decrypt_winscp_password_different_credentials():
     encrypted = (
-        "00000A030B0A0602060F0602060607040700020E06050708"
-        "0601060D0700060C0605020E0603060F060D0608070506"
-        "0E0704060507020302"
+        "00000A030B0407050703060507020608060F07030704020E"
+        "0704060507030704060D070907000601070307030707060F"
+        "07020604"
     )
-    assert _decrypt_winscp_password("bob", "ftp.example.com", encrypted) == "hunter2"
+    assert _decrypt_winscp_password("user", "host.test", encrypted) == "mypassword"
 
 
 def test_safe_decrypt_empty_password():

@@ -1,0 +1,10 @@
+version: 2
+ignore-paths:
+  - "tests/**"
+  - "tests/fixtures/**"
+ignored-detectors:
+  - name: "Generic Password"
+  - name: "Generic High Entropy Secret"
+ignored-matches:
+  - name: "WinSCP test fixture obfuscated passwords"
+    match: "00000A030B"
