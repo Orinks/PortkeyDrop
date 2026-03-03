@@ -158,14 +158,25 @@ class SiteManagerDialog(wx.Dialog):
         """Toggle password field between masked and plain text."""
         current_value = self.password_text.GetValue()
         is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
-        sizer_item = self.password_text.GetContainingSizer()
+        parent = self.password_text.GetParent()
+        row_sizer = self.password_text.GetContainingSizer()
+
         new_style = 0 if is_masked else wx.TE_PASSWORD
-        new_ctrl = wx.TextCtrl(self, style=new_style)
+        new_ctrl = wx.TextCtrl(parent, style=new_style)
         new_ctrl.SetName("Password")
         new_ctrl.SetValue(current_value)
 
-        if sizer_item:
-            sizer_item.Replace(self.password_text, new_ctrl)
+        if row_sizer:
+            item = row_sizer.GetItem(self.password_text)
+            proportion = item.GetProportion() if item else 1
+            flags = item.GetFlag() if item else wx.EXPAND
+            border = item.GetBorder() if item else 0
+            index = row_sizer.GetItemIndex(self.password_text)
+            row_sizer.Detach(self.password_text)
+            if index >= 0:
+                row_sizer.Insert(index, new_ctrl, proportion, flags, border)
+            else:
+                row_sizer.Insert(0, new_ctrl, proportion, flags, border)
 
         self.password_text.Destroy()
         self.password_text = new_ctrl
@@ -173,6 +184,7 @@ class SiteManagerDialog(wx.Dialog):
         self.show_password_btn.SetName("Hide password" if is_masked else "Show password")
         self.Layout()
         new_ctrl.SetFocus()
+        new_ctrl.SetInsertionPointEnd()
 
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
