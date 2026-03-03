@@ -257,17 +257,8 @@ class TestWinSCPRegistrySentinel:
         from portkeydrop.importers import WINSCP_REGISTRY_SENTINEL
         from portkeydrop.importers.models import ImportedSite
 
-        from portkeydrop.importers import ImportSource
-
-        with patch(
-            "portkeydrop.dialogs.import_connections.available_sources",
-            return_value=[
-                ImportSource("winscp", "WinSCP"),
-                ImportSource("from_file", "From file..."),
-            ],
-        ):
-            dlg = DialogCls(None)
-        dlg.source_radio.SetSelection(0)  # WinSCP in filtered list
+        dlg = DialogCls(None)
+        dlg.source_radio.SetSelection(1)  # WinSCP
         dlg.path_text.SetValue(WINSCP_REGISTRY_SENTINEL)
 
         fake_site = ImportedSite(name="test", protocol="sftp", host="example.com", port=22)
@@ -279,33 +270,3 @@ class TestWinSCPRegistrySentinel:
 
         assert result is True
         mock_load.assert_called_once_with("winscp", None)
-
-
-class TestAvailableSourceIndexMapping:
-    """Selection index should map against available (filtered) source list."""
-
-    def test_autodetect_uses_filtered_source_list(self, monkeypatch):
-        """If only WinSCP + From file are available, index 0 must map to WinSCP."""
-        DialogCls = _load_dialog(monkeypatch)
-        from portkeydrop.importers import ImportSource
-
-        with patch(
-            "portkeydrop.dialogs.import_connections.available_sources",
-            return_value=[
-                ImportSource("winscp", "WinSCP"),
-                ImportSource("from_file", "From file..."),
-            ],
-        ):
-            dlg = DialogCls(None)
-
-        # First choice in filtered list is WinSCP, not FileZilla.
-        dlg.source_radio.SetSelection(0)
-
-        with patch(
-            "portkeydrop.dialogs.import_connections.detect_default_path",
-            return_value="/fake/WinSCP.ini",
-        ) as mock_detect:
-            dlg._on_autodetect(_CommandEvent())
-
-        mock_detect.assert_called_once_with("winscp")
-        assert dlg.path_text.GetValue() == "/fake/WinSCP.ini"
