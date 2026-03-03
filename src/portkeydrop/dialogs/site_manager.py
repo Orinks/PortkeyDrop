@@ -20,6 +20,7 @@ class SiteManagerDialog(wx.Dialog):
         self._site_manager = site_manager
         self._selected_site: Site | None = None
         self._connect_requested = False
+        self._password_visible = False
         self._build_ui()
         self._refresh_site_list()
         self.SetName("Site Manager Dialog")
@@ -157,13 +158,18 @@ class SiteManagerDialog(wx.Dialog):
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:
         """Toggle password field between masked and plain text."""
         current_value = self.password_text.GetValue()
-        is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
+        # Track visibility explicitly; style bit checks can be unreliable on some wx builds.
+        # Fallback to style bit when tests construct dialog without __init__.
+        if not hasattr(self, "_password_visible"):
+            is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
+            self._password_visible = not is_masked
+        show_password = not self._password_visible
         parent = (
             self.password_text.GetParent() if hasattr(self.password_text, "GetParent") else self
         )
         row_sizer = self.password_text.GetContainingSizer()
 
-        new_style = 0 if is_masked else wx.TE_PASSWORD
+        new_style = 0 if show_password else wx.TE_PASSWORD
         new_ctrl = wx.TextCtrl(parent, style=new_style)
         new_ctrl.SetName("Password")
         new_ctrl.SetValue(current_value)
@@ -189,8 +195,9 @@ class SiteManagerDialog(wx.Dialog):
 
         self.password_text.Destroy()
         self.password_text = new_ctrl
-        self.show_password_btn.SetLabel("H&ide" if is_masked else "S&how")
-        self.show_password_btn.SetName("Hide password" if is_masked else "Show password")
+        self._password_visible = show_password
+        self.show_password_btn.SetLabel("H&ide" if show_password else "S&how")
+        self.show_password_btn.SetName("Hide password" if show_password else "Show password")
         self.Layout()
         new_ctrl.SetFocus()
         if hasattr(new_ctrl, "SetInsertionPointEnd"):
