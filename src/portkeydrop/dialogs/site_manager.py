@@ -198,6 +198,14 @@ class SiteManagerDialog(wx.Dialog):
         self._password_visible = show_password
         self.show_password_btn.SetLabel("H&ide" if show_password else "S&how")
         self.show_password_btn.SetName("Hide password" if show_password else "Show password")
+
+        # Keep tab order stable: password field should stay before Show/Hide button.
+        if hasattr(new_ctrl, "MoveBeforeInTabOrder"):
+            try:
+                new_ctrl.MoveBeforeInTabOrder(self.show_password_btn)
+            except Exception:
+                pass
+
         self.Layout()
         new_ctrl.SetFocus()
         if hasattr(new_ctrl, "SetInsertionPointEnd"):
