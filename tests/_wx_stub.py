@@ -23,6 +23,9 @@ class _FakeFrame:
     def SetSizer(self, *_args, **_kwargs) -> None:
         pass
 
+    def SetAcceleratorTable(self, table) -> None:
+        self._accelerator_table = table
+
     def CreateStatusBar(self, *args, **kwargs):
         status = MagicMock(SetStatusText=MagicMock())
         self.status_bar = status
@@ -120,6 +123,9 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.WXK_BACK = 513
     fake_wx.WXK_DELETE = 514
     fake_wx.WXK_F2 = 515
+    fake_wx.WXK_F6 = 516
+    fake_wx.ACCEL_NORMAL = 1
+    fake_wx.ACCEL_CTRL = 2
     fake_wx.ID_OK = 100
     fake_wx.OK = 100
     fake_wx.YES = 101
@@ -159,6 +165,8 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
 
     fake_wx.Dialog = _SimpleWidget
     fake_wx.TextEntryDialog = lambda *args, **kwargs: _SimpleWidget()
+    fake_wx.AcceleratorEntry = lambda flags, key_code, command: (flags, key_code, command)
+    fake_wx.AcceleratorTable = lambda entries: tuple(entries)
 
     fake_adv = types.ModuleType("wx.adv")
 
