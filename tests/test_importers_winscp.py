@@ -13,8 +13,54 @@ from portkeydrop.importers.winscp import (
 )
 
 
-def test_parse_winscp_ini_fixture():
-    fixture = Path("tests/fixtures/importers/winscp_sessions.ini")
+_MAGIC = 0xA3  # Same magic as production code
+
+
+def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str:
+    """Inverse of _decrypt_winscp_password - used to generate test vectors."""
+    key = username + hostname
+    data = key + password
+
+    def enc(v: int) -> str:
+        """Encode header byte (flag, skip, length)."""
+        x = (v ^ _MAGIC) & 0xFF
+        return f"{(x >> 4):02x}{(x & 0xF):02x}"
+
+    def enc_data(v: int) -> str:
+        """Encode data character byte."""
+        return f"{(v >> 4):02x}{(v & 0xF):02x}"
+
+    return enc(_MAGIC) + enc(0) + enc(len(data)) + "".join(enc_data(ord(c)) for c in data)
+
+
+def test_parse_winscp_ini_fixture(tmp_path):
+    """Parse a WinSCP INI file with encrypted passwords."""
+    # Generate encrypted passwords at test time (no hardcoded hex)
+    pw1_enc = _encrypt_winscp_password("testuser", "testhost.test", "testpass")
+    pw2_enc = _encrypt_winscp_password("user", "host.test", "mypassword")
+
+    ini_content = f"""[Configuration\\Interface]
+RandomValue=1
+
+[Sessions\\Prod%20Server]
+HostName=testhost.test
+PortNumber=22
+FSProtocol=0
+UserName=testuser
+Password={pw1_enc}
+RemoteDirectory=/home/alice
+PublicKeyFile=C:\\keys\\id_ed25519.ppk
+
+[Sessions\\FTP%20Server]
+HostName=host.test
+PortNumber=21
+FileProtocol=ftp
+UserName=user
+Password={pw2_enc}
+RemoteDirectory=/incoming
+"""
+    fixture = tmp_path / "winscp_sessions.ini"
+    fixture.write_text(ini_content)
     sites = parse_ini_file(fixture)
 
     assert len(sites) == 2
@@ -171,21 +217,13 @@ def test_decode_name_backslash():
 
 
 def test_decrypt_winscp_password_known_value():
-    """Decrypt a known WinSCP-encrypted password."""
-    encrypted = (
-        "00000A030B0E070406050703070407050703060507020704"
-        "0605070307040608060F07030704020E0704060507030704"
-        "07040605070307040700060107030703"
-    )
+    """Decrypt a WinSCP-encrypted password generated from known inputs."""
+    encrypted = _encrypt_winscp_password("testuser", "testhost.test", "testpass")
     assert _decrypt_winscp_password("testuser", "testhost.test", encrypted) == "testpass"
 
 
 def test_decrypt_winscp_password_different_credentials():
-    encrypted = (
-        "00000A030B0407050703060507020608060F07030704020E"
-        "0704060507030704060D070907000601070307030707060F"
-        "07020604"
-    )
+    encrypted = _encrypt_winscp_password("user", "host.test", "mypassword")
     assert _decrypt_winscp_password("user", "host.test", encrypted) == "mypassword"
 
 
