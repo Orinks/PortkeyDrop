@@ -152,6 +152,18 @@ def test_detect_protocol_numeric_ftp():
     assert _detect_protocol({"FSProtocol": "5", "FileProtocol": "", "Ftps": ""}) == "ftp"
 
 
+def test_parse_ini_decodes_url_encoded_key_path(tmp_path):
+    from portkeydrop.importers.winscp import parse_ini_file
+
+    ini = tmp_path / "w.ini"
+    ini.write_text(
+        "[Sessions\\H]\nHostName=h.com\nPortNumber=22\nUserName=u\n"
+        "PublicKeyFile=C%3A%5CUsers%5CJosh%5Ctest.ppk\n"
+    )
+    site = parse_ini_file(ini)[0]
+    assert site.key_path == "C:\\Users\\Josh\\test.ppk"
+
+
 def test_decode_name_url_encoded():
     from portkeydrop.importers.winscp import _decode_name
 

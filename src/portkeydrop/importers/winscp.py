@@ -52,7 +52,7 @@ def parse_ini_file(path: Path) -> list[ImportedSite]:
 
         username = cfg.get("UserName", "").strip()
         initial_dir = cfg.get("RemoteDirectory", "").strip() or "/"
-        key_path = cfg.get("PublicKeyFile", "").strip()
+        key_path = unquote(cfg.get("PublicKeyFile", "").strip())
         name = _decode_name(section.removeprefix("Sessions\\"))
 
         sites.append(
@@ -107,7 +107,7 @@ def parse_registry_sessions() -> list[ImportedSite]:
 
                     username = values.get("UserName", "").strip()
                     initial_dir = values.get("RemoteDirectory", "").strip() or "/"
-                    key_path_value = values.get("PublicKeyFile", "").strip()
+                    key_path_value = unquote(values.get("PublicKeyFile", "").strip())
 
                     sites.append(
                         ImportedSite(
