@@ -143,6 +143,23 @@ def install_dependencies() -> None:
         print("Installing Pillow for icon generation...")
         run_command([sys.executable, "-m", "pip", "install", "Pillow"])
 
+    # Check for asyncssh (required at runtime for SFTP connections)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("asyncssh"):
+            import asyncssh
+
+            print(f"✓ asyncssh {getattr(asyncssh, '__version__', 'unknown')} found")
+        else:
+            raise ImportError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing required dependency: asyncssh. "
+            "Install it in the project env before building (e.g. 'uv add --dev asyncssh' "
+            "or 'uv pip install asyncssh')."
+        ) from exc
+
 
 def build_pyinstaller() -> bool:
     """Build the application with PyInstaller."""
