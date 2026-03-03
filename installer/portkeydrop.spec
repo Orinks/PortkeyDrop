@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import tomllib
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # Determine paths
 SPEC_DIR = Path(SPECPATH).resolve()
@@ -39,8 +39,14 @@ ICON_PATH = str(ICON_PATH) if ICON_PATH.exists() else None
 
 # Data files to bundle (only if resources dir exists)
 datas = []
+binaries = []
 if RESOURCES_DIR.exists():
     datas.append((str(RESOURCES_DIR), "portkeydrop/resources"))
+
+# Pull full asyncssh package metadata/submodules/binaries for frozen builds
+asyncssh_datas, asyncssh_binaries, asyncssh_hiddenimports = collect_all("asyncssh")
+datas += asyncssh_datas
+binaries += asyncssh_binaries
 
 # Hidden imports for wxPython and other dynamic imports
 hiddenimports = [
@@ -57,6 +63,7 @@ hiddenimports = [
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
     *collect_submodules("asyncssh"),
+    *asyncssh_hiddenimports,
     "prismatoid",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
@@ -84,7 +91,7 @@ excludes = [
 a = Analysis(
     [str(SRC_DIR / "portkeydrop" / "main.py")],
     pathex=[str(SRC_DIR)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
