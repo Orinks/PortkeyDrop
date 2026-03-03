@@ -31,15 +31,20 @@ class PropertiesDialog(wx.Dialog):
             ("Owner:", self._file.owner or "Unknown"),
         ]
 
+        self._first_value_ctrl = None
         for label_text, value in fields:
             lbl = wx.StaticText(self, label=label_text)
             val = wx.TextCtrl(self, value=value, style=wx.TE_READONLY)
             val.SetName(label_text.rstrip(":"))
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(val, 1, wx.EXPAND)
+            if self._first_value_ctrl is None:
+                self._first_value_ctrl = val
 
         sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 12)
         btn = self.CreateStdDialogButtonSizer(wx.OK)
         sizer.Add(btn, 0, wx.ALL | wx.EXPAND, 8)
         self.SetSizer(sizer)
         self.Fit()
+        if self._first_value_ctrl:
+            self._first_value_ctrl.SetFocus()

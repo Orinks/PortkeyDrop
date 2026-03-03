@@ -141,18 +141,32 @@ class _BoxSizer(_Sizer):
 class _ListBox(_Window):
     def __init__(self, *a, **kw):
         self._items = []
+        self._selection = -1
+        self._focused = False
 
     def Clear(self):
         self._items = []
+        self._selection = -1
 
     def Append(self, label, data=None):
         self._items.append((label, data))
 
     def GetSelection(self):
-        return -1
+        return self._selection
+
+    def SetSelection(self, i):
+        self._selection = i
+
+    def GetCount(self):
+        return len(self._items)
 
     def GetClientData(self, i):
+        if 0 <= i < len(self._items):
+            return self._items[i][1]
         return None
+
+    def SetFocus(self):
+        self._focused = True
 
     def Bind(self, *a, **kw):
         pass
@@ -192,8 +206,11 @@ def _make_fake_wx():
     wx.FD_OPEN = 512
     wx.FD_FILE_MUST_EXIST = 1024
     wx.NOT_FOUND = -1
+    wx.ID_CANCEL = 5101
+    wx.WXK_ESCAPE = 27
     wx.EVT_BUTTON = object()
     wx.EVT_LISTBOX = object()
+    wx.EVT_CHAR_HOOK = object()
     wx.MessageBox = MagicMock(return_value=wx.OK)
     return wx
 
@@ -277,3 +294,104 @@ class TestSiteManagerDialogInit:
         assert dlg.show_password_btn._label == "S&how"
         assert dlg.show_password_btn._name == "Show password"
         assert hasattr(dlg, "password_text")
+
+
+class TestEscapeKeyHandler:
+    """Issue #34: SiteManagerDialog should close on Escape."""
+
+    def test_escape_calls_end_modal_cancel(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg = _make_dialog(mod, fake_wx)
+        dlg.EndModal = MagicMock()
+
+        event = MagicMock()
+        event.GetKeyCode.return_value = fake_wx.WXK_ESCAPE
+
+        mod.SiteManagerDialog._on_char_hook(dlg, event)
+
+        dlg.EndModal.assert_called_once_with(fake_wx.ID_CANCEL)
+
+    def test_non_escape_key_skips(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg = _make_dialog(mod, fake_wx)
+        dlg.EndModal = MagicMock()
+
+        event = MagicMock()
+        event.GetKeyCode.return_value = 65  # 'A'
+
+        mod.SiteManagerDialog._on_char_hook(dlg, event)
+
+        dlg.EndModal.assert_not_called()
+        event.Skip.assert_called_once()
+
+
+class TestRemoveFocusManagement:
+    """Issue #39: Focus should move to next item after removing a site."""
+
+    def _make_dialog_with_sites(self, mod, fake_wx, site_names):
+        from portkeydrop.sites import Site
+
+        sites = [Site(name=n) for n in site_names]
+        site_manager = MagicMock()
+        site_manager.sites = list(sites)
+
+        def remove_site(site_id):
+            site_manager.sites = [s for s in site_manager.sites if s.id != site_id]
+
+        site_manager.remove = remove_site
+
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg._site_manager = site_manager
+        dlg._selected_site = None
+        dlg._connect_requested = False
+        dlg.site_list = _ListBox()
+        dlg.password_text = _TextCtrl()
+        dlg.show_password_btn = _Button()
+        dlg.Layout = MagicMock()
+
+        # Populate the list
+        for s in sites:
+            dlg.site_list.Append(s.name, s.id)
+
+        return dlg, sites
+
+    def test_remove_middle_item_focuses_next(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["A", "B", "C"])
+
+        # Select "B" (index 1)
+        dlg.site_list.SetSelection(1)
+        dlg._selected_site = sites[1]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # Should focus on item at index 1 (now "C")
+        assert dlg.site_list._selection == 1
+        assert dlg.site_list._focused is True
+
+    def test_remove_last_item_focuses_previous(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["A", "B", "C"])
+
+        # Select "C" (index 2)
+        dlg.site_list.SetSelection(2)
+        dlg._selected_site = sites[2]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # Should focus on last remaining item (index 1, "B")
+        assert dlg.site_list._selection == 1
+        assert dlg.site_list._focused is True
+
+    def test_remove_only_item_focuses_list(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["A"])
+
+        dlg.site_list.SetSelection(0)
+        dlg._selected_site = sites[0]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # No items left, focus should go to the list itself
+        assert dlg.site_list.GetCount() == 0
+        assert dlg.site_list._focused is True
