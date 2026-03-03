@@ -56,3 +56,15 @@ def test_migrate_files_copies_selected_files(tmp_path: Path) -> None:
 
     assert (portable_dir / "sites.json").read_text() == '{"sites": [1]}'
     assert not (portable_dir / "known_hosts").exists()
+
+
+def test_migrate_files_ignores_missing_candidates(tmp_path: Path) -> None:
+    standard_dir = tmp_path / "standard"
+    portable_dir = tmp_path / "portable"
+    standard_dir.mkdir()
+    (standard_dir / "sites.json").write_text('{"sites": [2]}')
+
+    migrate_files(["missing.json", "sites.json"], standard_dir, portable_dir)
+
+    assert (portable_dir / "sites.json").read_text() == '{"sites": [2]}'
+    assert not (portable_dir / "missing.json").exists()
