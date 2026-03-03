@@ -11,7 +11,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from portkeydrop.portable import get_config_dir
+from portkeydrop.portable import get_config_dir, is_portable_mode
 from portkeydrop.protocols import ConnectionInfo, Protocol
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,9 @@ class _VaultStore:
     def get(self, key: str) -> str:
         return self._data.get(key, "")
 
+    def is_missing_or_empty(self) -> bool:
+        return (not self._path.exists()) or (not self._data)
+
     def set(self, key: str, value: str) -> None:
         self._data[key] = value
         self._save()
@@ -107,11 +110,21 @@ class _VaultStore:
 
 
 class _PasswordBackend:
-    """Three-tier password storage: keyring > encrypted vault > no storage."""
+    """Three-tier password storage: keyring > encrypted vault > no storage.
+
+    In portable mode we prefer the encrypted vault so passwords travel with the
+    app's local data directory.
+    """
 
     def __init__(self, config_dir: Path) -> None:
         self._vault: _VaultStore | None = None
-        if _has_keyring:
+
+        # Portable builds should keep credentials in local data/ (vault.enc)
+        # instead of OS keyring so the app is truly portable.
+        if is_portable_mode() and _has_fernet:
+            self._tier = "vault"
+            self._vault = _VaultStore(config_dir / "vault.enc")
+        elif _has_keyring:
             self._tier = "keyring"
         elif _has_fernet:
             self._tier = "vault"
@@ -126,6 +139,15 @@ class _PasswordBackend:
     @property
     def can_store(self) -> bool:
         return self._tier != "none"
+
+    @property
+    def is_vault_tier(self) -> bool:
+        return self._tier == "vault" and self._vault is not None
+
+    def vault_missing_or_empty(self) -> bool:
+        if not self._vault:
+            return True
+        return self._vault.is_missing_or_empty()
 
     def store(self, site_id: str, password: str) -> None:
         if not password:
@@ -149,6 +171,16 @@ class _PasswordBackend:
         elif self._tier == "vault" and self._vault:
             return self._vault.get(site_id)
         return ""
+
+    def retrieve_from_keyring(self, site_id: str) -> str:
+        if not _has_keyring:
+            return ""
+        try:
+            pw = _keyring_mod.get_password(KEYRING_SERVICE, site_id)
+            return pw or ""
+        except Exception as e:
+            logger.warning(f"Keyring retrieve failed: {e}")
+            return ""
 
     def delete(self, site_id: str) -> None:
         if self._tier == "keyring":
@@ -265,3 +297,30 @@ class SiteManager:
             if s.name.lower() == name.lower():
                 return s
         return None
+
+    def should_offer_keyring_to_vault_migration(self) -> bool:
+        if not is_portable_mode():
+            return False
+        if not self._sites:
+            return False
+        if not self._passwords.is_vault_tier:
+            return False
+        if not self._passwords.vault_missing_or_empty():
+            return False
+        return any(self._passwords.retrieve_from_keyring(site.id) for site in self._sites)
+
+    def migrate_keyring_passwords_to_vault(self) -> int:
+        if not self._passwords.is_vault_tier:
+            return 0
+
+        migrated = 0
+        for site in self._sites:
+            keyring_password = self._passwords.retrieve_from_keyring(site.id)
+            if not keyring_password:
+                continue
+            if self._passwords.retrieve(site.id):
+                continue
+            self._passwords.store(site.id, keyring_password)
+            site.password = keyring_password
+            migrated += 1
+        return migrated
