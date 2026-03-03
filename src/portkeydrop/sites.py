@@ -93,6 +93,9 @@ class _VaultStore:
     def get(self, key: str) -> str:
         return self._data.get(key, "")
 
+    def is_missing_or_empty(self) -> bool:
+        return (not self._path.exists()) or (not self._data)
+
     def set(self, key: str, value: str) -> None:
         self._data[key] = value
         self._save()
@@ -137,6 +140,15 @@ class _PasswordBackend:
     def can_store(self) -> bool:
         return self._tier != "none"
 
+    @property
+    def is_vault_tier(self) -> bool:
+        return self._tier == "vault" and self._vault is not None
+
+    def vault_missing_or_empty(self) -> bool:
+        if not self._vault:
+            return True
+        return self._vault.is_missing_or_empty()
+
     def store(self, site_id: str, password: str) -> None:
         if not password:
             return
@@ -159,6 +171,16 @@ class _PasswordBackend:
         elif self._tier == "vault" and self._vault:
             return self._vault.get(site_id)
         return ""
+
+    def retrieve_from_keyring(self, site_id: str) -> str:
+        if not _has_keyring:
+            return ""
+        try:
+            pw = _keyring_mod.get_password(KEYRING_SERVICE, site_id)
+            return pw or ""
+        except Exception as e:
+            logger.warning(f"Keyring retrieve failed: {e}")
+            return ""
 
     def delete(self, site_id: str) -> None:
         if self._tier == "keyring":
@@ -275,3 +297,30 @@ class SiteManager:
             if s.name.lower() == name.lower():
                 return s
         return None
+
+    def should_offer_keyring_to_vault_migration(self) -> bool:
+        if not is_portable_mode():
+            return False
+        if not self._sites:
+            return False
+        if not self._passwords.is_vault_tier:
+            return False
+        if not self._passwords.vault_missing_or_empty():
+            return False
+        return any(self._passwords.retrieve_from_keyring(site.id) for site in self._sites)
+
+    def migrate_keyring_passwords_to_vault(self) -> int:
+        if not self._passwords.is_vault_tier:
+            return 0
+
+        migrated = 0
+        for site in self._sites:
+            keyring_password = self._passwords.retrieve_from_keyring(site.id)
+            if not keyring_password:
+                continue
+            if self._passwords.retrieve(site.id):
+                continue
+            self._passwords.store(site.id, keyring_password)
+            site.password = keyring_password
+            migrated += 1
+        return migrated

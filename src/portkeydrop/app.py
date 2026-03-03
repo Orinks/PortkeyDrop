@@ -1387,6 +1387,25 @@ class PortkeyDropApp(wx.App):
                 finally:
                     dialog.Destroy()
 
+            keyring_migration_marker = portable_dir / ".keyring_migrated"
+            if not keyring_migration_marker.exists():
+                site_manager = SiteManager(config_dir=portable_dir)
+                if site_manager.should_offer_keyring_to_vault_migration():
+                    prompt_message = (
+                        "Portable mode stores saved passwords in a local encrypted vault "
+                        "(vault.enc).\n\n"
+                        "Import passwords from your system keyring into the portable vault?"
+                    )
+                    result = wx.MessageBox(
+                        prompt_message,
+                        "Import Passwords to Portable Vault",
+                        wx.YES_NO | wx.ICON_INFORMATION,
+                    )
+                    if result == wx.YES:
+                        site_manager.migrate_keyring_passwords_to_vault()
+                    keyring_migration_marker.parent.mkdir(parents=True, exist_ok=True)
+                    keyring_migration_marker.touch(exist_ok=True)
+
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)

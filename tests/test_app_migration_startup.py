@@ -32,6 +32,8 @@ def test_on_init_portable_mode_runs_migration_when_user_confirms(tmp_path, app_m
     dialog.ShowModal.return_value = fake_wx.ID_OK
     dialog.get_selected_filenames.return_value = ["sites.json"]
     frame = SimpleNamespace(Show=MagicMock())
+    site_manager = MagicMock()
+    site_manager.should_offer_keyring_to_vault_migration.return_value = False
 
     with (
         patch.object(app, "is_portable_mode", return_value=True),
@@ -41,6 +43,7 @@ def test_on_init_portable_mode_runs_migration_when_user_confirms(tmp_path, app_m
         patch.object(app, "get_migration_candidates", return_value=candidates),
         patch.object(app, "MigrationDialog", return_value=dialog) as migration_dialog_cls,
         patch.object(app, "migrate_files") as migrate_files,
+        patch.object(app, "SiteManager", return_value=site_manager),
         patch.object(app, "MainFrame", return_value=frame),
     ):
         result = app.PortkeyDropApp.OnInit(_app_instance(app))
@@ -60,6 +63,8 @@ def test_on_init_portable_mode_skips_migration_when_user_cancels(tmp_path, app_m
     dialog = MagicMock()
     dialog.ShowModal.return_value = fake_wx.ID_CANCEL
     frame = SimpleNamespace(Show=MagicMock())
+    site_manager = MagicMock()
+    site_manager.should_offer_keyring_to_vault_migration.return_value = False
 
     with (
         patch.object(app, "is_portable_mode", return_value=True),
@@ -69,6 +74,7 @@ def test_on_init_portable_mode_skips_migration_when_user_cancels(tmp_path, app_m
         patch.object(app, "get_migration_candidates", return_value=[("Sites", "sites.json")]),
         patch.object(app, "MigrationDialog", return_value=dialog),
         patch.object(app, "migrate_files") as migrate_files,
+        patch.object(app, "SiteManager", return_value=site_manager),
         patch.object(app, "MainFrame", return_value=frame),
     ):
         result = app.PortkeyDropApp.OnInit(_app_instance(app))
@@ -95,3 +101,75 @@ def test_on_init_non_portable_mode_does_not_show_migration_dialog(app_module):
     migration_dialog.assert_not_called()
     has_candidates.assert_not_called()
     migrate_files.assert_not_called()
+
+
+def test_on_init_prompts_for_keyring_to_vault_migration_and_marks_complete(tmp_path, app_module):
+    app, fake_wx = app_module
+    portable_dir = tmp_path / "portable"
+    portable_dir.mkdir()
+    frame = SimpleNamespace(Show=MagicMock())
+    site_manager = MagicMock()
+    site_manager.should_offer_keyring_to_vault_migration.return_value = True
+
+    with (
+        patch.object(app, "is_portable_mode", return_value=True),
+        patch.object(app, "get_config_dir", return_value=portable_dir),
+        patch.object(app.Path, "home", return_value=tmp_path),
+        patch.object(app, "has_migration_candidates", return_value=False),
+        patch.object(app, "SiteManager", return_value=site_manager),
+        patch.object(app.wx, "MessageBox", return_value=fake_wx.YES) as message_box,
+        patch.object(app, "MainFrame", return_value=frame),
+    ):
+        result = app.PortkeyDropApp.OnInit(_app_instance(app))
+
+    assert result is True
+    message_box.assert_called_once()
+    site_manager.migrate_keyring_passwords_to_vault.assert_called_once()
+    assert (portable_dir / ".keyring_migrated").exists()
+
+
+def test_on_init_decline_keyring_to_vault_migration_still_writes_marker(tmp_path, app_module):
+    app, fake_wx = app_module
+    portable_dir = tmp_path / "portable"
+    portable_dir.mkdir()
+    frame = SimpleNamespace(Show=MagicMock())
+    site_manager = MagicMock()
+    site_manager.should_offer_keyring_to_vault_migration.return_value = True
+
+    with (
+        patch.object(app, "is_portable_mode", return_value=True),
+        patch.object(app, "get_config_dir", return_value=portable_dir),
+        patch.object(app.Path, "home", return_value=tmp_path),
+        patch.object(app, "has_migration_candidates", return_value=False),
+        patch.object(app, "SiteManager", return_value=site_manager),
+        patch.object(app.wx, "MessageBox", return_value=fake_wx.ID_OK),
+        patch.object(app, "MainFrame", return_value=frame),
+    ):
+        result = app.PortkeyDropApp.OnInit(_app_instance(app))
+
+    assert result is True
+    site_manager.migrate_keyring_passwords_to_vault.assert_not_called()
+    assert (portable_dir / ".keyring_migrated").exists()
+
+
+def test_on_init_skips_keyring_prompt_when_marker_exists(tmp_path, app_module):
+    app, _ = app_module
+    portable_dir = tmp_path / "portable"
+    portable_dir.mkdir()
+    (portable_dir / ".keyring_migrated").touch()
+    frame = SimpleNamespace(Show=MagicMock())
+
+    with (
+        patch.object(app, "is_portable_mode", return_value=True),
+        patch.object(app, "get_config_dir", return_value=portable_dir),
+        patch.object(app.Path, "home", return_value=tmp_path),
+        patch.object(app, "has_migration_candidates", return_value=False),
+        patch.object(app, "SiteManager") as site_manager_cls,
+        patch.object(app.wx, "MessageBox") as message_box,
+        patch.object(app, "MainFrame", return_value=frame),
+    ):
+        result = app.PortkeyDropApp.OnInit(_app_instance(app))
+
+    assert result is True
+    site_manager_cls.assert_not_called()
+    message_box.assert_not_called()
