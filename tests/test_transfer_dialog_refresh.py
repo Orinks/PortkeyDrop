@@ -50,7 +50,9 @@ def transfer_module(monkeypatch):
     return module, fake_wx
 
 
-def _make_transfer(module, transfer_id: int, path: str, direction="download", progress=0, status="queued"):
+def _make_transfer(
+    module, transfer_id: int, path: str, direction="download", progress=0, status="queued"
+):
     item = module.TransferItem()
     item.id = transfer_id
     item.remote_path = path
@@ -126,7 +128,9 @@ def test_refresh_updates_only_changed_existing_cells(transfer_module):
 def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
     module, fake_wx = transfer_module
     dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    item = _make_transfer(module, 11, "/tmp/same.txt", "download", progress=50, status="in_progress")
+    item = _make_transfer(
+        module, 11, "/tmp/same.txt", "download", progress=50, status="in_progress"
+    )
     transfer_manager.transfers = [item]
     transfer_list.GetItemCount.return_value = 1
     current_values = ["same.txt", "download", "50%", "50%"]
