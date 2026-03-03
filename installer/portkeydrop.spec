@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import tomllib
+from PyInstaller.utils.hooks import collect_submodules
 
 # Determine paths
 SPEC_DIR = Path(SPECPATH).resolve()
@@ -55,7 +56,7 @@ hiddenimports = [
     "keyring.backends.Windows",
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
-    "asyncssh",
+    *collect_submodules("asyncssh"),
     "prismatoid",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
