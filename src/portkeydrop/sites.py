@@ -11,11 +11,12 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from portkeydrop.portable import get_config_dir
 from portkeydrop.protocols import ConnectionInfo, Protocol
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_DIR = Path.home() / ".portkeydrop"
+DEFAULT_CONFIG_DIR = get_config_dir()
 KEYRING_SERVICE = "portkeydrop"
 
 # --- Tier 1: System keyring ---

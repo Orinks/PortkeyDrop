@@ -28,6 +28,12 @@ from portkeydrop.local_files import (
     parent_local,
     rename_local,
 )
+from portkeydrop.migration import (
+    get_migration_candidates,
+    has_migration_candidates,
+    migrate_files,
+)
+from portkeydrop.portable import get_config_dir, is_portable_mode
 from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
 from portkeydrop.settings import (
     load_settings,
@@ -36,6 +42,7 @@ from portkeydrop.settings import (
     update_last_local_folder,
 )
 from portkeydrop.sites import Site, SiteManager
+from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 
 logger = logging.getLogger(__name__)
 
@@ -1363,6 +1370,23 @@ class PortkeyDropApp(wx.App):
     """Main wxPython application."""
 
     def OnInit(self) -> bool:
+        if is_portable_mode():
+            portable_dir = get_config_dir()
+            standard_dir = Path.home() / ".portkeydrop"
+            is_fresh_portable_dir = (
+                not (portable_dir / "sites.json").exists()
+                or not (portable_dir / "known_hosts").exists()
+            )
+            if is_fresh_portable_dir and has_migration_candidates(portable_dir, standard_dir):
+                candidates = get_migration_candidates(standard_dir)
+                dialog = MigrationDialog(None, candidates)
+                try:
+                    if dialog.ShowModal() == wx.ID_OK:
+                        selected_files = dialog.get_selected_filenames()
+                        migrate_files(selected_files, standard_dir, portable_dir)
+                finally:
+                    dialog.Destroy()
+
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)
