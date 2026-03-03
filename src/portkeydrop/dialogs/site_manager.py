@@ -158,7 +158,9 @@ class SiteManagerDialog(wx.Dialog):
         """Toggle password field between masked and plain text."""
         current_value = self.password_text.GetValue()
         is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
-        parent = self.password_text.GetParent()
+        parent = (
+            self.password_text.GetParent() if hasattr(self.password_text, "GetParent") else self
+        )
         row_sizer = self.password_text.GetContainingSizer()
 
         new_style = 0 if is_masked else wx.TE_PASSWORD
@@ -167,16 +169,23 @@ class SiteManagerDialog(wx.Dialog):
         new_ctrl.SetValue(current_value)
 
         if row_sizer:
-            item = row_sizer.GetItem(self.password_text)
-            proportion = item.GetProportion() if item else 1
-            flags = item.GetFlag() if item else wx.EXPAND
-            border = item.GetBorder() if item else 0
-            index = row_sizer.GetItemIndex(self.password_text)
-            row_sizer.Detach(self.password_text)
-            if index >= 0:
-                row_sizer.Insert(index, new_ctrl, proportion, flags, border)
-            else:
-                row_sizer.Insert(0, new_ctrl, proportion, flags, border)
+            # Prefer preserving full layout metadata when available (real wx).
+            if all(
+                hasattr(row_sizer, name) for name in ("GetItem", "GetItemIndex", "Detach", "Insert")
+            ):
+                item = row_sizer.GetItem(self.password_text)
+                proportion = item.GetProportion() if item else 1
+                flags = item.GetFlag() if item else wx.EXPAND
+                border = item.GetBorder() if item else 0
+                index = row_sizer.GetItemIndex(self.password_text)
+                row_sizer.Detach(self.password_text)
+                if index >= 0:
+                    row_sizer.Insert(index, new_ctrl, proportion, flags, border)
+                else:
+                    row_sizer.Insert(0, new_ctrl, proportion, flags, border)
+            elif hasattr(row_sizer, "Replace"):
+                # Fallback for test stubs/minimal sizers.
+                row_sizer.Replace(self.password_text, new_ctrl)
 
         self.password_text.Destroy()
         self.password_text = new_ctrl
@@ -184,7 +193,8 @@ class SiteManagerDialog(wx.Dialog):
         self.show_password_btn.SetName("Hide password" if is_masked else "Show password")
         self.Layout()
         new_ctrl.SetFocus()
-        new_ctrl.SetInsertionPointEnd()
+        if hasattr(new_ctrl, "SetInsertionPointEnd"):
+            new_ctrl.SetInsertionPointEnd()
 
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
