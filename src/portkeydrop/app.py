@@ -174,35 +174,40 @@ class MainFrame(wx.Frame):
         toolbar_panel.SetName("Quick Connect Toolbar")
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        lbl = wx.StaticText(toolbar_panel, label="Protocol:")
+        protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
         self.tb_protocol.SetName("Protocol")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        protocol_lbl.SetLabelFor(self.tb_protocol)
+        sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Host:")
+        host_lbl = wx.StaticText(toolbar_panel, label="&Host")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
         self.tb_host.SetName("Host")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        host_lbl.SetLabelFor(self.tb_host)
+        sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Port:")
+        port_lbl = wx.StaticText(toolbar_panel, label="P&ort")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
         self.tb_port.SetName("Port")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        port_lbl.SetLabelFor(self.tb_port)
+        sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="User:")
+        username_lbl = wx.StaticText(toolbar_panel, label="&Username")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
         self.tb_username.SetName("Username")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        username_lbl.SetLabelFor(self.tb_username)
+        sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Password:")
+        password_lbl = wx.StaticText(toolbar_panel, label="Pass&word")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
         self.tb_password.SetName("Password")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        password_lbl.SetLabelFor(self.tb_password)
+        sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
@@ -1301,6 +1306,8 @@ class MainFrame(wx.Frame):
 
     def _on_transfer_update(self, event) -> None:
         latest_status_message = None
+        refresh_local_files = False
+        refresh_remote_files = False
         for transfer in self._transfer_manager.transfers:
             current_state = transfer.status.value
             previous_state = self._transfer_state_by_id.get(transfer.id)
@@ -1316,10 +1323,19 @@ class MainFrame(wx.Frame):
                 latest_status_message = f"{direction_label} in progress..."
             elif transfer.status == TransferStatus.COMPLETED:
                 latest_status_message = f"{direction_label} complete."
+                if transfer.direction == TransferDirection.DOWNLOAD:
+                    refresh_local_files = True
+                else:
+                    refresh_remote_files = True
             elif transfer.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
             elif transfer.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+
+        if refresh_local_files:
+            self._refresh_local_files()
+        if refresh_remote_files:
+            self._refresh_remote_files()
 
         if latest_status_message:
             current_path = self._client.cwd if self._client and self._client.connected else ""

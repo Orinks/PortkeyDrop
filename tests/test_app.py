@@ -354,6 +354,80 @@ def test_on_transfer_update_reports_latest_status(app_module):
     frame._update_status.assert_called_once_with("Download complete.", "/remote")
 
 
+def test_on_transfer_update_refreshes_local_files_after_download_complete(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._transfer_manager = MagicMock()
+    download = SimpleNamespace(
+        id=1,
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.COMPLETED,
+    )
+    frame._transfer_manager.transfers = [download]
+    frame._transfer_state_by_id = {}
+    frame._refresh_local_files = MagicMock()
+    frame._refresh_remote_files = MagicMock()
+
+    frame._on_transfer_update(None)
+
+    frame._refresh_local_files.assert_called_once()
+    frame._refresh_remote_files.assert_not_called()
+
+
+def test_on_transfer_update_refreshes_remote_files_after_upload_complete(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._transfer_manager = MagicMock()
+    upload = SimpleNamespace(
+        id=1,
+        direction=app.TransferDirection.UPLOAD,
+        status=app.TransferStatus.COMPLETED,
+    )
+    frame._transfer_manager.transfers = [upload]
+    frame._transfer_state_by_id = {}
+    frame._refresh_local_files = MagicMock()
+    frame._refresh_remote_files = MagicMock()
+
+    frame._on_transfer_update(None)
+
+    frame._refresh_remote_files.assert_called_once()
+    frame._refresh_local_files.assert_not_called()
+
+
+def test_build_toolbar_adds_mnemonics_and_label_associations(app_module):
+    app, fake_wx = app_module
+    created_labels = []
+    fake_wx.EVT_CHOICE = object()
+
+    class _Label:
+        def __init__(self, _parent, label=""):
+            self.label = label
+            self._label_for = None
+            created_labels.append(self)
+
+        def SetLabelFor(self, control):
+            self._label_for = control
+
+    frame = object.__new__(app.MainFrame)
+    with patch.object(fake_wx, "StaticText", side_effect=_Label):
+        app.MainFrame._build_toolbar(frame)
+
+    assert [label.label for label in created_labels[:5]] == [
+        "&Protocol",
+        "&Host",
+        "P&ort",
+        "&Username",
+        "Pass&word",
+    ]
+    assert created_labels[0]._label_for is frame.tb_protocol
+    assert created_labels[1]._label_for is frame.tb_host
+    assert created_labels[2]._label_for is frame.tb_port
+    assert created_labels[3]._label_for is frame.tb_username
+    assert created_labels[4]._label_for is frame.tb_password
+
+
 # ── _refresh_remote_files threading ──────────────────────────────────────────
 
 

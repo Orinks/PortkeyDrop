@@ -432,7 +432,14 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
                 return
             transfers = self._transfer_manager.transfers
             if 0 <= idx < len(transfers):
-                self._transfer_manager.cancel(transfers[idx].id)
+                transfer = transfers[idx]
+                self._transfer_manager.cancel(transfer.id)
+                filename = PurePosixPath(transfer.remote_path).name or os.path.basename(
+                    transfer.local_path
+                )
+                parent = self.GetParent()
+                if parent and hasattr(parent, "_announce") and filename:
+                    parent._announce(f"Cancelled transfer: {filename}")
                 self._refresh()
 
         def _refresh(self):
