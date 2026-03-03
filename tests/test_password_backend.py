@@ -9,10 +9,6 @@ from portkeydrop.sites import _PasswordBackend
 class TestPasswordBackendTiers:
     """Verify the correct storage tier is selected."""
 
-    def setup_method(self, _method):
-        # Per-test monkeypatching handles portable mode explicitly where needed.
-        pass
-
     def test_keyring_tier_selected(self, monkeypatch, tmp_path):
         monkeypatch.setattr(sites_mod, "_has_keyring", True)
         monkeypatch.setattr(sites_mod, "_has_fernet", True)
@@ -23,15 +19,6 @@ class TestPasswordBackendTiers:
     def test_vault_tier_when_no_keyring(self, monkeypatch, tmp_path):
         monkeypatch.setattr(sites_mod, "_has_keyring", False)
         monkeypatch.setattr(sites_mod, "_has_fernet", True)
-        monkeypatch.setattr(sites_mod, "is_portable_mode", lambda: False)
-        backend = _PasswordBackend(tmp_path)
-        assert backend._tier == "vault"
-        assert backend.can_store is True
-
-    def test_portable_mode_prefers_vault_over_keyring(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(sites_mod, "_has_keyring", True)
-        monkeypatch.setattr(sites_mod, "_has_fernet", True)
-        monkeypatch.setattr(sites_mod, "is_portable_mode", lambda: True)
         backend = _PasswordBackend(tmp_path)
         assert backend._tier == "vault"
         assert backend.can_store is True

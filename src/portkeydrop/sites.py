@@ -11,7 +11,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from portkeydrop.portable import get_config_dir, is_portable_mode
+from portkeydrop.portable import get_config_dir
 from portkeydrop.protocols import ConnectionInfo, Protocol
 
 logger = logging.getLogger(__name__)
@@ -107,21 +107,11 @@ class _VaultStore:
 
 
 class _PasswordBackend:
-    """Three-tier password storage: keyring > encrypted vault > no storage.
-
-    In portable mode we prefer the encrypted vault so passwords travel with the
-    app's local data directory.
-    """
+    """Three-tier password storage: keyring > encrypted vault > no storage."""
 
     def __init__(self, config_dir: Path) -> None:
         self._vault: _VaultStore | None = None
-
-        # Portable builds should keep credentials in local data/ (vault.enc)
-        # instead of OS keyring so the app is truly portable.
-        if is_portable_mode() and _has_fernet:
-            self._tier = "vault"
-            self._vault = _VaultStore(config_dir / "vault.enc")
-        elif _has_keyring:
+        if _has_keyring:
             self._tier = "keyring"
         elif _has_fernet:
             self._tier = "vault"
