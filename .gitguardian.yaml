@@ -1,6 +1,15 @@
 version: 2
 ignore-paths:
-  - tests/
+  - "tests/**"
+  - "tests/fixtures/**"
+  - "tests/fixtures/importers/winscp_sessions.ini"
 ignored-detectors:
   - name: "Generic Password"
   - name: "Generic High Entropy Secret"
+ignored-matches:
+  - name: "WinSCP test fixture obfuscated password prefix"
+    match: "00000A030B"
+  - name: "WinSCP fixture testuser@testhost.test"
+    match: "00000A030B0E0704060507030704070507030605070207040605070307040608060F07030704020E070406050703070407040605070307040700060107030703"
+  - name: "WinSCP fixture user@host.test"
+    match: "00000A030B0407050703060507020608060F07030704020E0704060507030704060D070907000601070307030707060F07020604"
