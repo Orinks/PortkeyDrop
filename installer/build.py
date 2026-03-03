@@ -364,6 +364,10 @@ def create_portable_zip() -> bool:
     if Path(f"{zip_path}.zip").exists():
         Path(f"{zip_path}.zip").unlink()
 
+    # Create empty data/ dir to activate portable mode
+    data_dir = source_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+
     # Create zip
     shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
 
