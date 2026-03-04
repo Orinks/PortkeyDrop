@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import tomllib
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
 
 
 # Determine paths
@@ -51,6 +51,14 @@ def collect_optional_submodules(package: str) -> list[str]:
         return []
 
 
+def collect_optional_dynamic_libs(package: str) -> list[tuple[str, str]]:
+    """Collect package dynamic libs when available, otherwise return empty list."""
+    try:
+        return collect_dynamic_libs(package)
+    except Exception:
+        return []
+
+
 # Determine icon path
 ICON_PATH = SPEC_DIR / "app.ico"
 ICON_PATH = str(ICON_PATH) if ICON_PATH.exists() else None
@@ -71,6 +79,9 @@ prism_datas, prism_binaries, prism_hiddenimports = collect_optional_all("prism")
 prismatoid_datas, prismatoid_binaries, prismatoid_hiddenimports = collect_optional_all("prismatoid")
 datas += prism_datas + prismatoid_datas
 binaries += prism_binaries + prismatoid_binaries
+# Mirror AccessiWeather strategy: explicitly collect screen-reader dynamic libs.
+binaries += collect_optional_dynamic_libs("prism")
+binaries += collect_optional_dynamic_libs("prismatoid")
 
 # Hidden imports for wxPython and other dynamic imports
 hiddenimports = [

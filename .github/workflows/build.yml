@@ -97,7 +97,7 @@ jobs:
 
       - name: Validate runtime deps for installer/portable
         run: |
-          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data
+          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --pyz-path build/portkeydrop/PYZ-00.pyz --require-runtime-no-data
 
       - name: Create installer
         shell: cmd
@@ -125,7 +125,7 @@ jobs:
 
       - name: Validate portable ZIP contents
         run: |
-          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data --portable-zip dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip
+          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --pyz-path build/portkeydrop/PYZ-00.pyz --require-runtime-no-data --portable-zip dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip
 
       - uses: actions/upload-artifact@v6
         with:
