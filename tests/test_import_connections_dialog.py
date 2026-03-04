@@ -309,3 +309,69 @@ class TestAvailableSourceIndexMapping:
 
         mock_detect.assert_called_once_with("winscp")
         assert dlg.path_text.GetValue() == "/fake/WinSCP.ini"
+
+
+class TestWinSCPMessaging:
+    """WinSCP errors should include actionable troubleshooting guidance."""
+
+    def test_winscp_no_sites_message_includes_tip(self, monkeypatch):
+        DialogCls = _load_dialog(monkeypatch)
+        from portkeydrop.importers import ImportSource
+
+        with patch(
+            "portkeydrop.dialogs.import_connections.available_sources",
+            return_value=[
+                ImportSource("filezilla", "FileZilla"),
+                ImportSource("winscp", "WinSCP"),
+                ImportSource("from_file", "From file..."),
+            ],
+        ):
+            dlg = DialogCls(None)
+
+        dlg.source_radio.SetSelection(1)  # WinSCP
+        dlg.path_text.SetValue("")
+
+        with (
+            patch(
+                "portkeydrop.dialogs.import_connections.load_from_source",
+                return_value=[],
+            ),
+            patch("portkeydrop.dialogs.import_connections.wx.MessageBox") as mock_message,
+        ):
+            result = dlg._load_preview()
+
+        assert result is False
+        message = mock_message.call_args.args[0]
+        assert "No connections were found" in message
+        assert "[Sessions\\...]" in message
+
+    def test_winscp_parse_error_message_mentions_master_password(self, monkeypatch):
+        DialogCls = _load_dialog(monkeypatch)
+        from portkeydrop.importers import ImportSource
+
+        with patch(
+            "portkeydrop.dialogs.import_connections.available_sources",
+            return_value=[
+                ImportSource("filezilla", "FileZilla"),
+                ImportSource("winscp", "WinSCP"),
+                ImportSource("from_file", "From file..."),
+            ],
+        ):
+            dlg = DialogCls(None)
+
+        dlg.source_radio.SetSelection(1)  # WinSCP
+        dlg.path_text.SetValue("")
+
+        with (
+            patch(
+                "portkeydrop.dialogs.import_connections.load_from_source",
+                side_effect=ValueError("bad format"),
+            ),
+            patch("portkeydrop.dialogs.import_connections.wx.MessageBox") as mock_message,
+        ):
+            result = dlg._load_preview()
+
+        assert result is False
+        message = mock_message.call_args.args[0]
+        assert "Failed to parse configuration" in message
+        assert "master password" in message.lower()
