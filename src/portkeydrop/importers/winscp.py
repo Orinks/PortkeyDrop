@@ -183,6 +183,8 @@ def _decrypt_winscp_password(username: str, hostname: str, encrypted: str) -> st
     Algorithm reference: https://github.com/NetSPI/WinSCPPasswordDecryptor
     """
     key = username + hostname
+    if len(encrypted) % 2 != 0:
+        raise ValueError("Encrypted WinSCP password must have an even-length hex payload")
     encrypted_hex = [encrypted[i : i + 2] for i in range(0, len(encrypted), 2)]
 
     flag = _decrypt_next(encrypted_hex)
@@ -198,6 +200,8 @@ def _decrypt_winscp_password(username: str, hostname: str, encrypted: str) -> st
 
     password = "".join(result)
     if flag == 0xFF:
+        if not password.startswith(key):
+            raise ValueError("Decrypted WinSCP password does not match expected key prefix")
         password = password[len(key) :]
     return password
 

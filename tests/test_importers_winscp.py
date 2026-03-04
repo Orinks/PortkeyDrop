@@ -29,6 +29,17 @@ def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str
     return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
 
 
+def _encrypt_winscp_payload(prefix: str, password: str) -> str:
+    """Build encrypted payload with custom key-prefix material."""
+    data = prefix + password
+
+    def enc(v: int) -> str:
+        x = (~v & 0xFF) ^ _MAGIC
+        return f"{x:02X}"
+
+    return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
+
+
 def test_parse_winscp_ini_fixture(tmp_path):
     """Parse a WinSCP INI file with encrypted passwords."""
     # Generate encrypted passwords at test time (no hardcoded hex)
@@ -236,6 +247,17 @@ def test_safe_decrypt_invalid_hex():
 def test_safe_decrypt_truncated():
     """Truncated encrypted data returns empty password instead of crashing."""
     assert _safe_decrypt("0000", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_key_prefix_mismatch_returns_empty():
+    """Mismatched key-prefix payload is treated as untrusted and discarded."""
+    encrypted = _encrypt_winscp_payload("host.test", "mypassword")
+    assert _safe_decrypt(encrypted, "user", "host.test") == ""
+
+
+def test_safe_decrypt_odd_length_hex_returns_empty():
+    """Odd-length hex payload is malformed and returns empty."""
+    assert _safe_decrypt("ABC", "alice", "host.com") == ""
 
 
 def test_parse_ini_missing_password_field(tmp_path):
