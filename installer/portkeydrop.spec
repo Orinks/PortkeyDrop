@@ -14,6 +14,7 @@ from pathlib import Path
 import tomllib
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
+
 # Determine paths
 SPEC_DIR = Path(SPECPATH).resolve()
 PROJECT_ROOT = SPEC_DIR.parent
@@ -33,6 +34,23 @@ try:
 except Exception:
     pass
 
+
+def collect_optional_all(package: str) -> tuple[list, list, list]:
+    """Collect package files when available, otherwise return empty tuples."""
+    try:
+        return collect_all(package)
+    except Exception:
+        return [], [], []
+
+
+def collect_optional_submodules(package: str) -> list[str]:
+    """Collect submodules when available, otherwise return an empty list."""
+    try:
+        return collect_submodules(package)
+    except Exception:
+        return []
+
+
 # Determine icon path
 ICON_PATH = SPEC_DIR / "app.ico"
 ICON_PATH = str(ICON_PATH) if ICON_PATH.exists() else None
@@ -47,6 +65,12 @@ if RESOURCES_DIR.exists():
 asyncssh_datas, asyncssh_binaries, asyncssh_hiddenimports = collect_all("asyncssh")
 datas += asyncssh_datas
 binaries += asyncssh_binaries
+
+# Pull prism/prismatoid runtime package data/binaries for accessibility backend support
+prism_datas, prism_binaries, prism_hiddenimports = collect_optional_all("prism")
+prismatoid_datas, prismatoid_binaries, prismatoid_hiddenimports = collect_optional_all("prismatoid")
+datas += prism_datas + prismatoid_datas
+binaries += prism_binaries + prismatoid_binaries
 
 # Hidden imports for wxPython and other dynamic imports
 hiddenimports = [
@@ -64,6 +88,11 @@ hiddenimports = [
     "keyring.backends.SecretService",
     *collect_submodules("asyncssh"),
     *asyncssh_hiddenimports,
+    *collect_optional_submodules("prism"),
+    *collect_optional_submodules("prismatoid"),
+    *prism_hiddenimports,
+    *prismatoid_hiddenimports,
+    "prism",
     "prismatoid",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
