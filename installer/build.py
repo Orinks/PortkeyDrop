@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
@@ -466,6 +467,84 @@ def generate_build_metadata(args: argparse.Namespace) -> None:
             run_command(cmd, cwd=ROOT)
 
 
+def _in_virtual_environment() -> bool:
+    """Return True when running inside an activated Python virtual environment."""
+    return (
+        sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+        or bool(os.environ.get("VIRTUAL_ENV"))
+    )
+
+
+def _find_uv_binary() -> str | None:
+    """Locate uv binary in PATH or common user install locations."""
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        return uv_bin
+
+    user_base = Path(getattr(sys, "base_prefix", sys.prefix)).parent
+    candidates = [
+        Path(sys.executable).parent / "uv",
+        Path(sys.executable).parent / "uv.exe",
+        Path.home() / ".local" / "bin" / "uv",
+        Path.home() / "AppData" / "Roaming" / "Python" / "Scripts" / "uv.exe",
+        user_base / "Scripts" / "uv.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def _ensure_uv_binary() -> str | None:
+    """Ensure uv is available; attempt installation via pip if missing."""
+    uv_bin = _find_uv_binary()
+    if uv_bin:
+        return uv_bin
+
+    print("uv not found; installing uv via pip --user...")
+    try:
+        run_command([sys.executable, "-m", "pip", "install", "--user", "uv"], check=True)
+    except Exception:
+        print("Failed to install uv automatically.")
+        return None
+
+    return _find_uv_binary()
+
+
+def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
+    """Re-exec build via `uv run` when user invokes script outside an active env."""
+    if os.environ.get("PKD_BUILD_UV_BOOTSTRAPPED") == "1":
+        return None
+
+    # Only intercept direct, non-venv execution path.
+    if _in_virtual_environment():
+        return None
+
+    uv_bin = _ensure_uv_binary()
+    if not uv_bin:
+        print("Continuing without uv bootstrap.")
+        return None
+
+    cmd = [
+        uv_bin,
+        "run",
+        "--with",
+        "pyinstaller",
+        "--with",
+        "pillow",
+        "--with",
+        "asyncssh",
+        "python",
+        str(Path(__file__).resolve()),
+        *argv,
+    ]
+    print("No active virtual environment detected; bootstrapping via uv...")
+    print(f"$ {' '.join(cmd)}")
+    env = os.environ.copy()
+    env["PKD_BUILD_UV_BOOTSTRAPPED"] = "1"
+    return subprocess.run(cmd, cwd=str(ROOT), env=env).returncode
+
+
 def main() -> int:
     """Run the build process."""
     parser = argparse.ArgumentParser(
@@ -513,8 +592,18 @@ def main() -> int:
         default=None,
         help="Custom build tag (e.g. nightly-20260208). Overrides --nightly.",
     )
+    parser.add_argument(
+        "--no-uv-bootstrap",
+        action="store_true",
+        help="Do not auto-reexec with uv when no virtual environment is active.",
+    )
 
     args = parser.parse_args()
+
+    if not args.no_uv_bootstrap:
+        rc = _maybe_reexec_with_uv(sys.argv[1:])
+        if rc is not None:
+            return rc
 
     # Print banner
     print("\n" + "=" * 60)
