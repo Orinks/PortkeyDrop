@@ -243,7 +243,7 @@ class MainFrame(wx.Frame):
         self.local_file_list = wx.ListCtrl(
             local_panel,
             style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
-            name="Local files list view",
+            name="Local",
         )
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
@@ -267,7 +267,7 @@ class MainFrame(wx.Frame):
         self.remote_file_list = wx.ListCtrl(
             remote_panel,
             style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
-            name="Remote files list view",
+            name="Remote",
         )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
