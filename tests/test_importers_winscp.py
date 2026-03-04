@@ -16,17 +16,35 @@ from portkeydrop.importers.winscp import (
 _MAGIC = 0xA3  # Same magic as production code
 
 
-def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str:
-    """Inverse of _decrypt_winscp_password - used to generate test vectors."""
-    key = username + hostname
-    data = key + password
+def _encrypt_winscp_password(
+    username: str,
+    hostname: str,
+    password: str,
+    *,
+    version: int = 0,
+    shift: int = 0,
+    key_prefix_override: str | None = None,
+) -> str:
+    """Build a WinSCP simple-encrypted payload for tests."""
+    key = key_prefix_override if key_prefix_override is not None else (username + hostname)
+    data = (key + password).encode("utf-8")
 
     def enc(v: int) -> str:
         """Encode one WinSCP-obfuscated byte as two hex chars."""
         x = (~v & 0xFF) ^ _MAGIC
         return f"{x:02X}"
 
-    return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
+    parts = [enc(0xFF), enc(version)]
+    if version == 0:
+        parts.append(enc(len(data)))
+    elif version == 2:
+        parts.extend([enc(len(data) >> 8), enc(len(data) & 0xFF)])
+    else:
+        raise ValueError("Unsupported test version")
+    parts.append(enc(shift))
+    parts.extend(enc(0) for _ in range(shift))
+    parts.extend(enc(b) for b in data)
+    return "".join(parts)
 
 
 def test_parse_winscp_ini_fixture(tmp_path):
@@ -238,8 +256,77 @@ def test_safe_decrypt_truncated():
     assert _safe_decrypt("0000", "alice", "host.com") == ""
 
 
+def test_safe_decrypt_key_prefix_mismatch_returns_empty():
+    """Mismatched key-prefix payload is treated as untrusted and discarded."""
+    encrypted = _encrypt_winscp_password(
+        "user",
+        "host.test",
+        "mypassword",
+        key_prefix_override="host.test",
+    )
+    assert _safe_decrypt(encrypted, "user", "host.test") == ""
+
+
+def test_safe_decrypt_odd_length_hex_returns_empty():
+    """Odd-length hex payload is malformed and returns empty."""
+    assert _safe_decrypt("ABC", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_master_password_external_returns_empty():
+    """Externally encrypted (master-password) payload is unsupported and ignored."""
+    # FF + version 01 is an external-encrypted wrapper in WinSCP format.
+    assert _safe_decrypt("A35D", "alice", "host.com") == ""
+
+
+def test_decrypt_winscp_password_internal2_long_payload():
+    """Version 2 uses a 2-byte payload length for longer data."""
+    password = "p" * 300
+    encrypted = _encrypt_winscp_password("alice", "host.test", password, version=2)
+    assert _decrypt_winscp_password("alice", "host.test", encrypted) == password
+
+
+def test_decrypt_winscp_password_with_shift():
+    """Shift bytes should be skipped before payload bytes."""
+    encrypted = _encrypt_winscp_password("alice", "host.test", "pass123", shift=7)
+    assert _decrypt_winscp_password("alice", "host.test", encrypted) == "pass123"
+
+
 def test_parse_ini_missing_password_field(tmp_path):
     """Sessions without a Password field get empty password."""
     ini = tmp_path / "w.ini"
     ini.write_text("[Sessions\\H]\nHostName=h.com\nPortNumber=22\nUserName=u\n")
     assert parse_ini_file(ini)[0].password == ""
+
+
+def test_parse_ini_utf16_export(tmp_path):
+    """UTF-16 exports should parse without manual recoding."""
+    encrypted = _encrypt_winscp_password("alice", "host.test", "secret")
+    ini = tmp_path / "w.ini"
+    ini.write_text(
+        "[Sessions\\UTF16]\n"
+        "HostName=host.test\n"
+        "PortNumber=22\n"
+        "UserName=alice\n"
+        f"Password={encrypted}\n",
+        encoding="utf-16",
+    )
+    sites = parse_ini_file(ini)
+    assert len(sites) == 1
+    assert sites[0].password == "secret"
+
+
+def test_parse_ini_decodes_url_encoded_fields(tmp_path):
+    ini = tmp_path / "w.ini"
+    ini.write_text(
+        "[Sessions\\My%20Site]\n"
+        "HostName=host.test\n"
+        "PortNumber=22\n"
+        "UserName=alice\n"
+        "PublicKeyFile=C%3A%5Ckeys%5Cid_ed25519.ppk\n"
+        "RemoteDirectory=%2Fvar%2Fwww%2Fhtml\n"
+    )
+    sites = parse_ini_file(ini)
+    assert len(sites) == 1
+    assert sites[0].name == "My Site"
+    assert sites[0].key_path == "C:\\keys\\id_ed25519.ppk"
+    assert sites[0].initial_dir == "/var/www/html"
