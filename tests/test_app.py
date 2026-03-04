@@ -866,3 +866,72 @@ def test_open_selected_remote_dir_reports_status_before_chdir(app_module):
     app.MainFrame._open_selected_remote_dir(frame)
 
     frame._status.assert_called_once_with("Opening docs...")
+
+
+def test_navigate_remote_home_sets_status_on_success(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock()
+    frame._client.cwd = "/remote/home"
+    frame._remote_home = "/remote/home"
+    frame._refresh_remote_files = MagicMock()
+    frame._status = MagicMock()
+
+    app.MainFrame._navigate_remote_home(frame)
+
+    frame._status.assert_called_once_with("Home: /remote/home")
+
+
+def test_refresh_local_files_status_count_path(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._settings = SimpleNamespace(display=SimpleNamespace(announce_file_count=True))
+    frame._local_cwd = "/tmp"
+    frame._local_filter_text = ""
+    frame.FindFocus = MagicMock(return_value=None)
+    frame.local_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.local_path_bar = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame._status = MagicMock()
+
+    with patch("portkeydrop.app.list_local_dir", return_value=[]):
+        app.MainFrame._refresh_local_files(frame)
+
+    frame._status.assert_called_once_with("/tmp: 0 items")
+
+
+def test_on_remote_item_activated_file_sets_status(app_module):
+    import threading
+
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock()
+    frame._status = MagicMock()
+    frame._on_download = MagicMock()
+    frame._get_selected_remote_file = MagicMock(
+        return_value=RemoteFile(name="file.txt", path="/remote/file.txt", is_dir=False)
+    )
+
+    original_thread = threading.Thread
+
+    class _ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+            self._target = target
+            self._args = args
+            self._kwargs = kwargs or {}
+
+        def start(self):
+            if self._target:
+                self._target(*self._args, **self._kwargs)
+
+    with patch.object(threading, "Thread", _ImmediateThread):
+        app.MainFrame._on_remote_item_activated(frame, MagicMock())
+
+    frame._status.assert_called_once_with("file.txt detected as file, not directory")
+    frame._on_download.assert_called_once_with(None)
+
+    threading.Thread = original_thread

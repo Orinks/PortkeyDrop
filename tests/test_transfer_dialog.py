@@ -291,3 +291,49 @@ def test_refresh_uses_select_fallback_without_set_item_state(transfer_module):
     dialog._refresh()
 
     list_mock.Select.assert_called_once_with(0)
+
+
+def test_get_selected_transfer_id_returns_none_for_not_found(transfer_module):
+    module, fake_wx = transfer_module
+    fake_wx.DEFAULT_DIALOG_STYLE = 0
+    fake_wx.RESIZE_BORDER = 0
+    fake_wx.CLOSE_BOX = 0
+    fake_wx.ID_CLOSE = 999
+    fake_wx.RIGHT = 0
+    fake_wx.ALIGN_RIGHT = 0
+    fake_wx.WXK_ESCAPE = 27
+    fake_wx.VERTICAL = 0
+    fake_wx.HORIZONTAL = 0
+    fake_wx.NOT_FOUND = -1
+
+    class _Dialog:
+        def __init__(self, parent, *args, **kwargs):
+            self._parent = parent
+
+        def Bind(self, *args, **kwargs):
+            return None
+
+        def SetSizer(self, *args, **kwargs):
+            return None
+
+        def SetName(self, *args, **kwargs):
+            return None
+
+        def Close(self):
+            return None
+
+        def GetParent(self):
+            return self._parent
+
+        def Destroy(self):
+            return None
+
+    fake_wx.Dialog = _Dialog
+
+    parent = MagicMock()
+    manager = MagicMock()
+    manager.transfers = []
+    dialog = module.create_transfer_dialog(parent, manager)
+    dialog.transfer_list.GetFirstSelected.return_value = -1
+
+    assert dialog._get_selected_transfer_id() is None
