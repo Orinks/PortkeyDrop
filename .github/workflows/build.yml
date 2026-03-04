@@ -115,7 +115,6 @@ jobs:
             if exist "PortkeyDrop_portable" rmdir /s /q "PortkeyDrop_portable"
             xcopy "PortkeyDrop_dir" "PortkeyDrop_portable\" /E /I /Y >nul
             if not exist "PortkeyDrop_portable\\data" mkdir "PortkeyDrop_portable\\data"
-            echo portable> "PortkeyDrop_portable\\data\\portable_mode.txt"
             cd PortkeyDrop_portable
             7z a -tzip "..\PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" *
             cd ..

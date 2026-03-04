@@ -393,13 +393,9 @@ def create_portable_zip() -> bool:
         Path(f"{zip_path}.zip").unlink()
 
     try:
-        # Create data/ marker to activate portable mode after extraction.
+        # Create data/ directory to activate portable mode after extraction.
         data_dir = source_dir / "data"
         data_dir.mkdir(exist_ok=True)
-        (data_dir / "portable_mode.txt").write_text(
-            "This directory enables PortkeyDrop portable mode.\n",
-            encoding="utf-8",
-        )
 
         # Create zip
         shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
