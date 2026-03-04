@@ -184,3 +184,110 @@ def test_refresh_preserves_selected_transfer_when_list_updates(transfer_module):
     assert list_mock.SetItemState.call_count >= 1
     selected_rows = [c.args[0] for c in list_mock.SetItemState.call_args_list]
     assert 1 in selected_rows
+
+
+def test_get_selected_transfer_id_handles_non_int_selection(transfer_module):
+    module, fake_wx = transfer_module
+    fake_wx.DEFAULT_DIALOG_STYLE = 0
+    fake_wx.RESIZE_BORDER = 0
+    fake_wx.CLOSE_BOX = 0
+    fake_wx.ID_CLOSE = 999
+    fake_wx.RIGHT = 0
+    fake_wx.ALIGN_RIGHT = 0
+    fake_wx.WXK_ESCAPE = 27
+    fake_wx.VERTICAL = 0
+    fake_wx.HORIZONTAL = 0
+
+    class _Dialog:
+        def __init__(self, parent, *args, **kwargs):
+            self._parent = parent
+
+        def Bind(self, *args, **kwargs):
+            return None
+
+        def SetSizer(self, *args, **kwargs):
+            return None
+
+        def SetName(self, *args, **kwargs):
+            return None
+
+        def Close(self):
+            return None
+
+        def GetParent(self):
+            return self._parent
+
+        def Destroy(self):
+            return None
+
+    fake_wx.Dialog = _Dialog
+
+    parent = MagicMock()
+    manager = MagicMock()
+    manager.transfers = []
+    dialog = module.create_transfer_dialog(parent, manager)
+
+    dialog.transfer_list.GetFirstSelected.return_value = object()
+    assert dialog._get_selected_transfer_id() is None
+
+
+def test_refresh_uses_select_fallback_without_set_item_state(transfer_module):
+    module, fake_wx = transfer_module
+    fake_wx.DEFAULT_DIALOG_STYLE = 0
+    fake_wx.RESIZE_BORDER = 0
+    fake_wx.CLOSE_BOX = 0
+    fake_wx.ID_CLOSE = 999
+    fake_wx.RIGHT = 0
+    fake_wx.ALIGN_RIGHT = 0
+    fake_wx.WXK_ESCAPE = 27
+    fake_wx.VERTICAL = 0
+    fake_wx.HORIZONTAL = 0
+    # Intentionally do not define LIST_STATE_SELECTED/LIST_STATE_FOCUSED.
+
+    class _Dialog:
+        def __init__(self, parent, *args, **kwargs):
+            self._parent = parent
+
+        def Bind(self, *args, **kwargs):
+            return None
+
+        def SetSizer(self, *args, **kwargs):
+            return None
+
+        def SetName(self, *args, **kwargs):
+            return None
+
+        def Close(self):
+            return None
+
+        def GetParent(self):
+            return self._parent
+
+        def Destroy(self):
+            return None
+
+    fake_wx.Dialog = _Dialog
+
+    parent = MagicMock()
+    manager = MagicMock()
+    manager.transfers = [
+        SimpleNamespace(
+            id=1,
+            remote_path="/remote/a.txt",
+            local_path="/tmp/a.txt",
+            direction=SimpleNamespace(value="download"),
+            progress_pct=10,
+            display_status="in_progress",
+        )
+    ]
+
+    dialog = module.create_transfer_dialog(parent, manager)
+    list_mock = MagicMock()
+    list_mock.GetFirstSelected.return_value = 0
+    list_mock.GetItemCount.return_value = 0
+    list_mock.InsertItem.return_value = 0
+    dialog.transfer_list = list_mock
+
+    dialog._refresh()
+
+    list_mock.Select.assert_called_once_with(0)

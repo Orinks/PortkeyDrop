@@ -808,3 +808,61 @@ def test_main_no_flags(monkeypatch):
     )
     assert not debug
     assert logging.getLogger().level == logging.WARNING
+
+
+def test_announce_delegates_to_status_and_announcer(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._announcer = MagicMock()
+
+    app.MainFrame._announce(frame, "Hello")
+
+    frame._status.assert_called_once_with("Hello")
+    frame._announcer.announce.assert_called_once_with("Hello")
+
+
+def test_on_home_dir_remote_updates_status_and_calls_after(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._is_local_focused = MagicMock(return_value=False)
+    frame._client = MagicMock(connected=True)
+    frame._status = MagicMock()
+    frame._navigate_remote_home = MagicMock()
+
+    app.MainFrame._on_home_dir(frame, None)
+
+    frame._status.assert_called_once_with("Going home...")
+    frame._navigate_remote_home.assert_called_once_with()
+
+
+def test_on_home_dir_local_updates_status(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._is_local_focused = MagicMock(return_value=True)
+    frame._client = None
+    frame._local_cwd = "/tmp"
+    frame._set_local_cwd = MagicMock()
+    frame._refresh_local_files = MagicMock()
+    frame._status = MagicMock()
+
+    app.MainFrame._on_home_dir(frame, None)
+
+    frame._status.assert_called_once()
+
+
+def test_open_selected_remote_dir_reports_status_before_chdir(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock()
+    frame._client.chdir = MagicMock()
+    frame._refresh_remote_files = MagicMock()
+    frame._status = MagicMock()
+    frame._get_selected_remote_file = MagicMock(
+        return_value=RemoteFile(name="docs", path="/remote/docs", is_dir=True)
+    )
+
+    app.MainFrame._open_selected_remote_dir(frame)
+
+    frame._status.assert_called_once_with("Opening docs...")
