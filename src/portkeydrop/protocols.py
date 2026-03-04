@@ -448,6 +448,13 @@ class SFTPClient(TransferClient):
         return value, offset
 
     @staticmethod
+    def _read_ppk_mpint(blob: bytes, offset: int) -> tuple[int, int]:
+        value, offset = SFTPClient._read_ppk_string(blob, offset)
+        if not value:
+            return 0, offset
+        return int.from_bytes(value, "big", signed=False), offset
+
+    @staticmethod
     def _decode_ppk_text(key_data: bytes) -> tuple[int, str, str, str, bytes, bytes, str]:
         try:
             ppk_text = key_data.decode("utf-8")
@@ -523,6 +530,75 @@ class SFTPClient(TransferClient):
             private_blob,
             fields["Private-MAC"],
         )
+
+    @staticmethod
+    def _convert_ppk_rsa_unencrypted(key_data: bytes) -> tuple[bytes | None, str]:
+        try:
+            (
+                _version,
+                header_key_type,
+                encryption,
+                _comment,
+                public_blob,
+                private_blob,
+                _private_mac,
+            ) = SFTPClient._decode_ppk_text(key_data)
+        except ValueError as exc:
+            return None, str(exc)
+
+        if header_key_type != "ssh-rsa":
+            return None, f"unsupported PPK key type '{header_key_type}' for RSA native converter"
+        if encryption.lower() != "none":
+            return None, f"unsupported PPK encryption '{encryption}' for RSA native converter"
+
+        try:
+            key_type, offset = SFTPClient._read_ppk_string(public_blob, 0)
+            if key_type != b"ssh-rsa":
+                decoded_type = key_type.decode("utf-8", errors="ignore")
+                return (
+                    None,
+                    f"unsupported public key type '{decoded_type}' for RSA native converter",
+                )
+            e, offset = SFTPClient._read_ppk_mpint(public_blob, offset)
+            n, offset = SFTPClient._read_ppk_mpint(public_blob, offset)
+            if offset != len(public_blob):
+                return None, "unexpected trailing data in PPK public blob"
+
+            d, priv_offset = SFTPClient._read_ppk_mpint(private_blob, 0)
+            p, priv_offset = SFTPClient._read_ppk_mpint(private_blob, priv_offset)
+            q, priv_offset = SFTPClient._read_ppk_mpint(private_blob, priv_offset)
+            if priv_offset != len(private_blob):
+                return None, "unexpected trailing data in PPK private blob"
+        except ValueError as exc:
+            return None, str(exc)
+
+        if any(v <= 0 for v in (e, n, d, p, q)):
+            return None, "PPK RSA parameters must be positive integers"
+        if n != p * q:
+            return None, "PPK RSA parameters are inconsistent (n != p*q)"
+
+        try:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+
+            private_key = rsa.RSAPrivateNumbers(
+                p=p,
+                q=q,
+                d=d,
+                dmp1=d % (p - 1),
+                dmq1=d % (q - 1),
+                iqmp=pow(q, -1, p),
+                public_numbers=rsa.RSAPublicNumbers(e=e, n=n),
+            ).private_key()
+        except Exception as exc:
+            return None, str(exc).strip() or exc.__class__.__name__
+
+        pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        return pem, ""
 
     @staticmethod
     def _convert_ppk_v3_ed25519_unencrypted(key_data: bytes) -> tuple[bytes | None, str]:
@@ -631,12 +707,27 @@ class SFTPClient(TransferClient):
             converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
             if converted:
                 return converted, ""
+        if normalized_variant in {
+            "PPK v2 (ssh-rsa, encryption=none)",
+            "PPK v3 (ssh-rsa, encryption=none)",
+        }:
+            converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
+            if converted:
+                return converted, ""
 
         try:
             from puttykeys import ppkraw_to_openssh
         except Exception:
             if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
                 converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason or "required dependency 'puttykeys' is not installed"
+            if normalized_variant in {
+                "PPK v2 (ssh-rsa, encryption=none)",
+                "PPK v3 (ssh-rsa, encryption=none)",
+            }:
+                converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
                 if converted:
                     return converted, ""
                 return None, reason or "required dependency 'puttykeys' is not installed"
@@ -652,6 +743,14 @@ class SFTPClient(TransferClient):
         except Exception as exc:
             if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
                 converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason or (str(exc).strip() or exc.__class__.__name__)
+            if normalized_variant in {
+                "PPK v2 (ssh-rsa, encryption=none)",
+                "PPK v3 (ssh-rsa, encryption=none)",
+            }:
+                converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
                 if converted:
                     return converted, ""
                 return None, reason or (str(exc).strip() or exc.__class__.__name__)
@@ -693,10 +792,30 @@ class SFTPClient(TransferClient):
             try:
                 converted_key = asyncssh.import_private_key(converted_key_data)
             except asyncssh.KeyImportError as exc:
+                import_failure_detail = str(exc)
+                if (
+                    "dmp1 must be odd" in import_failure_detail.lower()
+                    and "ssh-rsa" in ppk_variant.lower()
+                    and "encryption=none" in ppk_variant.lower()
+                ):
+                    repaired_key_data, repair_reason = self._convert_ppk_rsa_unencrypted(key_data)
+                    if repaired_key_data:
+                        try:
+                            repaired_key = asyncssh.import_private_key(repaired_key_data)
+                            return (
+                                repaired_key,
+                                f"key-file:{self._info.key_path} ({ppk_variant}, repaired RSA conversion)",
+                            )
+                        except asyncssh.KeyImportError as repair_exc:
+                            import_failure_detail = (
+                                f"{exc}; native RSA repair import failed: {repair_exc}"
+                            )
+                    elif repair_reason:
+                        import_failure_detail = f"{exc}; native RSA repair failed: {repair_reason}"
                 raise ConnectionError(
                     "SFTP connection failed: "
                     + self._format_key_import_error(
-                        f"converted OpenSSH key import failed: {exc}",
+                        f"converted OpenSSH key import failed: {import_failure_detail}",
                         is_ppk=True,
                         ppk_variant=ppk_variant,
                     )
@@ -875,6 +994,13 @@ class SFTPClient(TransferClient):
         reason = error_text.strip() or "unknown parse error"
         text = error_text.lower()
         if is_ppk:
+            if "dmp1 must be odd" in text or "dmq1 must be odd" in text:
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "Converted RSA key material is malformed (invalid CRT parameters). "
+                    "Re-export this key in PuTTYgen as OpenSSH private key "
+                    "(Conversions -> Export OpenSSH key), or regenerate the RSA key pair."
+                )
             if "hmac mismatch" in text:
                 return (
                     f"could not import {ppk_variant} private key ({reason}). "
