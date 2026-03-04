@@ -97,6 +97,47 @@ RemoteDirectory=/incoming
     assert second.password == "mypassword"
 
 
+def test_parse_winscp_realistic_sanitized_export_fixture(tmp_path):
+    fixture = Path("tests/fixtures/importers/winscp_real_export_sanitized.ini")
+    content = fixture.read_text(encoding="utf-8")
+    content = content.replace(
+        "__ENC_PASS_1__",
+        _encrypt_winscp_password("ops", "sftp-edge.example.net", "Tr!cky#Pass1"),
+    )
+    content = content.replace(
+        "__ENC_PASS_2__",
+        _encrypt_winscp_password("ops", "sftp-backend.internal.example.net", "sshSecret!2"),
+    )
+    ini = tmp_path / "winscp_real_export_sanitized.ini"
+    ini.write_text(content, encoding="utf-8")
+
+    sites = parse_ini_file(ini)
+
+    assert len(sites) == 3
+
+    first = sites[0]
+    assert first.name == "ops@sftp-edge.example.net"
+    assert first.host == "sftp-edge.example.net"
+    assert first.protocol == "sftp"
+    assert first.port == 0
+    assert first.username == "ops"
+    assert first.password == "Tr!cky#Pass1"
+    assert first.initial_dir == "/home/ops"
+
+    second = sites[1]
+    assert second.name == "ops@legacy-name.example.net"
+    assert second.host == "sftp-backend.internal.example.net"
+    assert second.protocol == "sftp"
+    assert second.password == "sshSecret!2"
+    assert second.initial_dir == "/.ssh"
+    assert second.key_path == r"C:\Users\sanitized\Keys\id_ed25519 prod.ppk"
+
+    third = sites[2]
+    assert third.name == "readonly@no-password.example.net"
+    assert third.password == ""
+    assert third.initial_dir == "/archive"
+
+
 def test_detect_default_path_returns_sentinel_when_registry_available():
     """detect_default_path should return the registry sentinel when the registry is available."""
     with patch("portkeydrop.importers._winscp_registry_available", return_value=True):
