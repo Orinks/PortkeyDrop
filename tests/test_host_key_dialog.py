@@ -33,6 +33,9 @@ class _Window:
     def SetMinSize(self, _size) -> None:
         pass
 
+    def SetName(self, name: str) -> None:
+        self.name = name
+
     def EndModal(self, result: int) -> None:
         self._modal_result = result
 
@@ -62,12 +65,22 @@ class _StaticText(_Window):
 
 
 class _Button(_Window):
-    def __init__(self, parent=None, label: str = "", **_kw):
+    def __init__(self, parent=None, label: str = "", id: int | None = None, **_kw):
         super().__init__(parent)
         self.label = label
+        self.id = id
+
+
+class _TextCtrl(_Window):
+    def __init__(self, parent=None, value: str = "", style: int = 0, size=None, **_kw):
+        super().__init__(parent)
+        self.value = value
+        self.style = style
+        self.size = size
 
 
 _EVT_BUTTON = object()
+_EVT_CHAR_HOOK = object()
 
 
 def _make_wx_modules():
@@ -85,9 +98,16 @@ def _make_wx_modules():
     fake_wx = types.ModuleType("wx")
     fake_wx.DEFAULT_DIALOG_STYLE = 1
     fake_wx.RESIZE_BORDER = 2
+    fake_wx.TE_MULTILINE = 4
+    fake_wx.TE_READONLY = 8
+    fake_wx.ID_NO = 5103
+    fake_wx.ID_CANCEL = 5101
+    fake_wx.WXK_ESCAPE = 27
     fake_wx.StaticText = _StaticText
+    fake_wx.TextCtrl = _TextCtrl
     fake_wx.Button = _Button
     fake_wx.EVT_BUTTON = _EVT_BUTTON
+    fake_wx.EVT_CHAR_HOOK = _EVT_CHAR_HOOK
     fake_wx.lib = fake_lib
 
     return fake_wx, fake_lib, fake_sc
@@ -126,24 +146,49 @@ class TestHostKeyDialogConstants:
 
 
 class TestHostKeyDialogInit:
-    def test_creates_host_label_with_hostname(self, monkeypatch):
-        """Line 23: StaticText displays the unknown hostname."""
+    def test_security_text_contains_hostname(self, monkeypatch):
         dlg_cls = _load_host_key_dialog(monkeypatch)
-        dlg_cls(None, "example.com", "ssh-rsa", "aa:bb:cc:dd")
-        labels = [s.label for s in _StaticText.created]
-        assert any("example.com" in lbl for lbl in labels)
+        dlg = dlg_cls(None, "example.com", "ssh-rsa", "aa:bb:cc:dd")
+        text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
+        assert "example.com" in text.value
 
-    def test_creates_key_type_label(self, monkeypatch):
+    def test_security_text_contains_key_type(self, monkeypatch):
         dlg_cls = _load_host_key_dialog(monkeypatch)
-        dlg_cls(None, "host.test", "ecdsa-sha2-nistp256", "ff:ee:dd")
-        labels = [s.label for s in _StaticText.created]
-        assert any("ecdsa-sha2-nistp256" in lbl for lbl in labels)
+        dlg = dlg_cls(None, "host.test", "ecdsa-sha2-nistp256", "ff:ee:dd")
+        text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
+        assert "ecdsa-sha2-nistp256" in text.value
 
-    def test_creates_fingerprint_label(self, monkeypatch):
+    def test_security_text_contains_fingerprint(self, monkeypatch):
         dlg_cls = _load_host_key_dialog(monkeypatch)
-        dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
-        labels = [s.label for s in _StaticText.created]
-        assert any("de:ad:be:ef" in lbl for lbl in labels)
+        dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
+        text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
+        assert "de:ad:be:ef" in text.value
+
+    def test_dialog_sets_accessible_name(self, monkeypatch):
+        dlg_cls = _load_host_key_dialog(monkeypatch)
+        dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
+        assert dlg.name == "Unknown Host Key"
+
+    def test_initial_focus_is_security_text(self, monkeypatch):
+        dlg_cls = _load_host_key_dialog(monkeypatch)
+        dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
+        text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
+        assert text._focused is True
+
+    def test_escape_rejects_dialog(self, monkeypatch):
+        from types import SimpleNamespace
+
+        dlg_cls = _load_host_key_dialog(monkeypatch)
+        dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
+        event, handler = next(bound for bound in dlg._bound if bound[0] is _EVT_CHAR_HOOK)
+        _ = event
+
+        def skip():
+            return None
+
+        key_event = SimpleNamespace(GetKeyCode=lambda: 27, Skip=skip)
+        handler(key_event)
+        assert dlg._modal_result == dlg_cls.REJECT
 
     def test_accept_permanent_button_bind(self, monkeypatch):
         """Line 35: Accept Permanently button binds a handler."""

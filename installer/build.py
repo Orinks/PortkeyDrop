@@ -143,6 +143,23 @@ def install_dependencies() -> None:
         print("Installing Pillow for icon generation...")
         run_command([sys.executable, "-m", "pip", "install", "Pillow"])
 
+    # Check for asyncssh (required at runtime for SFTP connections)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("asyncssh"):
+            import asyncssh
+
+            print(f"✓ asyncssh {getattr(asyncssh, '__version__', 'unknown')} found")
+        else:
+            raise ImportError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing required dependency: asyncssh. "
+            "Install it in the project env before building (e.g. 'uv add --dev asyncssh' "
+            "or 'uv pip install asyncssh')."
+        ) from exc
+
 
 def build_pyinstaller() -> bool:
     """Build the application with PyInstaller."""
@@ -364,6 +381,10 @@ def create_portable_zip() -> bool:
     if Path(f"{zip_path}.zip").exists():
         Path(f"{zip_path}.zip").unlink()
 
+    # Create empty data/ dir to activate portable mode
+    data_dir = source_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+
     # Create zip
     shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
 
@@ -553,6 +574,7 @@ def main() -> int:
                 print(f"  {f.name} ({size_mb:.1f} MB)")
 
     print("\n✓ Build complete!")
+    print("\a", end="", flush=True)
     return 0
 
 

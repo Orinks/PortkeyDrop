@@ -426,13 +426,34 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
         def _on_timer(self, event):
             self._refresh()
 
+        def _get_selected_transfer_id(self):
+            """Return selected transfer id, if any."""
+            idx = self.transfer_list.GetFirstSelected()
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                return None
+            if idx == wx.NOT_FOUND:
+                return None
+            transfers = self._transfer_manager.transfers
+            if 0 <= idx < len(transfers):
+                return transfers[idx].id
+            return None
+
         def _on_cancel(self, event):
             idx = self.transfer_list.GetFirstSelected()
             if idx == wx.NOT_FOUND:
                 return
             transfers = self._transfer_manager.transfers
             if 0 <= idx < len(transfers):
-                self._transfer_manager.cancel(transfers[idx].id)
+                transfer = transfers[idx]
+                self._transfer_manager.cancel(transfer.id)
+                filename = PurePosixPath(transfer.remote_path).name or os.path.basename(
+                    transfer.local_path
+                )
+                parent = self.GetParent()
+                if parent and hasattr(parent, "_announce") and filename:
+                    parent._announce(f"Cancelled transfer: {filename}")
                 self._refresh()
 
         def _refresh(self):
@@ -440,6 +461,14 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
             # Save selection/focus so we can restore after update
             selected = self.transfer_list.GetFirstSelected()
             focused = self.transfer_list.GetFocusedItem()
+            try:
+                selected = int(selected)
+            except (TypeError, ValueError):
+                selected = wx.NOT_FOUND
+            try:
+                focused = int(focused)
+            except (TypeError, ValueError):
+                focused = wx.NOT_FOUND
 
             current_count = self.transfer_list.GetItemCount()
             new_count = len(transfers)

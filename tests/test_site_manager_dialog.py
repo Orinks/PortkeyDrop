@@ -61,8 +61,29 @@ class _Dialog(_Window):
 
 
 class _Sizer:
+    def __init__(self):
+        self._index = 0
+
     def GetItem(self, ctrl):
         return self
+
+    def GetProportion(self):
+        return 1
+
+    def GetFlag(self):
+        return 0
+
+    def GetBorder(self):
+        return 0
+
+    def GetItemIndex(self, ctrl):
+        return self._index
+
+    def Detach(self, ctrl):
+        pass
+
+    def Insert(self, index, ctrl, proportion, flags, border):
+        self._index = index
 
     def Replace(self, old, new):
         pass
@@ -73,8 +94,15 @@ class _Sizer:
 
 class _TextCtrl(_Window):
     def __init__(self, parent=None, style=0, **_kw):
+        self._parent = parent
         self._style = style
         self._value = ""
+        self._sizer = _Sizer()
+        self._moved_before = None
+        self._insert_end_called = False
+
+    def GetParent(self):
+        return self._parent
 
     def GetWindowStyle(self):
         return self._style
@@ -86,7 +114,13 @@ class _TextCtrl(_Window):
         self._value = v
 
     def GetContainingSizer(self):
-        return _Sizer()
+        return self._sizer
+
+    def MoveBeforeInTabOrder(self, other):
+        self._moved_before = other
+
+    def SetInsertionPointEnd(self):
+        self._insert_end_called = True
 
     def Destroy(self):
         pass
@@ -277,6 +311,28 @@ class TestTogglePassword:
         mod.SiteManagerDialog._on_toggle_password(dlg, MagicMock())
 
         assert dlg.password_text.GetValue() == "mypassword"
+
+    def test_toggle_handles_negative_sizer_index(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg = _make_dialog(mod, fake_wx, masked=True)
+        dlg.password_text.GetContainingSizer()._index = -1
+
+        mod.SiteManagerDialog._on_toggle_password(dlg, MagicMock())
+
+        assert dlg.password_text.GetWindowStyle() == 0
+
+    def test_toggle_ignores_tab_order_errors(self, dialog_module, monkeypatch):
+        mod, fake_wx = dialog_module
+        dlg = _make_dialog(mod, fake_wx, masked=True)
+
+        def _boom(self, _other):
+            raise RuntimeError("tab order unsupported")
+
+        monkeypatch.setattr(_TextCtrl, "MoveBeforeInTabOrder", _boom)
+
+        # Should not raise even if tab order call fails.
+        mod.SiteManagerDialog._on_toggle_password(dlg, MagicMock())
+        assert dlg.password_text.GetValue() == "secret123"
 
 
 class TestSiteManagerDialogInit:

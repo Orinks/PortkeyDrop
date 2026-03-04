@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import logging
 import os
 import sys
 from pathlib import Path
@@ -10,6 +11,9 @@ from urllib.parse import unquote
 
 from .models import ImportedSite
 
+logger = logging.getLogger(__name__)
+
+_MAGIC = 0xA3
 
 _NUMERIC_PROTOCOL_MAP = {
     "0": "sftp",
@@ -54,6 +58,7 @@ def parse_ini_file(path: Path) -> list[ImportedSite]:
         initial_dir = cfg.get("RemoteDirectory", "").strip() or "/"
         key_path = cfg.get("PublicKeyFile", "").strip()
         name = _decode_name(section.removeprefix("Sessions\\"))
+        password = _safe_decrypt(cfg.get("Password", "").strip(), username, host)
 
         sites.append(
             ImportedSite(
@@ -62,6 +67,7 @@ def parse_ini_file(path: Path) -> list[ImportedSite]:
                 host=host,
                 port=port,
                 username=username,
+                password=password,
                 key_path=key_path,
                 initial_dir=initial_dir,
             )
@@ -108,6 +114,7 @@ def parse_registry_sessions() -> list[ImportedSite]:
                     username = values.get("UserName", "").strip()
                     initial_dir = values.get("RemoteDirectory", "").strip() or "/"
                     key_path_value = values.get("PublicKeyFile", "").strip()
+                    password = _safe_decrypt(values.get("Password", "").strip(), username, host)
 
                     sites.append(
                         ImportedSite(
@@ -116,6 +123,7 @@ def parse_registry_sessions() -> list[ImportedSite]:
                             host=host,
                             port=port,
                             username=username,
+                            password=password,
                             key_path=key_path_value,
                             initial_dir=initial_dir,
                         )
@@ -156,3 +164,45 @@ def _detect_protocol(cfg: configparser.SectionProxy | dict[str, str]) -> str:
 
 def _decode_name(raw_name: str) -> str:
     return unquote(raw_name).replace("%5C", "\\")
+
+
+def _safe_decrypt(encrypted: str, username: str, hostname: str) -> str:
+    """Decrypt a WinSCP password, returning empty string on any failure."""
+    if not encrypted:
+        return ""
+    try:
+        return _decrypt_winscp_password(username, hostname, encrypted)
+    except Exception:
+        logger.debug("Failed to decrypt WinSCP password for %s@%s", username, hostname)
+        return ""
+
+
+def _decrypt_winscp_password(username: str, hostname: str, encrypted: str) -> str:
+    """Decrypt a WinSCP XOR-obfuscated password.
+
+    Algorithm reference: https://github.com/NetSPI/WinSCPPasswordDecryptor
+    """
+    key = username + hostname
+    encrypted_hex = [encrypted[i : i + 2] for i in range(0, len(encrypted), 2)]
+
+    flag = _decrypt_next(encrypted_hex)
+    if flag == 0xFF:
+        _decrypt_next(encrypted_hex)  # skip byte
+        length = _decrypt_next(encrypted_hex)
+    else:
+        length = flag
+
+    result: list[str] = []
+    for _ in range(length):
+        result.append(chr(_decrypt_next(encrypted_hex)))
+
+    password = "".join(result)
+    if flag == 0xFF:
+        password = password[len(key) :]
+    return password
+
+
+def _decrypt_next(encrypted_hex: list[str]) -> int:
+    """Consume one hex-encoded byte and return one decrypted byte."""
+    b = int(encrypted_hex.pop(0), 16)
+    return (~(b ^ _MAGIC)) & 0xFF

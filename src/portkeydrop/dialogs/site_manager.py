@@ -20,6 +20,7 @@ class SiteManagerDialog(wx.Dialog):
         self._site_manager = site_manager
         self._selected_site: Site | None = None
         self._connect_requested = False
+        self._password_visible = False
         self._build_ui()
         self._refresh_site_list()
         self.SetName("Site Manager Dialog")
@@ -173,22 +174,58 @@ class SiteManagerDialog(wx.Dialog):
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:
         """Toggle password field between masked and plain text."""
         current_value = self.password_text.GetValue()
-        is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
-        sizer_item = self.password_text.GetContainingSizer()
-        new_style = 0 if is_masked else wx.TE_PASSWORD
-        new_ctrl = wx.TextCtrl(self, style=new_style)
+        # Track visibility explicitly; style bit checks can be unreliable on some wx builds.
+        # Fallback to style bit when tests construct dialog without __init__.
+        if not hasattr(self, "_password_visible"):
+            is_masked = bool(self.password_text.GetWindowStyle() & wx.TE_PASSWORD)
+            self._password_visible = not is_masked
+        show_password = not self._password_visible
+        parent = (
+            self.password_text.GetParent() if hasattr(self.password_text, "GetParent") else self
+        )
+        row_sizer = self.password_text.GetContainingSizer()
+
+        new_style = 0 if show_password else wx.TE_PASSWORD
+        new_ctrl = wx.TextCtrl(parent, style=new_style)
         new_ctrl.SetName("Password")
         new_ctrl.SetValue(current_value)
 
-        if sizer_item:
-            sizer_item.Replace(self.password_text, new_ctrl)
+        if row_sizer:
+            # Prefer preserving full layout metadata when available (real wx).
+            if all(
+                hasattr(row_sizer, name) for name in ("GetItem", "GetItemIndex", "Detach", "Insert")
+            ):
+                item = row_sizer.GetItem(self.password_text)
+                proportion = item.GetProportion() if item else 1
+                flags = item.GetFlag() if item else wx.EXPAND
+                border = item.GetBorder() if item else 0
+                index = row_sizer.GetItemIndex(self.password_text)
+                row_sizer.Detach(self.password_text)
+                if index >= 0:
+                    row_sizer.Insert(index, new_ctrl, proportion, flags, border)
+                else:
+                    row_sizer.Insert(0, new_ctrl, proportion, flags, border)
+            elif hasattr(row_sizer, "Replace"):
+                # Fallback for test stubs/minimal sizers.
+                row_sizer.Replace(self.password_text, new_ctrl)
 
         self.password_text.Destroy()
         self.password_text = new_ctrl
-        self.show_password_btn.SetLabel("H&ide" if is_masked else "S&how")
-        self.show_password_btn.SetName("Hide password" if is_masked else "Show password")
+        self._password_visible = show_password
+        self.show_password_btn.SetLabel("H&ide" if show_password else "S&how")
+        self.show_password_btn.SetName("Hide password" if show_password else "Show password")
+
+        # Keep tab order stable: password field should stay before Show/Hide button.
+        if hasattr(new_ctrl, "MoveBeforeInTabOrder"):
+            try:
+                new_ctrl.MoveBeforeInTabOrder(self.show_password_btn)
+            except Exception:
+                pass
+
         self.Layout()
         new_ctrl.SetFocus()
+        if hasattr(new_ctrl, "SetInsertionPointEnd"):
+            new_ctrl.SetInsertionPointEnd()
 
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:

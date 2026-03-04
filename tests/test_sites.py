@@ -349,3 +349,105 @@ class TestNoStorage:
 
         mgr2 = SiteManager(tmp_path)
         assert mgr2.sites[0].password == ""
+
+
+class TestPortableKeyringMigration:
+    @pytest.fixture(autouse=True)
+    def _portable_backend(self, monkeypatch, mock_keyring):
+        import portkeydrop.sites as sites_mod
+
+        monkeypatch.setattr(sites_mod, "is_portable_mode", lambda: True)
+
+    def test_offer_migration_when_vault_missing_and_keyring_has_passwords(self, tmp_path):
+        import json
+
+        site_id = "portable-site"
+        (tmp_path / "sites.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": site_id,
+                        "name": "Portable",
+                        "protocol": "sftp",
+                        "host": "example.com",
+                        "port": 22,
+                        "username": "user",
+                        "key_path": "",
+                        "initial_dir": "/",
+                        "notes": "",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        _fake_set("portkeydrop", site_id, "secret")
+
+        mgr = SiteManager(tmp_path)
+
+        assert mgr.should_offer_keyring_to_vault_migration() is True
+
+    def test_migrate_keyring_passwords_to_vault_is_non_destructive(self, tmp_path):
+        import json
+
+        site_id = "portable-site"
+        (tmp_path / "sites.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": site_id,
+                        "name": "Portable",
+                        "protocol": "sftp",
+                        "host": "example.com",
+                        "port": 22,
+                        "username": "user",
+                        "key_path": "",
+                        "initial_dir": "/",
+                        "notes": "",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        _fake_set("portkeydrop", site_id, "secret")
+
+        mgr = SiteManager(tmp_path)
+        migrated = mgr.migrate_keyring_passwords_to_vault()
+        migrated_again = mgr.migrate_keyring_passwords_to_vault()
+
+        assert migrated == 1
+        assert migrated_again == 0
+        assert _fake_get("portkeydrop", site_id) == "secret"
+
+        vault = _VaultStore(tmp_path / "vault.enc")
+        assert vault.get(site_id) == "secret"
+        assert mgr.sites[0].password == "secret"
+
+    def test_no_prompt_when_vault_already_has_data(self, tmp_path):
+        import json
+
+        site_id = "portable-site"
+        (tmp_path / "sites.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": site_id,
+                        "name": "Portable",
+                        "protocol": "sftp",
+                        "host": "example.com",
+                        "port": 22,
+                        "username": "user",
+                        "key_path": "",
+                        "initial_dir": "/",
+                        "notes": "",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        _fake_set("portkeydrop", site_id, "secret")
+        vault = _VaultStore(tmp_path / "vault.enc")
+        vault.set("existing-site", "existing-secret")
+
+        mgr = SiteManager(tmp_path)
+
+        assert mgr.should_offer_keyring_to_vault_migration() is False

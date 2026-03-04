@@ -6,11 +6,57 @@ from portkeydrop.importers import (
     detect_default_path,
     load_from_source,
 )
-from portkeydrop.importers.winscp import parse_ini_file
+from portkeydrop.importers.winscp import (
+    _decrypt_winscp_password,
+    _safe_decrypt,
+    parse_ini_file,
+)
 
 
-def test_parse_winscp_ini_fixture():
-    fixture = Path("tests/fixtures/importers/winscp_sessions.ini")
+_MAGIC = 0xA3  # Same magic as production code
+
+
+def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str:
+    """Inverse of _decrypt_winscp_password - used to generate test vectors."""
+    key = username + hostname
+    data = key + password
+
+    def enc(v: int) -> str:
+        """Encode one WinSCP-obfuscated byte as two hex chars."""
+        x = (~v & 0xFF) ^ _MAGIC
+        return f"{x:02X}"
+
+    return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
+
+
+def test_parse_winscp_ini_fixture(tmp_path):
+    """Parse a WinSCP INI file with encrypted passwords."""
+    # Generate encrypted passwords at test time (no hardcoded hex)
+    pw1_enc = _encrypt_winscp_password("testuser", "testhost.test", "testpass")
+    pw2_enc = _encrypt_winscp_password("user", "host.test", "mypassword")
+
+    ini_content = f"""[Configuration\\Interface]
+RandomValue=1
+
+[Sessions\\Prod%20Server]
+HostName=testhost.test
+PortNumber=22
+FSProtocol=0
+UserName=testuser
+Password={pw1_enc}
+RemoteDirectory=/home/alice
+PublicKeyFile=C:\\keys\\id_ed25519.ppk
+
+[Sessions\\FTP%20Server]
+HostName=host.test
+PortNumber=21
+FileProtocol=ftp
+UserName=user
+Password={pw2_enc}
+RemoteDirectory=/incoming
+"""
+    fixture = tmp_path / "winscp_sessions.ini"
+    fixture.write_text(ini_content)
     sites = parse_ini_file(fixture)
 
     assert len(sites) == 2
@@ -18,17 +64,19 @@ def test_parse_winscp_ini_fixture():
     first = sites[0]
     assert first.name == "Prod Server"
     assert first.protocol == "sftp"
-    assert first.host == "sftp.example.com"
+    assert first.host == "testhost.test"
     assert first.port == 22
-    assert first.username == "alice"
+    assert first.username == "testuser"
+    assert first.password == "testpass"
     assert first.initial_dir == "/home/alice"
     assert first.key_path == "C:\\keys\\id_ed25519.ppk"
 
     second = sites[1]
     assert second.name == "FTP Server"
     assert second.protocol == "ftp"
-    assert second.host == "ftp.example.com"
+    assert second.host == "host.test"
     assert second.port == 21
+    assert second.password == "mypassword"
 
 
 def test_detect_default_path_returns_sentinel_when_registry_available():
@@ -162,3 +210,36 @@ def test_decode_name_backslash():
     from portkeydrop.importers.winscp import _decode_name
 
     assert _decode_name("path%5Cto") == "path\\to"
+
+
+def test_decrypt_winscp_password_known_value():
+    """Decrypt a WinSCP-encrypted password generated from known inputs."""
+    encrypted = _encrypt_winscp_password("testuser", "testhost.test", "testpass")
+    assert _decrypt_winscp_password("testuser", "testhost.test", encrypted) == "testpass"
+
+
+def test_decrypt_winscp_password_different_credentials():
+    encrypted = _encrypt_winscp_password("user", "host.test", "mypassword")
+    assert _decrypt_winscp_password("user", "host.test", encrypted) == "mypassword"
+
+
+def test_safe_decrypt_empty_password():
+    """Empty encrypted string returns empty password."""
+    assert _safe_decrypt("", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_invalid_hex():
+    """Malformed encrypted string returns empty password instead of crashing."""
+    assert _safe_decrypt("ZZZZ", "alice", "host.com") == ""
+
+
+def test_safe_decrypt_truncated():
+    """Truncated encrypted data returns empty password instead of crashing."""
+    assert _safe_decrypt("0000", "alice", "host.com") == ""
+
+
+def test_parse_ini_missing_password_field(tmp_path):
+    """Sessions without a Password field get empty password."""
+    ini = tmp_path / "w.ini"
+    ini.write_text("[Sessions\\H]\nHostName=h.com\nPortNumber=22\nUserName=u\n")
+    assert parse_ini_file(ini)[0].password == ""

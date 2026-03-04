@@ -28,6 +28,12 @@ from portkeydrop.local_files import (
     parent_local,
     rename_local,
 )
+from portkeydrop.migration import (
+    get_migration_candidates,
+    has_migration_candidates,
+    migrate_files,
+)
+from portkeydrop.portable import get_config_dir, is_portable_mode
 from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
 from portkeydrop.settings import (
     load_settings,
@@ -36,6 +42,8 @@ from portkeydrop.settings import (
     update_last_local_folder,
 )
 from portkeydrop.sites import Site, SiteManager
+from portkeydrop.screen_reader import ScreenReaderAnnouncer
+from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +72,8 @@ ID_FILTER = wx.NewIdRef()
 ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
+ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
+ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -81,6 +91,7 @@ class MainFrame(wx.Frame):
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
+        self._announcer = ScreenReaderAnnouncer()
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -174,35 +185,45 @@ class MainFrame(wx.Frame):
         toolbar_panel.SetName("Quick Connect Toolbar")
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        lbl = wx.StaticText(toolbar_panel, label="Protocol:")
+        def _bind_label(lbl: wx.StaticText, ctrl: wx.Window) -> None:
+            # Some wx builds (older wrappers/platform variants) do not expose SetLabelFor.
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(ctrl)
+
+        protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
         self.tb_protocol.SetName("Protocol")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        _bind_label(protocol_lbl, self.tb_protocol)
+        sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Host:")
+        host_lbl = wx.StaticText(toolbar_panel, label="&Host")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
         self.tb_host.SetName("Host")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(host_lbl, self.tb_host)
+        sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Port:")
+        port_lbl = wx.StaticText(toolbar_panel, label="P&ort")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
         self.tb_port.SetName("Port")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(port_lbl, self.tb_port)
+        sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="User:")
+        username_lbl = wx.StaticText(toolbar_panel, label="&Username")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
         self.tb_username.SetName("Username")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(username_lbl, self.tb_username)
+        sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Password:")
+        password_lbl = wx.StaticText(toolbar_panel, label="Pass&word")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
         self.tb_password.SetName("Password")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(password_lbl, self.tb_password)
+        sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
@@ -339,6 +360,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
         self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
+        self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
+        self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
 
@@ -358,6 +381,13 @@ class MainFrame(wx.Frame):
         # Path bar enter
         self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
         self.remote_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_remote_path_enter)
+
+        # Global accelerators for pane navigation and toolbar focus
+        entries = [
+            wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
+        ]
+        self.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
@@ -596,9 +626,9 @@ class MainFrame(wx.Frame):
         if self._is_local_focused() or not self._client:
             self._set_local_cwd(str(Path.home()))
             self._refresh_local_files()
-            self._announce(f"Home: {self._local_cwd}")
+            self._status(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
-            self._announce("Going home...")
+            self._status("Going home...")
             wx.CallAfter(self._navigate_remote_home)
 
     def _navigate_remote_home(self) -> None:
@@ -606,7 +636,7 @@ class MainFrame(wx.Frame):
         try:
             self._client.chdir(self._remote_home)
             self._refresh_remote_files()
-            self._announce(f"Home: {self._client.cwd}")
+            self._status(f"Home: {self._client.cwd}")
         except Exception as e:
             wx.MessageBox(f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
@@ -615,6 +645,19 @@ class MainFrame(wx.Frame):
             self._refresh_local_files()
         else:
             self._refresh_remote_files()
+
+    def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
+        focused = self.FindFocus()
+        if focused is self.local_file_list:
+            self.remote_file_list.SetFocus()
+            self._announce("Remote Files pane")
+            return
+        self.local_file_list.SetFocus()
+        self._announce("Local Files pane")
+
+    def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
+        self.tb_host.SetFocus()
+        self._announce("Address bar")
 
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
@@ -632,6 +675,7 @@ class MainFrame(wx.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
+        restore_focus = self.FindFocus() is self.remote_file_list
         self._apply_sort(files)
         # Insert ".." entry at the top to navigate to parent
         if cwd != "/":
@@ -650,10 +694,11 @@ class MainFrame(wx.Frame):
         if self.remote_file_list.GetItemCount() > 0:
             self.remote_file_list.Select(0)
             self.remote_file_list.Focus(0)
-            self.remote_file_list.SetFocus()
+            if restore_focus:
+                self.remote_file_list.SetFocus()
         count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
         if self._settings.display.announce_file_count:
-            self._announce(f"{cwd}: {count} items")
+            self._status(f"{cwd}: {count} items")
 
     def _on_remote_files_error(self, e: Exception, cwd: str) -> None:
         if isinstance(e, PermissionError):
@@ -665,6 +710,7 @@ class MainFrame(wx.Frame):
         wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
+        restore_focus = self.FindFocus() is self.local_file_list
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
@@ -682,10 +728,11 @@ class MainFrame(wx.Frame):
             if self.local_file_list.GetItemCount() > 0:
                 self.local_file_list.Select(0)
                 self.local_file_list.Focus(0)
-                self.local_file_list.SetFocus()
+                if restore_focus:
+                    self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
             if self._settings.display.announce_file_count:
-                self._announce(f"{self._local_cwd}: {count} items")
+                self._status(f"{self._local_cwd}: {count} items")
         except Exception as e:
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -824,7 +871,7 @@ class MainFrame(wx.Frame):
             f.path,
         )
         if f.is_dir:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._update_status("Loading...", f.path)
             client = self._client
             path = f.path
@@ -844,7 +891,7 @@ class MainFrame(wx.Frame):
 
             threading.Thread(target=_chdir_worker, daemon=True).start()
         else:
-            self._announce(f"{f.name} detected as file, not directory")
+            self._status(f"{f.name} detected as file, not directory")
             self._on_download(None)
 
     def _on_local_item_activated(self, event: wx.ListEvent) -> None:
@@ -901,7 +948,7 @@ class MainFrame(wx.Frame):
         if not f or not f.is_dir or not self._client:
             return
         try:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._client.chdir(f.path)
             self._refresh_remote_files()
         except Exception as e:
@@ -1301,6 +1348,8 @@ class MainFrame(wx.Frame):
 
     def _on_transfer_update(self, event) -> None:
         latest_status_message = None
+        refresh_local_files = False
+        refresh_remote_files = False
         for transfer in self._transfer_manager.transfers:
             current_state = transfer.status.value
             previous_state = self._transfer_state_by_id.get(transfer.id)
@@ -1316,10 +1365,19 @@ class MainFrame(wx.Frame):
                 latest_status_message = f"{direction_label} in progress..."
             elif transfer.status == TransferStatus.COMPLETED:
                 latest_status_message = f"{direction_label} complete."
+                if transfer.direction == TransferDirection.DOWNLOAD:
+                    refresh_local_files = True
+                else:
+                    refresh_remote_files = True
             elif transfer.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
             elif transfer.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+
+        if refresh_local_files:
+            self._refresh_local_files()
+        if refresh_remote_files:
+            self._refresh_remote_files()
 
         if latest_status_message:
             current_path = self._client.cwd if self._client and self._client.connected else ""
@@ -1348,21 +1406,57 @@ class MainFrame(wx.Frame):
         info.SetDescription("Accessible file transfer client for screen reader users")
         wx.adv.AboutBox(info)
 
-    def _announce(self, message: str) -> None:
-        """Announce a message for screen readers via status bar."""
+    def _status(self, message: str) -> None:
+        """Update status bar text without forcing speech."""
         self.status_bar.SetStatusText(message, 0)
-        try:
-            import prismatoid
 
-            prismatoid.speak(message)
-        except Exception:
-            pass
+    def _announce(self, message: str) -> None:
+        """Announce a message for screen readers via status bar + announcer wrapper."""
+        self._status(message)
+        logger.debug("Announcement requested: %s", message)
+        self._announcer.announce(message)
 
 
 class PortkeyDropApp(wx.App):
     """Main wxPython application."""
 
     def OnInit(self) -> bool:
+        if is_portable_mode():
+            portable_dir = get_config_dir()
+            standard_dir = Path.home() / ".portkeydrop"
+            is_fresh_portable_dir = (
+                not (portable_dir / "sites.json").exists()
+                or not (portable_dir / "known_hosts").exists()
+            )
+            if is_fresh_portable_dir and has_migration_candidates(portable_dir, standard_dir):
+                candidates = get_migration_candidates(standard_dir)
+                dialog = MigrationDialog(None, candidates)
+                try:
+                    if dialog.ShowModal() == wx.ID_OK:
+                        selected_files = dialog.get_selected_filenames()
+                        migrate_files(selected_files, standard_dir, portable_dir)
+                finally:
+                    dialog.Destroy()
+
+            keyring_migration_marker = portable_dir / ".keyring_migrated"
+            if not keyring_migration_marker.exists():
+                site_manager = SiteManager(config_dir=portable_dir)
+                if site_manager.should_offer_keyring_to_vault_migration():
+                    prompt_message = (
+                        "Portable mode stores saved passwords in a local encrypted vault "
+                        "(vault.enc).\n\n"
+                        "Import passwords from your system keyring into the portable vault?"
+                    )
+                    result = wx.MessageBox(
+                        prompt_message,
+                        "Import Passwords to Portable Vault",
+                        wx.YES_NO | wx.ICON_INFORMATION,
+                    )
+                    if result == wx.YES:
+                        site_manager.migrate_keyring_passwords_to_vault()
+                    keyring_migration_marker.parent.mkdir(parents=True, exist_ok=True)
+                    keyring_migration_marker.touch(exist_ok=True)
+
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)
