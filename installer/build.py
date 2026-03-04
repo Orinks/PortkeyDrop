@@ -469,9 +469,8 @@ def generate_build_metadata(args: argparse.Namespace) -> None:
 
 def _in_virtual_environment() -> bool:
     """Return True when running inside an activated Python virtual environment."""
-    return (
-        sys.prefix != getattr(sys, "base_prefix", sys.prefix)
-        or bool(os.environ.get("VIRTUAL_ENV"))
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix) or bool(
+        os.environ.get("VIRTUAL_ENV")
     )
 
 
