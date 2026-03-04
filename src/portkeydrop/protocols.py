@@ -483,11 +483,10 @@ class SFTPClient(TransferClient):
                 "Verify the server host key or adjust host key policy."
             ) from e
         except asyncssh.KeyImportError as e:
-            logger.error("Private key requires passphrase: %s", e)
-            raise ConnectionError(
-                "SFTP connection failed: the private key requires a passphrase. "
-                "Decrypt the key or use an agent/password."
-            ) from e
+            error_text = str(e)
+            key_import_message = self._format_key_import_error(error_text)
+            logger.error("Failed to import private key: %s", e)
+            raise ConnectionError(f"SFTP connection failed: {key_import_message}") from e
         except asyncssh.PermissionDenied as e:
             logger.error(
                 "SFTP authentication failed for %s. Methods attempted: %s",
@@ -550,6 +549,21 @@ class SFTPClient(TransferClient):
         except Exception as e:
             logger.error("Unexpected SFTP connection failure: %s", e)
             raise ConnectionError(f"SFTP connection failed: {e}") from e
+
+    @staticmethod
+    def _format_key_import_error(error_text: str) -> str:
+        text = error_text.lower()
+        if any(token in text for token in ("passphrase", "encrypted", "decrypt")):
+            return (
+                "the private key requires a passphrase. "
+                "Provide the key passphrase or use an SSH agent/password."
+            )
+        if any(token in text for token in ("invalid", "unsupported", "format", "malformed")):
+            return (
+                "the private key format is invalid or unsupported. "
+                "Use a valid OpenSSH/PKCS#8/PPK key file."
+            )
+        return "could not import the private key. Verify the key file, passphrase, and key format."
 
     def disconnect(self) -> None:
         if self._sftp:
