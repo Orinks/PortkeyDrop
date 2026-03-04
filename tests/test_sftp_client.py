@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import functools
+import hashlib
 import logging
+import math
 import stat as stat_mod
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -51,6 +55,93 @@ def _setup_readdir_error(mock_sftp: AsyncMock, error: Exception) -> None:
     mock_handler = AsyncMock()
     mock_handler.opendir.side_effect = error
     mock_sftp._handler = mock_handler
+
+
+def _encode_ppk_string(data: bytes) -> bytes:
+    return len(data).to_bytes(4, "big") + data
+
+
+def _encode_ppk_mpint(value: int) -> bytes:
+    if value == 0:
+        return _encode_ppk_string(b"")
+    return _encode_ppk_string(value.to_bytes((value.bit_length() + 7) // 8, "big"))
+
+
+def _is_probable_prime(candidate: int) -> bool:
+    if candidate < 2:
+        return False
+    for small in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29):
+        if candidate == small:
+            return True
+        if candidate % small == 0:
+            return False
+
+    d = candidate - 1
+    s = 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+
+    for base in (2, 3, 5, 7, 11, 13, 17):
+        if base >= candidate:
+            continue
+        x = pow(base, d, candidate)
+        if x in (1, candidate - 1):
+            continue
+        for _ in range(s - 1):
+            x = pow(x, 2, candidate)
+            if x == candidate - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _deterministic_prime(seed: bytes, bits: int) -> int:
+    digest = hashlib.shake_256(seed).digest((bits + 7) // 8)
+    candidate = int.from_bytes(digest, "big")
+    candidate |= (1 << (bits - 1)) | 1
+    while not _is_probable_prime(candidate):
+        candidate += 2
+    return candidate
+
+
+@functools.lru_cache(maxsize=1)
+def _synthetic_rsa_ppk_bytes() -> bytes:
+    e = 65537
+    p = _deterministic_prime(b"portkeydrop-test-ppk-rsa-p", bits=256)
+    q = _deterministic_prime(b"portkeydrop-test-ppk-rsa-q", bits=256)
+    if p == q:
+        q = _deterministic_prime(b"portkeydrop-test-ppk-rsa-q-2", bits=256)
+
+    phi = (p - 1) * (q - 1)
+    if math.gcd(e, phi) != 1:
+        e = 17
+    d = pow(e, -1, phi)
+    n = p * q
+
+    public_blob = b"".join(
+        (_encode_ppk_string(b"ssh-rsa"), _encode_ppk_mpint(e), _encode_ppk_mpint(n))
+    )
+    private_blob = b"".join((_encode_ppk_mpint(d), _encode_ppk_mpint(p), _encode_ppk_mpint(q)))
+
+    public_b64 = base64.b64encode(public_blob).decode("ascii")
+    private_b64 = base64.b64encode(private_blob).decode("ascii")
+    public_lines = [public_b64[i : i + 64] for i in range(0, len(public_b64), 64)]
+    private_lines = [private_b64[i : i + 64] for i in range(0, len(private_b64), 64)]
+
+    lines = [
+        "PuTTY-User-Key-File-3: ssh-rsa",
+        "Encryption: none",
+        "Comment: synthetic-portkeydrop-rsa-regression",
+        f"Public-Lines: {len(public_lines)}",
+        *public_lines,
+        f"Private-Lines: {len(private_lines)}",
+        *private_lines,
+        "Private-MAC: 0000000000000000000000000000000000000000000000000000000000000000",
+        "",
+    ]
+    return "\n".join(lines).encode("ascii")
 
 
 class TestSFTPClientInit:
@@ -203,6 +294,36 @@ class TestSFTPClientConnect:
 
         with pytest.raises(ConnectionError, match="Start your SSH agent and load a key"):
             client.connect()
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_with_synthetic_valid_rsa_ppk_maps_wrong_credentials_to_auth_error(
+        self, mock_connect: AsyncMock, _mock_exists: MagicMock
+    ) -> None:
+        import asyncssh
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            password="wrong-passphrase-or-password",
+            key_path="/tmp/synthetic.ppk",
+        )
+        mock_connect.side_effect = asyncssh.PermissionDenied("denied")
+
+        client = SFTPClient(info)
+        with patch(
+            "portkeydrop.protocols.SFTPClient._read_private_key_file",
+            return_value=_synthetic_rsa_ppk_bytes(),
+        ):
+            with pytest.raises(ConnectionError) as exc:
+                client.connect()
+
+        call_kwargs = mock_connect.call_args[1]
+        assert call_kwargs["agent_path"] is None
+        assert len(call_kwargs["client_keys"]) == 1
+        assert "Authentication failed with key file '/tmp/synthetic.ppk'" in str(exc.value)
+        assert "could not import" not in str(exc.value).lower()
 
 
 class TestSFTPClientHostKeyPolicy:
