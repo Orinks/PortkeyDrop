@@ -192,13 +192,20 @@ def _decrypt_winscp_password(username: str, hostname: str, encrypted: str) -> st
     else:
         length = flag
 
+    offset = _decrypt_next(encrypted_hex)
+    for _ in range(offset):
+        _decrypt_next(encrypted_hex)
+
     result: list[str] = []
     for _ in range(length):
         result.append(chr(_decrypt_next(encrypted_hex)))
 
     password = "".join(result)
     if flag == 0xFF:
-        password = password[len(key) :]
+        if password.startswith(key):
+            password = password[len(key) :]
+        elif key:
+            raise ValueError("Unable to validate WinSCP key prefix")
     return password
 
 

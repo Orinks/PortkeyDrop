@@ -16,7 +16,9 @@ from portkeydrop.importers.winscp import (
 _MAGIC = 0xA3  # Same magic as production code
 
 
-def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str:
+def _encrypt_winscp_password(
+    username: str, hostname: str, password: str, *, offset: int = 0
+) -> str:
     """Inverse of _decrypt_winscp_password - used to generate test vectors."""
     key = username + hostname
     data = key + password
@@ -26,7 +28,10 @@ def _encrypt_winscp_password(username: str, hostname: str, password: str) -> str
         x = (~v & 0xFF) ^ _MAGIC
         return f"{x:02X}"
 
-    return enc(0xFF) + enc(0) + enc(len(data)) + "".join(enc(ord(c)) for c in data)
+    filler = "".join(enc(0) for _ in range(offset))
+    return enc(0xFF) + enc(0) + enc(len(data)) + enc(offset) + filler + "".join(
+        enc(ord(c)) for c in data
+    )
 
 
 def test_parse_winscp_ini_fixture(tmp_path):
@@ -221,6 +226,16 @@ def test_decrypt_winscp_password_known_value():
 def test_decrypt_winscp_password_different_credentials():
     encrypted = _encrypt_winscp_password("user", "host.test", "mypassword")
     assert _decrypt_winscp_password("user", "host.test", encrypted) == "mypassword"
+
+
+def test_decrypt_winscp_password_with_offset_padding():
+    encrypted = _encrypt_winscp_password("user", "host.test", "mypassword", offset=3)
+    assert _decrypt_winscp_password("user", "host.test", encrypted) == "mypassword"
+
+
+def test_safe_decrypt_wrong_key_prefix_returns_empty():
+    encrypted = _encrypt_winscp_password("user", "host.test", "mypassword")
+    assert _safe_decrypt(encrypted, "other", "host.test") == ""
 
 
 def test_safe_decrypt_empty_password():
