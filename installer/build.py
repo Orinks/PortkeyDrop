@@ -348,6 +348,8 @@ def create_portable_zip() -> bool:
 
     version = get_version()
 
+    staging_dir: Path | None = None
+
     if IS_WINDOWS:
         # Look for directory distribution first, then single exe
         source_dir = DIST_DIR / "PortkeyDrop_dir"
@@ -358,9 +360,17 @@ def create_portable_zip() -> bool:
                 source_dir = DIST_DIR / "PortkeyDrop_portable"
                 source_dir.mkdir(exist_ok=True)
                 shutil.copy2(exe_path, source_dir / "PortkeyDrop.exe")
+                staging_dir = source_dir
             else:
                 print("Error: No build output found")
                 return False
+        else:
+            # Keep installer input untouched; stage a separate portable tree.
+            staging_dir = DIST_DIR / "PortkeyDrop_portable"
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            shutil.copytree(source_dir, staging_dir)
+            source_dir = staging_dir
 
         zip_name = f"PortkeyDrop_Portable_v{version}"
     elif IS_MACOS:
@@ -382,12 +392,20 @@ def create_portable_zip() -> bool:
     if Path(f"{zip_path}.zip").exists():
         Path(f"{zip_path}.zip").unlink()
 
-    # Create empty data/ dir to activate portable mode
-    data_dir = source_dir / "data"
-    data_dir.mkdir(exist_ok=True)
+    try:
+        # Create data/ marker to activate portable mode after extraction.
+        data_dir = source_dir / "data"
+        data_dir.mkdir(exist_ok=True)
+        (data_dir / "portable_mode.txt").write_text(
+            "This directory enables PortkeyDrop portable mode.\n",
+            encoding="utf-8",
+        )
 
-    # Create zip
-    shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+        # Create zip
+        shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+    finally:
+        if staging_dir and staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     print(f"\n✓ Portable ZIP created: {zip_path}.zip")
     return True

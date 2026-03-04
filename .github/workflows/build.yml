@@ -95,6 +95,10 @@ jobs:
           python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
           python -m PyInstaller --clean --noconfirm installer/portkeydrop.spec
 
+      - name: Validate runtime deps for installer/portable
+        run: |
+          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data
+
       - name: Create installer
         shell: cmd
         run: |
@@ -108,12 +112,21 @@ jobs:
         run: |
           cd dist
           if exist "PortkeyDrop_dir" (
-            cd PortkeyDrop_dir
+            if exist "PortkeyDrop_portable" rmdir /s /q "PortkeyDrop_portable"
+            xcopy "PortkeyDrop_dir" "PortkeyDrop_portable\" /E /I /Y >nul
+            if not exist "PortkeyDrop_portable\\data" mkdir "PortkeyDrop_portable\\data"
+            echo portable> "PortkeyDrop_portable\\data\\portable_mode.txt"
+            cd PortkeyDrop_portable
             7z a -tzip "..\PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" *
             cd ..
+            rmdir /s /q "PortkeyDrop_portable"
           ) else (
             7z a -tzip "PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" "PortkeyDrop.exe"
           )
+
+      - name: Validate portable ZIP contents
+        run: |
+          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data --portable-zip dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip
 
       - uses: actions/upload-artifact@v6
         with:
