@@ -36,6 +36,7 @@ from portkeydrop.settings import (
     update_last_local_folder,
 )
 from portkeydrop.sites import Site, SiteManager
+from portkeydrop.screen_reader import ScreenReaderAnnouncer
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class MainFrame(wx.Frame):
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
-        self._prism_speech_available: bool | None = None
+        self._announcer = ScreenReaderAnnouncer()
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -1371,30 +1372,10 @@ class MainFrame(wx.Frame):
         wx.adv.AboutBox(info)
 
     def _announce(self, message: str) -> None:
-        """Announce a message for screen readers via status bar and Prismatoid."""
+        """Announce a message for screen readers via status bar + announcer wrapper."""
         self.status_bar.SetStatusText(message, 0)
-
-        # If we've already detected Prismatoid unavailable in this session,
-        # skip repeated import/speak attempts.
-        if self._prism_speech_available is False:
-            return
-
         logger.debug("Announcement requested: %s", message)
-        try:
-            import prismatoid
-
-            prismatoid.speak(message)
-            logger.debug("Announcement spoken via prismatoid")
-            if self._prism_speech_available is None:
-                logger.info("Prismatoid speech available; announcements enabled")
-            self._prism_speech_available = True
-        except Exception as exc:
-            if self._prism_speech_available is not False:
-                logger.warning(
-                    "Prismatoid speech unavailable; falling back to status bar only: %s",
-                    exc,
-                )
-            self._prism_speech_available = False
+        self._announcer.announce(message)
 
 
 class PortkeyDropApp(wx.App):
