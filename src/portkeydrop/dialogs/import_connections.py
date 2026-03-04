@@ -278,8 +278,14 @@ class ImportConnectionsDialog(wx.Dialog):
         try:
             self._loaded_sites = load_from_source(source, path)
         except Exception as exc:
+            message = f"Failed to parse configuration: {exc}"
+            if source == "winscp":
+                message += (
+                    "\n\nTip: WinSCP imports support INI exports and Windows Registry sessions. "
+                    "Passwords protected by WinSCP master password cannot be decrypted."
+                )
             wx.MessageBox(
-                f"Failed to parse configuration: {exc}",
+                message,
                 "Import Sites",
                 wx.OK | wx.ICON_ERROR,
                 self,
@@ -287,8 +293,14 @@ class ImportConnectionsDialog(wx.Dialog):
             return False
 
         if not self._loaded_sites:
+            message = "No connections were found in the selected source."
+            if source == "winscp":
+                message += (
+                    "\n\nTip: Make sure the file contains [Sessions\\...] entries, "
+                    "or use Auto-Detect to load sessions from the Windows Registry."
+                )
             wx.MessageBox(
-                "No connections were found in the selected source.",
+                message,
                 "Import Sites",
                 wx.OK | wx.ICON_INFORMATION,
                 self,
