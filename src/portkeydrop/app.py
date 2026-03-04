@@ -1379,17 +1379,29 @@ class MainFrame(wx.Frame):
         if self._prism_speech_available is False:
             return
 
+        logger.debug("Announcement requested: %s", message)
         try:
-            import prismatoid
+            speaker_module = None
+            try:
+                import prismatoid as speaker_module
 
-            prismatoid.speak(message)
+                speaker_name = "prismatoid"
+            except Exception:
+                import prism as speaker_module  # legacy fallback
+
+                speaker_name = "prism"
+
+            speaker_module.speak(message)
+            logger.debug("Announcement spoken via %s", speaker_name)
             if self._prism_speech_available is None:
-                logger.info("Prismatoid speech available; announcements enabled")
+                logger.info("Speech backend available via %s; announcements enabled", speaker_name)
             self._prism_speech_available = True
         except Exception as exc:
             if self._prism_speech_available is not False:
                 logger.warning(
-                    "Prismatoid speech unavailable; falling back to status bar only: %s", exc
+                    "Speech backend unavailable (prismatoid/prism); "
+                    "falling back to status bar only: %s",
+                    exc,
                 )
             self._prism_speech_available = False
 
