@@ -368,6 +368,48 @@ class TestSFTPClient:
             client.connect()
         assert not client.connected
 
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_key_import_error_requires_passphrase(self, mock_connect, _mock_exists):
+        import asyncssh
+
+        mock_connect.side_effect = asyncssh.KeyImportError(
+            "Key is encrypted and requires passphrase"
+        )
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/id_rsa",
+        )
+        client = SFTPClient(info)
+
+        with pytest.raises(ConnectionError) as exc:
+            client.connect()
+
+        assert "requires a passphrase" in str(exc.value)
+        assert "Provide the key passphrase" in str(exc.value)
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_key_import_error_invalid_format(self, mock_connect, _mock_exists):
+        import asyncssh
+
+        mock_connect.side_effect = asyncssh.KeyImportError("Invalid private key format")
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/bad_key",
+        )
+        client = SFTPClient(info)
+
+        with pytest.raises(ConnectionError) as exc:
+            client.connect()
+
+        assert "invalid or unsupported" in str(exc.value)
+        assert "OpenSSH/PKCS#8/PPK" in str(exc.value)
+
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_disconnect(self, mock_connect):
         mock_conn = AsyncMock()
