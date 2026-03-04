@@ -479,6 +479,91 @@ class TestSFTPClient:
         assert is_ppk is True
         assert variant == "PPK v3 (ssh-ed25519, encryption=aes256-cbc)"
 
+    @staticmethod
+    def _make_minimal_ppk_fixture(version: int, key_type: str, encryption: str) -> bytes:
+        return (
+            f"PuTTY-User-Key-File-{version}: {key_type}\n"
+            f"Encryption: {encryption}\n"
+            "Comment: fixture\n"
+            "Public-Lines: 1\n"
+            "AQIDBA==\n"
+            "Private-Lines: 1\n"
+            "AQIDBA==\n"
+            "Private-MAC: deadbeef\n"
+        ).encode("utf-8")
+
+    @pytest.mark.parametrize(
+        ("version", "key_type", "encryption", "passphrase"),
+        [
+            (2, "ssh-rsa", "none", None),
+            (2, "ssh-rsa", "aes256-cbc", "v2-secret"),
+            (3, "ssh-rsa", "none", None),
+            (3, "ssh-ed25519", "aes256-cbc", "v3-secret"),
+        ],
+    )
+    def test_convert_ppk_with_puttykeys_matrix_success(
+        self,
+        version: int,
+        key_type: str,
+        encryption: str,
+        passphrase: str | None,
+    ):
+        key_data = self._make_minimal_ppk_fixture(version, key_type, encryption)
+        ppkraw_to_openssh = MagicMock(
+            return_value="-----BEGIN OPENSSH PRIVATE KEY-----\nstub\n-----END OPENSSH PRIVATE KEY-----\n"
+        )
+        puttykeys_module = types.ModuleType("puttykeys")
+        puttykeys_module.ppkraw_to_openssh = ppkraw_to_openssh
+
+        with patch.dict(sys.modules, {"puttykeys": puttykeys_module}):
+            converted, reason = SFTPClient._convert_ppk_with_pure_python(
+                key_data,
+                passphrase=passphrase,
+                ppk_variant="PPK (.ppk)",
+            )
+
+        assert reason == ""
+        assert converted is not None
+        assert converted.startswith(b"-----BEGIN OPENSSH PRIVATE KEY-----")
+        ppkraw_to_openssh.assert_called_once_with(key_data.decode("utf-8"), passphrase or "")
+
+    @pytest.mark.parametrize(
+        ("version", "key_type"),
+        [
+            (2, "ssh-rsa"),
+            (3, "ssh-ed25519"),
+        ],
+    )
+    def test_convert_ppk_encrypted_wrong_passphrase_emits_actionable_message(
+        self, version: int, key_type: str
+    ):
+        key_data = self._make_minimal_ppk_fixture(version, key_type, "aes256-cbc")
+        is_ppk, ppk_variant = SFTPClient._parse_ppk_header(key_data)
+        assert is_ppk is True
+
+        ppkraw_to_openssh = MagicMock(side_effect=Exception("HMAC mismatch (bad passphrase?)"))
+        puttykeys_module = types.ModuleType("puttykeys")
+        puttykeys_module.ppkraw_to_openssh = ppkraw_to_openssh
+
+        with patch.dict(sys.modules, {"puttykeys": puttykeys_module}):
+            converted, reason = SFTPClient._convert_ppk_with_pure_python(
+                key_data,
+                passphrase="wrong-passphrase",
+                ppk_variant="PPK (.ppk)",
+            )
+
+        assert converted is None
+        assert reason == "HMAC mismatch (bad passphrase?)"
+        formatted = SFTPClient._format_key_import_error(
+            reason,
+            is_ppk=True,
+            ppk_variant=ppk_variant,
+        ).lower()
+        assert ppk_variant.lower() in formatted
+        assert "supplied passphrase is incorrect" in formatted
+        assert "enter the correct passphrase" in formatted
+        assert "re-export as openssh private key" in formatted
+
     def test_convert_ppk_v3_ed25519_unencrypted_uses_native_path(self):
         import asyncssh
         from cryptography.hazmat.primitives import serialization
