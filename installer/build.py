@@ -68,6 +68,32 @@ def run_command(
         raise
 
 
+def _pip_module_available() -> bool:
+    """Return True when the current interpreter has the pip module."""
+    import importlib.util
+
+    return importlib.util.find_spec("pip") is not None
+
+
+def _install_python_package(package: str) -> None:
+    """Install a package for the current interpreter, preferring uv when available."""
+    uv_bin = _find_uv_binary()
+    if uv_bin:
+        run_command([uv_bin, "pip", "install", "--python", sys.executable, package])
+        return
+
+    if _pip_module_available():
+        run_command([sys.executable, "-m", "pip", "install", package])
+        return
+
+    raise RuntimeError(
+        f"Cannot install missing dependency '{package}': neither 'uv' nor the 'pip' "
+        "module is available for this Python interpreter. Install uv "
+        "(https://docs.astral.sh/uv/getting-started/installation/) and rerun, "
+        "or use a Python environment with pip."
+    )
+
+
 def get_version() -> str:
     """Read version from pyproject.toml."""
     pyproject = ROOT / "pyproject.toml"
@@ -130,7 +156,7 @@ def install_dependencies() -> None:
         print(f"✓ PyInstaller {PyInstaller.__version__} found")
     except ImportError:
         print("Installing PyInstaller...")
-        run_command([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        _install_python_package("pyinstaller")
 
     # Check for Pillow (for icon generation)
     try:
@@ -142,7 +168,7 @@ def install_dependencies() -> None:
             raise ImportError
     except ImportError:
         print("Installing Pillow for icon generation...")
-        run_command([sys.executable, "-m", "pip", "install", "Pillow"])
+        _install_python_package("Pillow")
 
     # Check for asyncssh (required at runtime for SFTP connections)
     try:
@@ -530,6 +556,13 @@ def _ensure_uv_binary() -> str | None:
     uv_bin = _find_uv_binary()
     if uv_bin:
         return uv_bin
+
+    if not _pip_module_available():
+        print(
+            "uv not found and pip module is unavailable; install uv manually from "
+            "https://docs.astral.sh/uv/getting-started/installation/."
+        )
+        return None
 
     print("uv not found; installing uv via pip --user...")
     try:
