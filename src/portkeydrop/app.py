@@ -174,39 +174,44 @@ class MainFrame(wx.Frame):
         toolbar_panel.SetName("Quick Connect Toolbar")
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
+        def _bind_label(lbl: wx.StaticText, ctrl: wx.Window) -> None:
+            # Some wx builds (older wrappers/platform variants) do not expose SetLabelFor.
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(ctrl)
+
         protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
         self.tb_protocol.SetName("Protocol")
-        protocol_lbl.SetLabelFor(self.tb_protocol)
+        _bind_label(protocol_lbl, self.tb_protocol)
         sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         host_lbl = wx.StaticText(toolbar_panel, label="&Host")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
         self.tb_host.SetName("Host")
-        host_lbl.SetLabelFor(self.tb_host)
+        _bind_label(host_lbl, self.tb_host)
         sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         port_lbl = wx.StaticText(toolbar_panel, label="P&ort")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
         self.tb_port.SetName("Port")
-        port_lbl.SetLabelFor(self.tb_port)
+        _bind_label(port_lbl, self.tb_port)
         sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         username_lbl = wx.StaticText(toolbar_panel, label="&Username")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
         self.tb_username.SetName("Username")
-        username_lbl.SetLabelFor(self.tb_username)
+        _bind_label(username_lbl, self.tb_username)
         sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         password_lbl = wx.StaticText(toolbar_panel, label="Pass&word")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
         self.tb_password.SetName("Password")
-        password_lbl.SetLabelFor(self.tb_password)
+        _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
