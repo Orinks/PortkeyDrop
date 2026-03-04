@@ -84,8 +84,11 @@ class TestSFTPClientConnect:
         assert client._connected is True
 
     @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key", return_value=object())
     @patch("asyncssh.connect", new_callable=AsyncMock)
-    def test_connect_with_key_file(self, mock_connect: AsyncMock, _mock_exists: MagicMock) -> None:
+    def test_connect_with_key_file(
+        self, mock_connect: AsyncMock, mock_read_private_key: MagicMock, _mock_exists: MagicMock
+    ) -> None:
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -96,10 +99,14 @@ class TestSFTPClientConnect:
         mock_connect.return_value = mock_conn
 
         client = SFTPClient(info)
-        client.connect()
+        with patch(
+            "portkeydrop.protocols.SFTPClient._read_private_key_file",
+            return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+        ):
+            client.connect()
 
         call_kwargs = mock_connect.call_args[1]
-        assert call_kwargs["client_keys"] == ["/path/to/key"]
+        assert call_kwargs["client_keys"] == [mock_read_private_key.return_value]
         assert call_kwargs["agent_path"] is None
 
     @patch("asyncssh.connect", new_callable=AsyncMock)

@@ -369,11 +369,14 @@ class TestSFTPClient:
         assert not client.connected
 
     @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key")
     @patch("asyncssh.connect", new_callable=AsyncMock)
-    def test_connect_key_import_error_requires_passphrase(self, mock_connect, _mock_exists):
+    def test_connect_key_import_error_requires_passphrase(
+        self, mock_connect, mock_read_private_key, _mock_exists
+    ):
         import asyncssh
 
-        mock_connect.side_effect = asyncssh.KeyImportError(
+        mock_read_private_key.side_effect = asyncssh.KeyImportError(
             "Key is encrypted and requires passphrase"
         )
         info = ConnectionInfo(
@@ -384,18 +387,28 @@ class TestSFTPClient:
         )
         client = SFTPClient(info)
 
-        with pytest.raises(ConnectionError) as exc:
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
             client.connect()
 
         assert "requires a passphrase" in str(exc.value)
         assert "Provide the key passphrase" in str(exc.value)
+        mock_connect.assert_not_called()
 
     @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key")
     @patch("asyncssh.connect", new_callable=AsyncMock)
-    def test_connect_key_import_error_invalid_format(self, mock_connect, _mock_exists):
+    def test_connect_key_import_error_invalid_format(
+        self, mock_connect, mock_read_private_key, _mock_exists
+    ):
         import asyncssh
 
-        mock_connect.side_effect = asyncssh.KeyImportError("Invalid private key format")
+        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key format")
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -404,11 +417,132 @@ class TestSFTPClient:
         )
         client = SFTPClient(info)
 
-        with pytest.raises(ConnectionError) as exc:
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
             client.connect()
 
         assert "invalid or unsupported" in str(exc.value)
         assert "OpenSSH/PKCS#8/PPK" in str(exc.value)
+        mock_connect.assert_not_called()
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.import_private_key", return_value=object())
+    @patch("asyncssh.read_private_key")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_ppk_v3_uses_puttygen_conversion(
+        self,
+        mock_connect,
+        mock_read_private_key,
+        mock_import_private_key,
+        _mock_exists,
+    ):
+        import asyncssh
+
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-3: ssh-ed25519\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_to_openssh",
+                return_value=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n", ""),
+            ),
+        ):
+            client.connect()
+
+        kwargs = mock_connect.call_args[1]
+        assert kwargs["client_keys"] == [mock_import_private_key.return_value]
+        assert kwargs["agent_path"] is None
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_ppk_without_puttygen_has_actionable_error(
+        self, mock_connect, mock_read_private_key, _mock_exists
+    ):
+        import asyncssh
+
+        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-2: ssh-rsa\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_to_openssh",
+                return_value=(None, "puttygen not found"),
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
+            client.connect()
+
+        msg = str(exc.value)
+        assert "Install PuTTYgen" in msg
+        assert "PPK v2" in msg
+        mock_connect.assert_not_called()
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_ppk_wrong_passphrase_has_hint(self, mock_connect, mock_read_private_key, _):
+        import asyncssh
+
+        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+            password="wrong",
+        )
+        client = SFTPClient(info)
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-3: ssh-ed25519\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_to_openssh",
+                return_value=(None, "wrong passphrase"),
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
+            client.connect()
+
+        msg = str(exc.value).lower()
+        assert "passphrase" in msg
+        assert "re-export as openssh" in msg
+        mock_connect.assert_not_called()
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_disconnect(self, mock_connect):
@@ -587,8 +721,9 @@ class TestSFTPClient:
             client.rename("/old.txt", "/new.txt")
 
     @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.read_private_key", return_value=object())
     @patch("asyncssh.connect", new_callable=AsyncMock)
-    def test_connect_with_key_and_stat(self, mock_connect, _mock_exists):
+    def test_connect_with_key_and_stat(self, mock_connect, mock_read_private_key, _mock_exists):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
         mock_sftp.realpath.return_value = "/"
@@ -602,11 +737,15 @@ class TestSFTPClient:
             key_path="/tmp/id_rsa",
         )
         client = SFTPClient(info)
-        client.connect()
+        with patch(
+            "portkeydrop.protocols.SFTPClient._read_private_key_file",
+            return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+        ):
+            client.connect()
 
         kwargs = mock_connect.call_args[1]
         assert kwargs["agent_path"] is None
-        assert kwargs["client_keys"] == ["/tmp/id_rsa"]
+        assert kwargs["client_keys"] == [mock_read_private_key.return_value]
 
         stat_attrs = MagicMock()
         stat_attrs.permissions = stat_mod.S_IFREG | 0o644

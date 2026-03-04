@@ -6,14 +6,17 @@ import asyncio
 import ftplib
 import logging
 import os
+import shutil
 import ssl
 import stat
+import subprocess
+import tempfile
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
 
 if TYPE_CHECKING:
@@ -399,6 +402,107 @@ class SFTPClient(TransferClient):
             raise ConnectionError("Not connected")
         return self._sftp
 
+    @staticmethod
+    def _read_private_key_file(path: str) -> bytes:
+        return Path(path).read_bytes()
+
+    @staticmethod
+    def _parse_ppk_header(key_data: bytes) -> tuple[bool, str]:
+        first_line = key_data.splitlines()[0] if key_data else b""
+        if not first_line.startswith(b"PuTTY-User-Key-File-"):
+            return False, ""
+
+        try:
+            version = first_line.decode("ascii", errors="strict").split(":", maxsplit=1)[0]
+        except UnicodeDecodeError:
+            return True, "PPK"
+
+        return True, version.replace("PuTTY-User-Key-File-", "PPK v")
+
+    @staticmethod
+    def _convert_ppk_to_openssh(
+        key_path: str,
+        passphrase: str | None,
+    ) -> tuple[bytes | None, str]:
+        puttygen_path = shutil.which("puttygen")
+        if puttygen_path is None:
+            return None, "puttygen not found"
+
+        cmd = [puttygen_path, key_path, "-O", "private-openssh"]
+        temp_pass_file: str | None = None
+        try:
+            if passphrase:
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
+                    f.write(passphrase)
+                    f.write("\n")
+                    temp_pass_file = f.name
+                cmd.extend(["--old-passphrase", temp_pass_file])
+
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "conversion failed").strip()
+                return None, detail
+
+            return proc.stdout.encode("utf-8"), ""
+        finally:
+            if temp_pass_file:
+                try:
+                    os.unlink(temp_pass_file)
+                except OSError:
+                    pass
+
+    def _load_client_key(
+        self,
+        key_path: str,
+        passphrase: str | None,
+    ) -> tuple[object, str]:
+        import asyncssh
+
+        key_data = self._read_private_key_file(key_path)
+        is_ppk, ppk_variant = self._parse_ppk_header(key_data)
+
+        native_error: Exception | None = None
+        native_reason = "Invalid private key"
+        try:
+            key = asyncssh.read_private_key(key_path, passphrase=passphrase)
+            return key, f"key-file:{self._info.key_path}"
+        except asyncssh.KeyImportError as exc:
+            native_error = exc
+            native_reason = str(native_error)
+
+        if is_ppk:
+            converted_key_data, convert_reason = self._convert_ppk_to_openssh(key_path, passphrase)
+            if converted_key_data:
+                try:
+                    converted_key = asyncssh.import_private_key(converted_key_data)
+                    return (
+                        converted_key,
+                        f"key-file:{self._info.key_path} ({ppk_variant} converted)",
+                    )
+                except asyncssh.KeyImportError as converted_error:
+                    reason = (
+                        "PPK conversion succeeded, but OpenSSH import still failed: "
+                        f"{converted_error}"
+                    )
+                    raise ConnectionError(
+                        "SFTP connection failed: "
+                        + self._format_key_import_error(
+                            reason,
+                            is_ppk=True,
+                            ppk_variant=ppk_variant,
+                        )
+                    ) from converted_error
+
+            reason = f"native parser error: {native_reason}; conversion error: {convert_reason}"
+            raise ConnectionError(
+                "SFTP connection failed: "
+                + self._format_key_import_error(reason, is_ppk=True, ppk_variant=ppk_variant)
+            ) from native_error
+
+        raise ConnectionError(
+            "SFTP connection failed: " + self._format_key_import_error(native_reason, is_ppk=False)
+        ) from native_error
+
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
@@ -449,12 +553,11 @@ class SFTPClient(TransferClient):
                     raise ConnectionError(
                         f"SFTP connection failed: key file not found: {self._info.key_path}"
                     )
-                # asyncssh handles OpenSSH + PPK v2/v3 natively
                 passphrase = self._info.password if self._info.password else None
-                connect_kwargs["client_keys"] = [key_path]
-                connect_kwargs["passphrase"] = passphrase
+                key_obj, auth_label = self._load_client_key(key_path, passphrase)
+                connect_kwargs["client_keys"] = [key_obj]
                 connect_kwargs["agent_path"] = None  # disable agent
-                auth_methods = [f"key-file:{self._info.key_path}"]
+                auth_methods = [auth_label]
             elif self._info.password:
                 connect_kwargs["password"] = self._info.password
                 auth_methods.append("password")
@@ -551,19 +654,47 @@ class SFTPClient(TransferClient):
             raise ConnectionError(f"SFTP connection failed: {e}") from e
 
     @staticmethod
-    def _format_key_import_error(error_text: str) -> str:
+    def _format_key_import_error(
+        error_text: str,
+        *,
+        is_ppk: bool,
+        ppk_variant: str = "PPK",
+    ) -> str:
+        reason = error_text.strip() or "unknown parse error"
         text = error_text.lower()
-        if any(token in text for token in ("passphrase", "encrypted", "decrypt")):
+        if is_ppk:
+            if "puttygen not found" in text:
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "Install PuTTYgen to enable automatic conversion, or re-export "
+                    "the key as OpenSSH private key."
+                )
+            if any(token in text for token in ("passphrase", "decrypt", "wrong", "unable to load")):
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "The key is likely encrypted or the passphrase is incorrect. "
+                    "Enter the key passphrase, or re-export as OpenSSH private key."
+                )
             return (
-                "the private key requires a passphrase. "
+                f"could not import {ppk_variant} private key ({reason}). "
+                "This build cannot parse this PPK directly. Re-export it in PuTTYgen as "
+                "OpenSSH private key (Conversions -> Export OpenSSH key) and retry."
+            )
+
+        if any(token in text for token in ("passphrase", "encrypted", "decrypt", "incorrect")):
+            return (
+                f"the private key requires a passphrase ({reason}). "
                 "Provide the key passphrase or use an SSH agent/password."
             )
         if any(token in text for token in ("invalid", "unsupported", "format", "malformed")):
             return (
-                "the private key format is invalid or unsupported. "
+                f"the private key format is invalid or unsupported ({reason}). "
                 "Use a valid OpenSSH/PKCS#8/PPK key file."
             )
-        return "could not import the private key. Verify the key file, passphrase, and key format."
+        return (
+            f"could not import the private key ({reason}). "
+            "Verify the key file, passphrase, and key format."
+        )
 
     def disconnect(self) -> None:
         if self._sftp:
