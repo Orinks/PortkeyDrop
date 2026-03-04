@@ -159,15 +159,26 @@ class SiteManagerDialog(wx.Dialog):
     def _on_remove(self, event: wx.CommandEvent) -> None:
         if self._selected_site:
             idx = self.site_list.GetSelection()
+            if idx == wx.NOT_FOUND:
+                # Fall back to the selected site's index when list selection is stale.
+                selected_id = self._selected_site.id
+                idx = wx.NOT_FOUND
+                for i in range(self.site_list.GetCount()):
+                    if self.site_list.GetClientData(i) == selected_id:
+                        idx = i
+                        break
             self._site_manager.remove(self._selected_site.id)
             self._selected_site = None
             self._refresh_site_list()
-            # Set focus to the next item, or the last item, or the list itself
+            # Select next item (or previous if removed last), then return focus to list.
             count = self.site_list.GetCount()
             if count > 0:
-                new_idx = min(idx, count - 1)
+                new_idx = min(idx, count - 1) if idx != wx.NOT_FOUND else 0
                 self.site_list.SetSelection(new_idx)
-                self.site_list.SetFocus()
+                self._selected_site = self._site_manager.sites[new_idx]
+            focus_list = getattr(wx, "CallAfter", None)
+            if callable(focus_list):
+                focus_list(self.site_list.SetFocus)
             else:
                 self.site_list.SetFocus()
 
