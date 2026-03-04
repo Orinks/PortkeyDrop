@@ -6,11 +6,8 @@ import asyncio
 import ftplib
 import logging
 import os
-import shutil
 import ssl
 import stat
-import subprocess
-import tempfile
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -413,43 +410,55 @@ class SFTPClient(TransferClient):
             return False, ""
 
         try:
-            version = first_line.decode("ascii", errors="strict").split(":", maxsplit=1)[0]
+            header = first_line.decode("ascii", errors="strict")
         except UnicodeDecodeError:
             return True, "PPK"
 
-        return True, version.replace("PuTTY-User-Key-File-", "PPK v")
+        version, _, key_type = header.partition(":")
+        version_label = version.replace("PuTTY-User-Key-File-", "PPK v").strip()
+        key_type_label = key_type.strip() or "unknown-key-type"
+
+        encryption_label = "unknown-encryption"
+        for line in key_data.splitlines()[1:12]:
+            if line.startswith(b"Encryption:"):
+                try:
+                    encryption_label = (
+                        line.decode("ascii", errors="strict").split(":", 1)[1].strip()
+                    )
+                except UnicodeDecodeError:
+                    encryption_label = "unknown-encryption"
+                break
+
+        return True, f"{version_label} ({key_type_label}, encryption={encryption_label})"
 
     @staticmethod
-    def _convert_ppk_to_openssh(
-        key_path: str,
+    def _convert_ppk_with_pure_python(
+        key_data: bytes,
         passphrase: str | None,
+        ppk_variant: str,
     ) -> tuple[bytes | None, str]:
-        puttygen_path = shutil.which("puttygen")
-        if puttygen_path is None:
-            return None, "puttygen not found"
-
-        cmd = [puttygen_path, key_path, "-O", "private-openssh"]
-        temp_pass_file: str | None = None
         try:
-            if passphrase:
-                with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
-                    f.write(passphrase)
-                    f.write("\n")
-                    temp_pass_file = f.name
-                cmd.extend(["--old-passphrase", temp_pass_file])
+            from puttykeys import ppkraw_to_openssh
+        except Exception:
+            return None, "pure-python converter 'puttykeys' is not installed"
 
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "conversion failed").strip()
-                return None, detail
+        try:
+            ppk_text = key_data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, "PPK data is not valid UTF-8 text"
 
-            return proc.stdout.encode("utf-8"), ""
-        finally:
-            if temp_pass_file:
-                try:
-                    os.unlink(temp_pass_file)
-                except OSError:
-                    pass
+        try:
+            converted_text = ppkraw_to_openssh(ppk_text, passphrase or "")
+        except Exception as exc:
+            return None, str(exc).strip() or exc.__class__.__name__
+
+        if not converted_text:
+            return None, f"{ppk_variant} conversion is not supported by puttykeys"
+
+        if isinstance(converted_text, bytes):
+            return converted_text, ""
+
+        return converted_text.encode("utf-8"), ""
 
     def _load_client_key(
         self,
@@ -471,15 +480,26 @@ class SFTPClient(TransferClient):
             native_reason = str(native_error)
 
         if is_ppk:
-            converted_key_data, convert_reason = self._convert_ppk_to_openssh(key_path, passphrase)
+            native_reasons = [f"read_private_key: {native_reason}"]
+            try:
+                imported_key = asyncssh.import_private_key(key_data, passphrase=passphrase)
+                return imported_key, f"key-file:{self._info.key_path} ({ppk_variant}, native-bytes)"
+            except asyncssh.KeyImportError as bytes_exc:
+                native_error = bytes_exc
+                native_reasons.append(f"import_private_key: {bytes_exc}")
+
+            converted_key_data, convert_reason = self._convert_ppk_with_pure_python(
+                key_data, passphrase, ppk_variant
+            )
             if converted_key_data:
                 try:
                     converted_key = asyncssh.import_private_key(converted_key_data)
                     return (
                         converted_key,
-                        f"key-file:{self._info.key_path} ({ppk_variant} converted)",
+                        f"key-file:{self._info.key_path} ({ppk_variant}, pure-python converted)",
                     )
                 except asyncssh.KeyImportError as converted_error:
+                    native_error = converted_error
                     reason = (
                         "PPK conversion succeeded, but OpenSSH import still failed: "
                         f"{converted_error}"
@@ -493,7 +513,8 @@ class SFTPClient(TransferClient):
                         )
                     ) from converted_error
 
-            reason = f"native parser error: {native_reason}; conversion error: {convert_reason}"
+            reason_parts = native_reasons + [f"pure-python fallback: {convert_reason}"]
+            reason = "; ".join(reason_parts)
             raise ConnectionError(
                 "SFTP connection failed: "
                 + self._format_key_import_error(reason, is_ppk=True, ppk_variant=ppk_variant)
@@ -663,22 +684,36 @@ class SFTPClient(TransferClient):
         reason = error_text.strip() or "unknown parse error"
         text = error_text.lower()
         if is_ppk:
-            if "puttygen not found" in text:
-                return (
-                    f"could not import {ppk_variant} private key ({reason}). "
-                    "Install PuTTYgen to enable automatic conversion, or re-export "
-                    "the key as OpenSSH private key."
-                )
             if any(token in text for token in ("passphrase", "decrypt", "wrong", "unable to load")):
                 return (
                     f"could not import {ppk_variant} private key ({reason}). "
                     "The key is likely encrypted or the passphrase is incorrect. "
                     "Enter the key passphrase, or re-export as OpenSSH private key."
                 )
+            if "hmac mismatch" in text:
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "The supplied passphrase is incorrect for this PPK. Enter the correct "
+                    "passphrase, or re-export as OpenSSH private key."
+                )
+            if "not installed" in text and "puttykeys" in text:
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "Install the optional pure-Python converter package `puttykeys`, "
+                    "or re-export this key in PuTTYgen as OpenSSH private key "
+                    "(Conversions -> Export OpenSSH key)."
+                )
+            if "conversion is not supported" in text:
+                return (
+                    f"could not import {ppk_variant} private key ({reason}). "
+                    "This detected PPK subtype is not supported by available parsers. "
+                    "Re-export this exact key in PuTTYgen as OpenSSH private key "
+                    "(Conversions -> Export OpenSSH key), then use that file."
+                )
             return (
                 f"could not import {ppk_variant} private key ({reason}). "
-                "This build cannot parse this PPK directly. Re-export it in PuTTYgen as "
-                "OpenSSH private key (Conversions -> Export OpenSSH key) and retry."
+                "Direct parsing failed. Re-export this exact key in PuTTYgen as OpenSSH "
+                "private key (Conversions -> Export OpenSSH key) and retry."
             )
 
         if any(token in text for token in ("passphrase", "encrypted", "decrypt", "incorrect")):
