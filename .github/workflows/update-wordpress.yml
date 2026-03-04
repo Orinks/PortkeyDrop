@@ -1,0 +1,15 @@
+name: Update WordPress on release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  push-to-wordpress:
+    # Keep WordPress sync isolated from build.yml so nightly build/release stays green
+    # even if this external reusable workflow changes or WordPress push fails.
+    uses: Orinks/orinks-github-releases/.github/workflows/push-releases.yml@33718ad2cfa0be8370963fe150abc1de0b7c922b
+    secrets:
+      WP_PUSH_TOKEN: ${{ secrets.WP_PUSH_TOKEN }}
+      WP_SITE_URL: ${{ secrets.WP_SITE_URL }}
