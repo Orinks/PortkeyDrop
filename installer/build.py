@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
@@ -466,6 +467,50 @@ def generate_build_metadata(args: argparse.Namespace) -> None:
             run_command(cmd, cwd=ROOT)
 
 
+def _in_virtual_environment() -> bool:
+    """Return True when running inside an activated Python virtual environment."""
+    return (
+        sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+        or bool(os.environ.get("VIRTUAL_ENV"))
+    )
+
+
+def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
+    """Re-exec build via `uv run` with required deps when no env is active.
+
+    This makes `python installer/build.py` work for users who do not have an
+    activated env, while still respecting existing environments.
+    """
+    if os.environ.get("PKD_BUILD_UV_BOOTSTRAPPED") == "1":
+        return None
+
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        return None
+
+    if _in_virtual_environment():
+        return None
+
+    cmd = [
+        uv_bin,
+        "run",
+        "--with",
+        "pyinstaller",
+        "--with",
+        "pillow",
+        "--with",
+        "asyncssh",
+        "python",
+        str(Path(__file__).resolve()),
+        *argv,
+    ]
+    print("No active virtual environment detected; bootstrapping via uv...")
+    print(f"$ {' '.join(cmd)}")
+    env = os.environ.copy()
+    env["PKD_BUILD_UV_BOOTSTRAPPED"] = "1"
+    return subprocess.run(cmd, cwd=str(ROOT), env=env).returncode
+
+
 def main() -> int:
     """Run the build process."""
     parser = argparse.ArgumentParser(
@@ -513,8 +558,18 @@ def main() -> int:
         default=None,
         help="Custom build tag (e.g. nightly-20260208). Overrides --nightly.",
     )
+    parser.add_argument(
+        "--no-uv-bootstrap",
+        action="store_true",
+        help="Do not auto-reexec with uv when no virtual environment is active.",
+    )
 
     args = parser.parse_args()
+
+    if not args.no_uv_bootstrap:
+        rc = _maybe_reexec_with_uv(sys.argv[1:])
+        if rc is not None:
+            return rc
 
     # Print banner
     print("\n" + "=" * 60)
