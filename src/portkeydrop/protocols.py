@@ -791,7 +791,7 @@ class SFTPClient(TransferClient):
 
             try:
                 converted_key = asyncssh.import_private_key(converted_key_data)
-            except asyncssh.KeyImportError as exc:
+            except Exception as exc:
                 import_failure_detail = str(exc)
                 if (
                     "dmp1 must be odd" in import_failure_detail.lower()
@@ -806,7 +806,7 @@ class SFTPClient(TransferClient):
                                 repaired_key,
                                 f"key-file:{self._info.key_path} ({ppk_variant}, repaired RSA conversion)",
                             )
-                        except asyncssh.KeyImportError as repair_exc:
+                        except Exception as repair_exc:
                             import_failure_detail = (
                                 f"{exc}; native RSA repair import failed: {repair_exc}"
                             )
@@ -996,7 +996,7 @@ class SFTPClient(TransferClient):
         if is_ppk:
             if "dmp1 must be odd" in text or "dmq1 must be odd" in text:
                 return (
-                    f"could not import {ppk_variant} private key ({reason}). "
+                    f"could not import {ppk_variant} private key. "
                     "Converted RSA key material is malformed (invalid CRT parameters). "
                     "Re-export this key in PuTTYgen as OpenSSH private key "
                     "(Conversions -> Export OpenSSH key), or regenerate the RSA key pair."

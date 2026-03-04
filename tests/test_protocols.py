@@ -1198,7 +1198,41 @@ class TestSFTPClient:
         msg = str(exc.value).lower()
         assert "converted rsa key material is malformed" in msg
         assert "export openssh key" in msg
-        assert "native rsa repair failed" in msg
+        assert "dmp1 must be odd" not in msg
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.import_private_key")
+    def test_load_client_key_ppk_dmp1_value_error_is_mapped(self, mock_import_private_key, _):
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+        mock_import_private_key.side_effect = ValueError("dmp1 must be odd")
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-2: ssh-rsa\nEncryption: none\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_with_pure_python",
+                return_value=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n", ""),
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_rsa_unencrypted",
+                return_value=(None, "PPK RSA parameters are inconsistent (n != p*q)"),
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
+            client._load_client_key("/tmp/key.ppk", None)
+
+        msg = str(exc.value).lower()
+        assert "converted rsa key material is malformed" in msg
+        assert "export openssh key" in msg
+        assert "dmp1 must be odd" not in msg
 
     def test_format_key_import_error_covers_fallback_paths(self):
         ppk_passphrase_msg = SFTPClient._format_key_import_error(
