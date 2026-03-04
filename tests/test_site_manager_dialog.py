@@ -127,7 +127,8 @@ class _TextCtrl(_Window):
 
 
 class _Button(_Window):
-    def __init__(self, parent=None, label="", **_kw):
+    def __init__(self, parent=None, id=None, label="", **_kw):
+        self._id = id
         self._label = label
         self._name = ""
 
@@ -136,6 +137,9 @@ class _Button(_Window):
 
     def SetName(self, v):
         self._name = v
+
+    def GetId(self):
+        return self._id
 
 
 class _Choice(_Window):
@@ -351,6 +355,19 @@ class TestSiteManagerDialogInit:
         assert dlg.show_password_btn._label == "S&how"
         assert dlg.show_password_btn._name == "Show password"
         assert hasattr(dlg, "password_text")
+
+    def test_init_creates_close_button_with_cancel_id(self, dialog_module):
+        from portkeydrop.sites import SiteManager
+
+        mod, fake_wx = dialog_module
+        site_manager = MagicMock(spec=SiteManager)
+        site_manager.sites = []
+
+        dlg = mod.SiteManagerDialog(None, site_manager)
+
+        assert hasattr(dlg, "close_btn")
+        assert dlg.close_btn._label == "&Close"
+        assert dlg.close_btn.GetId() == fake_wx.ID_CANCEL
 
 
 class TestEscapeKeyHandler:
