@@ -79,12 +79,19 @@ class TestFallbackToKeyFile:
             mock_conn.start_sftp_client.return_value = mock_sftp
             mock_connect.return_value = mock_conn
 
-            with mock.patch("os.path.exists", return_value=True):
+            with (
+                mock.patch("os.path.exists", return_value=True),
+                mock.patch(
+                    "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                    return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+                ),
+                mock.patch("asyncssh.read_private_key", return_value=object()) as mock_read_key,
+            ):
                 client.connect()
 
                 call_kwargs = mock_connect.call_args[1]
                 assert call_kwargs["agent_path"] is None
-                assert call_kwargs["client_keys"] == ["/home/user/.ssh/id_rsa"]
+                assert call_kwargs["client_keys"] == [mock_read_key.return_value]
 
     def test_key_path_takes_precedence_over_password(self, sftp_info: ConnectionInfo) -> None:
         sftp_info.key_path = "/home/user/.ssh/id_rsa"
@@ -97,15 +104,21 @@ class TestFallbackToKeyFile:
             mock_conn.start_sftp_client.return_value = mock_sftp
             mock_connect.return_value = mock_conn
 
-            with mock.patch("os.path.exists", return_value=True):
+            with (
+                mock.patch("os.path.exists", return_value=True),
+                mock.patch(
+                    "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                    return_value=b"-----BEGIN OPENSSH PRIVATE KEY-----\n",
+                ),
+                mock.patch("asyncssh.read_private_key", return_value=object()) as mock_read_key,
+            ):
                 client.connect()
 
                 call_kwargs = mock_connect.call_args[1]
-                # key_path branch: agent disabled, password used as passphrase
                 assert call_kwargs["agent_path"] is None
                 assert "password" not in call_kwargs
-                assert call_kwargs["client_keys"] == ["/home/user/.ssh/id_rsa"]
-                assert call_kwargs["passphrase"] == "secret"
+                assert "passphrase" not in call_kwargs
+                assert call_kwargs["client_keys"] == [mock_read_key.return_value]
 
 
 class TestFallbackToPassword:

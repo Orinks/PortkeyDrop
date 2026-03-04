@@ -5,6 +5,7 @@ description = "A keyboard-driven file transfer client for FTP, SFTP, FTPS, SCP, 
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "asyncssh>=2.14",
+    "puttykeys",
     "keyring>=25.0",
     "wxPython>=4.2",
     "prismatoid",

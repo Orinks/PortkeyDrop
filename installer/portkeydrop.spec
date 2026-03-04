@@ -73,6 +73,9 @@ if RESOURCES_DIR.exists():
 asyncssh_datas, asyncssh_binaries, asyncssh_hiddenimports = collect_all("asyncssh")
 datas += asyncssh_datas
 binaries += asyncssh_binaries
+puttykeys_datas, puttykeys_binaries, puttykeys_hiddenimports = collect_all("puttykeys")
+datas += puttykeys_datas
+binaries += puttykeys_binaries
 
 # Pull prism/prismatoid runtime package data/binaries for accessibility backend support
 prism_datas, prism_binaries, prism_hiddenimports = collect_optional_all("prism")
@@ -99,6 +102,8 @@ hiddenimports = [
     "keyring.backends.SecretService",
     *collect_submodules("asyncssh"),
     *asyncssh_hiddenimports,
+    *collect_submodules("puttykeys"),
+    *puttykeys_hiddenimports,
     *collect_optional_submodules("prism"),
     *collect_optional_submodules("prismatoid"),
     *prism_hiddenimports,

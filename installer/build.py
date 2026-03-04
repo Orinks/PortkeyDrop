@@ -161,6 +161,23 @@ def install_dependencies() -> None:
             "or 'uv pip install asyncssh')."
         ) from exc
 
+    # Check for puttykeys (required at runtime for .ppk private key conversion)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("puttykeys"):
+            import puttykeys
+
+            print(f"✓ puttykeys {getattr(puttykeys, '__version__', 'unknown')} found")
+        else:
+            raise ImportError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing required dependency: puttykeys. "
+            "Install it in the project env before building (e.g. 'uv add puttykeys' "
+            "or 'uv pip install puttykeys')."
+        ) from exc
+
 
 def build_pyinstaller() -> bool:
     """Build the application with PyInstaller."""
@@ -547,6 +564,8 @@ def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
         "pillow",
         "--with",
         "asyncssh",
+        "--with",
+        "puttykeys",
         "python",
         str(Path(__file__).resolve()),
         *argv,
