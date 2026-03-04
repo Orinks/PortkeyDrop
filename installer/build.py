@@ -475,20 +475,54 @@ def _in_virtual_environment() -> bool:
     )
 
 
-def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
-    """Re-exec build via `uv run` with required deps when no env is active.
+def _find_uv_binary() -> str | None:
+    """Locate uv binary in PATH or common user install locations."""
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        return uv_bin
 
-    This makes `python installer/build.py` work for users who do not have an
-    activated env, while still respecting existing environments.
-    """
+    user_base = Path(getattr(sys, "base_prefix", sys.prefix)).parent
+    candidates = [
+        Path(sys.executable).parent / "uv",
+        Path(sys.executable).parent / "uv.exe",
+        Path.home() / ".local" / "bin" / "uv",
+        Path.home() / "AppData" / "Roaming" / "Python" / "Scripts" / "uv.exe",
+        user_base / "Scripts" / "uv.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def _ensure_uv_binary() -> str | None:
+    """Ensure uv is available; attempt installation via pip if missing."""
+    uv_bin = _find_uv_binary()
+    if uv_bin:
+        return uv_bin
+
+    print("uv not found; installing uv via pip --user...")
+    try:
+        run_command([sys.executable, "-m", "pip", "install", "--user", "uv"], check=True)
+    except Exception:
+        print("Failed to install uv automatically.")
+        return None
+
+    return _find_uv_binary()
+
+
+def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
+    """Re-exec build via `uv run` when user invokes script outside an active env."""
     if os.environ.get("PKD_BUILD_UV_BOOTSTRAPPED") == "1":
         return None
 
-    uv_bin = shutil.which("uv")
-    if not uv_bin:
+    # Only intercept direct, non-venv execution path.
+    if _in_virtual_environment():
         return None
 
-    if _in_virtual_environment():
+    uv_bin = _ensure_uv_binary()
+    if not uv_bin:
+        print("Continuing without uv bootstrap.")
         return None
 
     cmd = [
