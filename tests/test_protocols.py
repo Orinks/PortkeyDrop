@@ -63,6 +63,21 @@ def _build_native_converter_input(
     return (3, key_type, encryption, comment, pub_blob, priv_blob, private_mac)
 
 
+def _build_rsa_ppk_fixture(*, n: int, e: int, d: int, p: int, q: int, version: int = 2) -> bytes:
+    public_blob = _pack_ppk_string(b"ssh-rsa") + _pack_ppk_mpint(e) + _pack_ppk_mpint(n)
+    private_blob = _pack_ppk_mpint(d) + _pack_ppk_mpint(p) + _pack_ppk_mpint(q)
+    return (
+        f"PuTTY-User-Key-File-{version}: ssh-rsa\n"
+        "Encryption: none\n"
+        "Comment: rsa-fixture\n"
+        "Public-Lines: 1\n"
+        f"{base64.b64encode(public_blob).decode()}\n"
+        "Private-Lines: 1\n"
+        f"{base64.b64encode(private_blob).decode()}\n"
+        "Private-MAC: deadbeef\n"
+    ).encode("utf-8")
+
+
 class TestRemoteFile:
     def test_display_size_dir(self):
         f = RemoteFile(name="docs", path="/docs", is_dir=True)
@@ -657,23 +672,44 @@ class TestSFTPClient:
         assert imported is not None
 
     def test_convert_ppk_rsa_unencrypted_rejects_inconsistent_modulus(self):
-        public_blob = _pack_ppk_string(b"ssh-rsa") + _pack_ppk_mpint(65537) + _pack_ppk_mpint(144)
-        private_blob = _pack_ppk_mpint(17) + _pack_ppk_mpint(11) + _pack_ppk_mpint(13)
-        ppk_text = (
-            "PuTTY-User-Key-File-3: ssh-rsa\n"
-            "Encryption: none\n"
-            "Comment: bad-rsa\n"
-            "Public-Lines: 1\n"
-            f"{base64.b64encode(public_blob).decode()}\n"
-            "Private-Lines: 1\n"
-            f"{base64.b64encode(private_blob).decode()}\n"
-            "Private-MAC: deadbeef\n"
-        )
-
-        converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(ppk_text.encode("utf-8"))
+        malformed_ppk = _build_rsa_ppk_fixture(n=144, e=65537, d=17, p=11, q=13, version=3)
+        converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(malformed_ppk)
 
         assert converted is None
         assert "n != p*q" in reason
+
+    def test_convert_ppk_with_pure_python_rsa_uses_native_rebuild_not_converter_output(
+        self, monkeypatch
+    ):
+        import asyncssh
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        numbers = private_key.private_numbers()
+        ppk_data = _build_rsa_ppk_fixture(
+            n=numbers.public_numbers.n,
+            e=numbers.public_numbers.e,
+            d=numbers.d,
+            p=numbers.p,
+            q=numbers.q,
+            version=2,
+        )
+
+        fake_puttykeys = types.ModuleType("puttykeys")
+        fake_puttykeys.ppkraw_to_openssh = lambda _text, _pass: b"MALFORMED-CONVERTER-OUTPUT"
+        monkeypatch.setitem(sys.modules, "puttykeys", fake_puttykeys)
+
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            ppk_data,
+            passphrase=None,
+            ppk_variant="PPK (.ppk)",
+        )
+
+        assert reason == ""
+        assert converted is not None
+        assert converted != b"MALFORMED-CONVERTER-OUTPUT"
+        imported = asyncssh.import_private_key(converted)
+        assert imported is not None
 
     @patch("os.path.exists", return_value=True)
     @patch("asyncssh.import_private_key")
@@ -1199,6 +1235,30 @@ class TestSFTPClient:
         assert "converted rsa key material is malformed" in msg
         assert "export openssh key" in msg
         assert "dmp1 must be odd" not in msg
+
+    @patch("os.path.exists", return_value=True)
+    def test_load_client_key_ppk_rsa_malformed_fixture_has_actionable_message(self, _):
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+        malformed_ppk = _build_rsa_ppk_fixture(n=144, e=65537, d=17, p=11, q=13, version=2)
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=malformed_ppk,
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
+            client._load_client_key("/tmp/key.ppk", None)
+
+        msg = str(exc.value).lower()
+        assert "n != p*q" in msg
+        assert "direct parsing failed" in msg
 
     @patch("os.path.exists", return_value=True)
     @patch("asyncssh.import_private_key")

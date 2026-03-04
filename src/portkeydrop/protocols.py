@@ -703,6 +703,35 @@ class SFTPClient(TransferClient):
     ) -> tuple[bytes | None, str]:
         is_ppk, parsed_variant = SFTPClient._parse_ppk_header(key_data)
         normalized_variant = parsed_variant if is_ppk else ppk_variant
+
+        decoded_ppk: tuple[int, str, str, str, bytes, bytes, str] | None = None
+        try:
+            decoded_ppk = SFTPClient._decode_ppk_text(key_data)
+        except ValueError:
+            decoded_ppk = None
+
+        if decoded_ppk:
+            version, key_type, encryption, *_ = decoded_ppk
+            normalized_key_type = key_type.strip().lower()
+            normalized_encryption = encryption.strip().lower()
+
+            if normalized_key_type == "ssh-rsa" and normalized_encryption == "none":
+                # Avoid trusting third-party converter CRT values for RSA PPK:
+                # rebuild from validated RSA components and serialize deterministically.
+                converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason
+
+            if (
+                version == 3
+                and normalized_key_type == "ssh-ed25519"
+                and normalized_encryption == "none"
+            ):
+                converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+
         if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
             converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
             if converted:
@@ -741,6 +770,24 @@ class SFTPClient(TransferClient):
         try:
             converted_text = ppkraw_to_openssh(ppk_text, passphrase or "")
         except Exception as exc:
+            if decoded_ppk:
+                version, key_type, encryption, *_ = decoded_ppk
+                normalized_key_type = key_type.strip().lower()
+                normalized_encryption = encryption.strip().lower()
+                if normalized_key_type == "ssh-rsa" and normalized_encryption == "none":
+                    converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
+                    if converted:
+                        return converted, ""
+                    return None, reason or (str(exc).strip() or exc.__class__.__name__)
+                if (
+                    version == 3
+                    and normalized_key_type == "ssh-ed25519"
+                    and normalized_encryption == "none"
+                ):
+                    converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                    if converted:
+                        return converted, ""
+                    return None, reason or (str(exc).strip() or exc.__class__.__name__)
             if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
                 converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
                 if converted:
@@ -758,6 +805,16 @@ class SFTPClient(TransferClient):
 
         if not converted_text:
             return None, f"unsupported PPK variant for {ppk_variant}"
+
+        if decoded_ppk:
+            _version, key_type, encryption, *_ = decoded_ppk
+            normalized_key_type = key_type.strip().lower()
+            normalized_encryption = encryption.strip().lower()
+            if normalized_key_type == "ssh-rsa" and normalized_encryption == "none":
+                converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason
 
         if isinstance(converted_text, bytes):
             return converted_text, ""
