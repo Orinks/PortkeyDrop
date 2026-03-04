@@ -49,10 +49,7 @@ def verify_pyz_contains_runtime_modules(pyz_path: Path) -> tuple[bool, list[str]
     found = [token for token in RUNTIME_MODULE_TOKENS if token.encode("utf-8") in data]
 
     if not found:
-        return False, [
-            "missing prism/prismatoid markers in PYZ archive "
-            f"({pyz_path})"
-        ]
+        return False, [f"missing prism/prismatoid markers in PYZ archive ({pyz_path})"]
 
     print(f"Validated runtime modules in PYZ: {pyz_path}")
     print(f"Found runtime token markers: {', '.join(found)}")
