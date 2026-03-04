@@ -104,6 +104,7 @@ class MainFrame(wx.Frame):
         self._bind_events()
         self._update_title()
         self._refresh_local_files()
+        wx.CallAfter(self._set_initial_focus)
 
     def _build_menu(self) -> None:
         menubar = wx.MenuBar()
@@ -314,6 +315,16 @@ class MainFrame(wx.Frame):
             self.SetTitle(f"Portkey Drop - {self._client.cwd}")
         else:
             self.SetTitle("Portkey Drop")
+
+    def _set_initial_focus(self) -> None:
+        """Set startup focus to local files pane."""
+        try:
+            if self.local_file_list.GetItemCount() > 0:
+                self.local_file_list.Select(0)
+                self.local_file_list.Focus(0)
+            self.local_file_list.SetFocus()
+        except Exception:
+            logger.debug("Failed to set initial focus", exc_info=True)
 
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""
