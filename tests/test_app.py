@@ -54,6 +54,7 @@ def _hydrate_frame(module):
     app, _ = module
     frame = object.__new__(app.MainFrame)
     frame._announce = MagicMock()
+    frame._status = MagicMock()
     frame._update_status = MagicMock()
     frame._show_transfer_queue = MagicMock()
     frame._refresh_remote_files = MagicMock()
@@ -534,8 +535,9 @@ def test_on_remote_files_loaded_announces_count(app_module):
     files = [RemoteFile(name="f.txt", path="/home/user/f.txt")]
     app.MainFrame._on_remote_files_loaded(frame, files, "/home/user")
 
-    frame._announce.assert_called_once()
-    assert "/home/user" in frame._announce.call_args[0][0]
+    frame._status.assert_called_once()
+    assert "/home/user" in frame._status.call_args[0][0]
+    frame._announce.assert_not_called()
 
 
 def test_on_remote_item_activated_chdir_error(app_module):

@@ -608,9 +608,9 @@ class MainFrame(wx.Frame):
         if self._is_local_focused() or not self._client:
             self._set_local_cwd(str(Path.home()))
             self._refresh_local_files()
-            self._announce(f"Home: {self._local_cwd}")
+            self._status(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
-            self._announce("Going home...")
+            self._status("Going home...")
             wx.CallAfter(self._navigate_remote_home)
 
     def _navigate_remote_home(self) -> None:
@@ -618,7 +618,7 @@ class MainFrame(wx.Frame):
         try:
             self._client.chdir(self._remote_home)
             self._refresh_remote_files()
-            self._announce(f"Home: {self._client.cwd}")
+            self._status(f"Home: {self._client.cwd}")
         except Exception as e:
             wx.MessageBox(f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
@@ -665,7 +665,7 @@ class MainFrame(wx.Frame):
             self.remote_file_list.SetFocus()
         count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
         if self._settings.display.announce_file_count:
-            self._announce(f"{cwd}: {count} items")
+            self._status(f"{cwd}: {count} items")
 
     def _on_remote_files_error(self, e: Exception, cwd: str) -> None:
         if isinstance(e, PermissionError):
@@ -697,7 +697,7 @@ class MainFrame(wx.Frame):
                 self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
             if self._settings.display.announce_file_count:
-                self._announce(f"{self._local_cwd}: {count} items")
+                self._status(f"{self._local_cwd}: {count} items")
         except Exception as e:
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -836,7 +836,7 @@ class MainFrame(wx.Frame):
             f.path,
         )
         if f.is_dir:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._update_status("Loading...", f.path)
             client = self._client
             path = f.path
@@ -856,7 +856,7 @@ class MainFrame(wx.Frame):
 
             threading.Thread(target=_chdir_worker, daemon=True).start()
         else:
-            self._announce(f"{f.name} detected as file, not directory")
+            self._status(f"{f.name} detected as file, not directory")
             self._on_download(None)
 
     def _on_local_item_activated(self, event: wx.ListEvent) -> None:
@@ -913,7 +913,7 @@ class MainFrame(wx.Frame):
         if not f or not f.is_dir or not self._client:
             return
         try:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._client.chdir(f.path)
             self._refresh_remote_files()
         except Exception as e:
@@ -1371,9 +1371,13 @@ class MainFrame(wx.Frame):
         info.SetDescription("Accessible file transfer client for screen reader users")
         wx.adv.AboutBox(info)
 
+    def _status(self, message: str) -> None:
+        """Update status bar text without forcing speech."""
+        self.status_bar.SetStatusText(message, 0)
+
     def _announce(self, message: str) -> None:
         """Announce a message for screen readers via status bar + announcer wrapper."""
-        self.status_bar.SetStatusText(message, 0)
+        self._status(message)
         logger.debug("Announcement requested: %s", message)
         self._announcer.announce(message)
 
