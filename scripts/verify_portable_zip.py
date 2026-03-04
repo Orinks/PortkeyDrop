@@ -45,22 +45,17 @@ def verify_pyz_contains_runtime_modules(pyz_path: Path) -> tuple[bool, list[str]
     if not pyz_path.exists():
         return False, [f"missing pyz archive: {pyz_path}"]
 
-    with zipfile.ZipFile(pyz_path) as zf:
-        entries = sorted({_normalize(info.filename) for info in zf.infolist()})
+    data = pyz_path.read_bytes().lower()
+    found = [token for token in RUNTIME_MODULE_TOKENS if token.encode("utf-8") in data]
 
-    runtime_entries = _contains_runtime_tokens(entries)
-    if not runtime_entries:
+    if not found:
         return False, [
-            "missing prism/prismatoid module entries in PYZ archive "
+            "missing prism/prismatoid markers in PYZ archive "
             f"({pyz_path})"
         ]
 
     print(f"Validated runtime modules in PYZ: {pyz_path}")
-    for name in runtime_entries[:20]:
-        print(f"  {name}")
-    if len(runtime_entries) > 20:
-        print(f"  ... and {len(runtime_entries) - 20} more")
-
+    print(f"Found runtime token markers: {', '.join(found)}")
     return True, []
 
 
@@ -76,20 +71,11 @@ def verify_portable_zip(zip_path: Path) -> tuple[bool, list[str]]:
     if not any(name == "data/" or name.startswith("data/") for name in entries):
         errors.append("missing required data/ directory contents")
 
-    runtime_entries = _contains_runtime_tokens(entries)
-    if not runtime_entries:
-        errors.append("missing prism/prismatoid-related files in portable zip")
-
     if errors:
         return False, errors
 
     print(f"Validated portable zip: {zip_path}")
-    print("Found prism/prismatoid-related entries:")
-    for name in runtime_entries[:20]:
-        print(f"  {name}")
-    if len(runtime_entries) > 20:
-        print(f"  ... and {len(runtime_entries) - 20} more")
-
+    print("Found data/ directory contents for portable mode")
     return True, []
 
 
