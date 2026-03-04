@@ -108,3 +108,79 @@ def test_cancel_announces_filename_before_refresh(transfer_module):
     manager.cancel.assert_called_once_with(5)
     parent._announce.assert_called_once_with("Cancelled transfer: report.csv")
     dialog._refresh.assert_called_once()
+
+
+def test_refresh_preserves_selected_transfer_when_list_updates(transfer_module):
+    module, fake_wx = transfer_module
+    fake_wx.DEFAULT_DIALOG_STYLE = 0
+    fake_wx.RESIZE_BORDER = 0
+    fake_wx.CLOSE_BOX = 0
+    fake_wx.ID_CLOSE = 999
+    fake_wx.RIGHT = 0
+    fake_wx.ALIGN_RIGHT = 0
+    fake_wx.WXK_ESCAPE = 27
+    fake_wx.VERTICAL = 0
+    fake_wx.HORIZONTAL = 0
+    fake_wx.LIST_STATE_SELECTED = 1
+    fake_wx.LIST_STATE_FOCUSED = 2
+
+    class _Dialog:
+        def __init__(self, parent, *args, **kwargs):
+            self._parent = parent
+
+        def Bind(self, *args, **kwargs):
+            return None
+
+        def SetSizer(self, *args, **kwargs):
+            return None
+
+        def SetName(self, *args, **kwargs):
+            return None
+
+        def Close(self):
+            return None
+
+        def GetParent(self):
+            return self._parent
+
+        def Destroy(self):
+            return None
+
+    fake_wx.Dialog = _Dialog
+
+    parent = MagicMock()
+    manager = MagicMock()
+    manager.transfers = [
+        SimpleNamespace(
+            id=10,
+            remote_path="/remote/a.txt",
+            local_path="/tmp/a.txt",
+            direction=SimpleNamespace(value="download"),
+            progress_pct=10,
+            display_status="in_progress",
+        ),
+        SimpleNamespace(
+            id=20,
+            remote_path="/remote/b.txt",
+            local_path="/tmp/b.txt",
+            direction=SimpleNamespace(value="download"),
+            progress_pct=50,
+            display_status="in_progress",
+        ),
+    ]
+
+    dialog = module.create_transfer_dialog(parent, manager)
+
+    # Replace list control with controllable mock for selection assertions.
+    list_mock = MagicMock()
+    list_mock.GetFirstSelected.return_value = 1  # currently selected second transfer (id=20)
+    list_mock.GetItemCount.side_effect = [0, 1]
+    list_mock.InsertItem.side_effect = [0, 1]
+    dialog.transfer_list = list_mock
+
+    dialog._refresh()
+
+    # Selection should be restored to row of transfer id=20.
+    assert list_mock.SetItemState.call_count >= 1
+    selected_rows = [c.args[0] for c in list_mock.SetItemState.call_args_list]
+    assert 1 in selected_rows
