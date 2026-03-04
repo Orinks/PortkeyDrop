@@ -81,6 +81,7 @@ class MainFrame(wx.Frame):
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
+        self._prism_speech_available: bool | None = None
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -1370,14 +1371,27 @@ class MainFrame(wx.Frame):
         wx.adv.AboutBox(info)
 
     def _announce(self, message: str) -> None:
-        """Announce a message for screen readers via status bar."""
+        """Announce a message for screen readers via status bar and Prismatoid."""
         self.status_bar.SetStatusText(message, 0)
+
+        # If we've already detected Prismatoid unavailable in this session,
+        # skip repeated import/speak attempts.
+        if self._prism_speech_available is False:
+            return
+
         try:
             import prismatoid
 
             prismatoid.speak(message)
-        except Exception:
-            pass
+            if self._prism_speech_available is None:
+                logger.info("Prismatoid speech available; announcements enabled")
+            self._prism_speech_available = True
+        except Exception as exc:
+            if self._prism_speech_available is not False:
+                logger.warning(
+                    "Prismatoid speech unavailable; falling back to status bar only: %s", exc
+                )
+            self._prism_speech_available = False
 
 
 class PortkeyDropApp(wx.App):
