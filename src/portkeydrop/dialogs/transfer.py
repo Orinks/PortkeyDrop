@@ -426,22 +426,69 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
         def _on_timer(self, event):
             self._refresh()
 
+        def _get_selected_transfer_id(self):
+            """Return selected transfer id, if any."""
+            idx = self.transfer_list.GetFirstSelected()
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                return None
+            if idx == wx.NOT_FOUND:
+                return None
+            transfers = self._transfer_manager.transfers
+            if 0 <= idx < len(transfers):
+                return transfers[idx].id
+            return None
+
         def _on_cancel(self, event):
             idx = self.transfer_list.GetFirstSelected()
             if idx == wx.NOT_FOUND:
                 return
             transfers = self._transfer_manager.transfers
             if 0 <= idx < len(transfers):
-                self._transfer_manager.cancel(transfers[idx].id)
+                transfer = transfers[idx]
+                self._transfer_manager.cancel(transfer.id)
+                filename = PurePosixPath(transfer.remote_path).name or os.path.basename(
+                    transfer.local_path
+                )
+                parent = self.GetParent()
+                if parent and hasattr(parent, "_announce") and filename:
+                    parent._announce(f"Cancelled transfer: {filename}")
                 self._refresh()
 
-        def _refresh(self):
+        def _refresh(self, selected_transfer_id=None):
+            if selected_transfer_id is None:
+                selected_transfer_id = self._get_selected_transfer_id()
+
             self.transfer_list.DeleteAllItems()
+            selected_idx = wx.NOT_FOUND
             for t in self._transfer_manager.transfers:
                 name = PurePosixPath(t.remote_path).name
                 idx = self.transfer_list.InsertItem(self.transfer_list.GetItemCount(), name)
                 self.transfer_list.SetItem(idx, 1, t.direction.value)
                 self.transfer_list.SetItem(idx, 2, f"{t.progress_pct}%")
                 self.transfer_list.SetItem(idx, 3, t.display_status)
+                if selected_transfer_id is not None and t.id == selected_transfer_id:
+                    selected_idx = idx
+
+            if selected_idx != wx.NOT_FOUND:
+                # Prefer native selection API when available.
+                if hasattr(self.transfer_list, "SetItemState") and hasattr(
+                    wx, "LIST_STATE_SELECTED"
+                ):
+                    self.transfer_list.SetItemState(
+                        selected_idx, wx.LIST_STATE_SELECTED, wx.LIST_STATE_SELECTED
+                    )
+                    if hasattr(wx, "LIST_STATE_FOCUSED"):
+                        self.transfer_list.SetItemState(
+                            selected_idx, wx.LIST_STATE_FOCUSED, wx.LIST_STATE_FOCUSED
+                        )
+                elif hasattr(self.transfer_list, "Select"):
+                    self.transfer_list.Select(selected_idx)
+
+                if hasattr(self.transfer_list, "Focus"):
+                    self.transfer_list.Focus(selected_idx)
+                if hasattr(self.transfer_list, "EnsureVisible"):
+                    self.transfer_list.EnsureVisible(selected_idx)
 
     return TransferDialog(parent, transfer_manager)

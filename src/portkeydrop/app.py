@@ -42,6 +42,7 @@ from portkeydrop.settings import (
     update_last_local_folder,
 )
 from portkeydrop.sites import Site, SiteManager
+from portkeydrop.screen_reader import ScreenReaderAnnouncer
 from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class MainFrame(wx.Frame):
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
+        self._announcer = ScreenReaderAnnouncer()
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -183,35 +185,45 @@ class MainFrame(wx.Frame):
         toolbar_panel.SetName("Quick Connect Toolbar")
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        lbl = wx.StaticText(toolbar_panel, label="Protocol:")
+        def _bind_label(lbl: wx.StaticText, ctrl: wx.Window) -> None:
+            # Some wx builds (older wrappers/platform variants) do not expose SetLabelFor.
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(ctrl)
+
+        protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
         self.tb_protocol.SetName("Protocol")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+        _bind_label(protocol_lbl, self.tb_protocol)
+        sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Host:")
+        host_lbl = wx.StaticText(toolbar_panel, label="&Host")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
         self.tb_host.SetName("Host")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(host_lbl, self.tb_host)
+        sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Port:")
+        port_lbl = wx.StaticText(toolbar_panel, label="P&ort")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
         self.tb_port.SetName("Port")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(port_lbl, self.tb_port)
+        sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="User:")
+        username_lbl = wx.StaticText(toolbar_panel, label="&Username")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
         self.tb_username.SetName("Username")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(username_lbl, self.tb_username)
+        sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        lbl = wx.StaticText(toolbar_panel, label="Password:")
+        password_lbl = wx.StaticText(toolbar_panel, label="Pass&word")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
         self.tb_password.SetName("Password")
-        sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+        _bind_label(password_lbl, self.tb_password)
+        sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
@@ -614,9 +626,9 @@ class MainFrame(wx.Frame):
         if self._is_local_focused() or not self._client:
             self._set_local_cwd(str(Path.home()))
             self._refresh_local_files()
-            self._announce(f"Home: {self._local_cwd}")
+            self._status(f"Home: {self._local_cwd}")
         elif self._client and self._client.connected:
-            self._announce("Going home...")
+            self._status("Going home...")
             wx.CallAfter(self._navigate_remote_home)
 
     def _navigate_remote_home(self) -> None:
@@ -624,7 +636,7 @@ class MainFrame(wx.Frame):
         try:
             self._client.chdir(self._remote_home)
             self._refresh_remote_files()
-            self._announce(f"Home: {self._client.cwd}")
+            self._status(f"Home: {self._client.cwd}")
         except Exception as e:
             wx.MessageBox(f"Failed to go home: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
@@ -686,7 +698,7 @@ class MainFrame(wx.Frame):
                 self.remote_file_list.SetFocus()
         count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
         if self._settings.display.announce_file_count:
-            self._announce(f"{cwd}: {count} items")
+            self._status(f"{cwd}: {count} items")
 
     def _on_remote_files_error(self, e: Exception, cwd: str) -> None:
         if isinstance(e, PermissionError):
@@ -720,7 +732,7 @@ class MainFrame(wx.Frame):
                     self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
             if self._settings.display.announce_file_count:
-                self._announce(f"{self._local_cwd}: {count} items")
+                self._status(f"{self._local_cwd}: {count} items")
         except Exception as e:
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -859,7 +871,7 @@ class MainFrame(wx.Frame):
             f.path,
         )
         if f.is_dir:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._update_status("Loading...", f.path)
             client = self._client
             path = f.path
@@ -879,7 +891,7 @@ class MainFrame(wx.Frame):
 
             threading.Thread(target=_chdir_worker, daemon=True).start()
         else:
-            self._announce(f"{f.name} detected as file, not directory")
+            self._status(f"{f.name} detected as file, not directory")
             self._on_download(None)
 
     def _on_local_item_activated(self, event: wx.ListEvent) -> None:
@@ -936,7 +948,7 @@ class MainFrame(wx.Frame):
         if not f or not f.is_dir or not self._client:
             return
         try:
-            self._announce(f"Opening {f.name}...")
+            self._status(f"Opening {f.name}...")
             self._client.chdir(f.path)
             self._refresh_remote_files()
         except Exception as e:
@@ -1336,6 +1348,8 @@ class MainFrame(wx.Frame):
 
     def _on_transfer_update(self, event) -> None:
         latest_status_message = None
+        refresh_local_files = False
+        refresh_remote_files = False
         for transfer in self._transfer_manager.transfers:
             current_state = transfer.status.value
             previous_state = self._transfer_state_by_id.get(transfer.id)
@@ -1351,10 +1365,19 @@ class MainFrame(wx.Frame):
                 latest_status_message = f"{direction_label} in progress..."
             elif transfer.status == TransferStatus.COMPLETED:
                 latest_status_message = f"{direction_label} complete."
+                if transfer.direction == TransferDirection.DOWNLOAD:
+                    refresh_local_files = True
+                else:
+                    refresh_remote_files = True
             elif transfer.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
             elif transfer.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+
+        if refresh_local_files:
+            self._refresh_local_files()
+        if refresh_remote_files:
+            self._refresh_remote_files()
 
         if latest_status_message:
             current_path = self._client.cwd if self._client and self._client.connected else ""
@@ -1383,15 +1406,15 @@ class MainFrame(wx.Frame):
         info.SetDescription("Accessible file transfer client for screen reader users")
         wx.adv.AboutBox(info)
 
-    def _announce(self, message: str) -> None:
-        """Announce a message for screen readers via status bar."""
+    def _status(self, message: str) -> None:
+        """Update status bar text without forcing speech."""
         self.status_bar.SetStatusText(message, 0)
-        try:
-            import prismatoid
 
-            prismatoid.speak(message)
-        except Exception:
-            pass
+    def _announce(self, message: str) -> None:
+        """Announce a message for screen readers via status bar + announcer wrapper."""
+        self._status(message)
+        logger.debug("Announcement requested: %s", message)
+        self._announcer.announce(message)
 
 
 class PortkeyDropApp(wx.App):
