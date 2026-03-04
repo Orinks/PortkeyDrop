@@ -6,7 +6,9 @@ import io
 import base64
 import hashlib
 import hmac
+import sys
 import stat as stat_mod
+import types
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +24,34 @@ from portkeydrop.protocols import (
     SFTPClient,
     create_client,
 )
+
+
+def _pack_ppk_string(value: bytes) -> bytes:
+    return len(value).to_bytes(4, "big") + value
+
+
+def _build_native_converter_input(
+    *,
+    key_type: str = "ssh-ed25519",
+    encryption: str = "none",
+    comment: str = "native",
+    public_blob: bytes | None = None,
+    private_blob: bytes | None = None,
+) -> tuple[int, str, str, str, bytes, bytes, str]:
+    pub_blob = public_blob or (_pack_ppk_string(b"ssh-ed25519") + _pack_ppk_string(b"P" * 32))
+    priv_blob = private_blob or _pack_ppk_string(b"S" * 32)
+    payload = b"".join(
+        _pack_ppk_string(part)
+        for part in (
+            key_type.encode("utf-8"),
+            encryption.encode("utf-8"),
+            comment.encode("utf-8"),
+            pub_blob,
+            priv_blob,
+        )
+    )
+    private_mac = hmac.new(b"", payload, hashlib.sha256).hexdigest()
+    return (3, key_type, encryption, comment, pub_blob, priv_blob, private_mac)
 
 
 class TestRemoteFile:
@@ -656,6 +686,312 @@ class TestSFTPClient:
         mock_read_private_key.assert_not_called()
         mock_import_private_key.assert_not_called()
         mock_connect.assert_not_called()
+
+    def test_read_private_key_file_reads_bytes(self, tmp_path):
+        key_file = tmp_path / "id_test.ppk"
+        key_file.write_bytes(b"abc123")
+
+        assert SFTPClient._read_private_key_file(str(key_file)) == b"abc123"
+
+    def test_parse_ppk_header_non_ppk_and_invalid_ascii(self):
+        is_ppk, variant = SFTPClient._parse_ppk_header(b"OPENSSH PRIVATE KEY\n")
+        assert is_ppk is False
+        assert variant == ""
+
+        is_ppk, variant = SFTPClient._parse_ppk_header(b"PuTTY-User-Key-File-\xff: ssh-ed25519\n")
+        assert is_ppk is True
+        assert variant == "PPK"
+
+    def test_parse_ppk_header_handles_non_ascii_encryption_line(self):
+        is_ppk, variant = SFTPClient._parse_ppk_header(
+            b"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: \xff\n"
+        )
+
+        assert is_ppk is True
+        assert variant == "PPK v3 (ssh-ed25519, encryption=unknown-encryption)"
+
+    @pytest.mark.parametrize(
+        ("blob", "offset", "message"),
+        [
+            (b"\x00\x00\x00", 0, "truncated PPK binary data"),
+            (b"\x00\x00\x00\x05ab", 0, "truncated PPK binary data"),
+        ],
+    )
+    def test_read_ppk_string_rejects_truncated_data(self, blob, offset, message):
+        with pytest.raises(ValueError, match=message):
+            SFTPClient._read_ppk_string(blob, offset)
+
+    @pytest.mark.parametrize(
+        ("key_data", "message"),
+        [
+            (b"\xff", "PPK data is not valid UTF-8 text"),
+            (b"", "empty PPK file"),
+            (b"not-a-ppk\n", "not a PuTTY PPK file"),
+            (b"PuTTY-User-Key-File-3:\n", "missing key type in PPK header"),
+            (b"PuTTY-User-Key-File-x: ssh-ed25519\n", "invalid PPK version header"),
+        ],
+    )
+    def test_decode_ppk_text_rejects_invalid_headers(self, key_data, message):
+        with pytest.raises(ValueError, match=message):
+            SFTPClient._decode_ppk_text(key_data)
+
+    @pytest.mark.parametrize(
+        ("key_data", "message"),
+        [
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Comment: test\n"
+                    "Public-Lines: not-a-number\n"
+                    "AA==\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                    "Private-MAC: 00\n"
+                ).encode("utf-8"),
+                "invalid Public-Lines value in PPK",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Comment: test\n"
+                    "Public-Lines: 2\n"
+                    "AA==\n"
+                ).encode("utf-8"),
+                "truncated Public-Lines data in PPK",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Comment: test\n"
+                    "Public-Lines: 1\n"
+                    "AA==\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                    "Private-MAC: 00\n"
+                ).encode("utf-8"),
+                "missing Encryption field in PPK",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Public-Lines: 1\n"
+                    "AA==\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                    "Private-MAC: 00\n"
+                ).encode("utf-8"),
+                "missing Comment field in PPK",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Comment: test\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                    "Private-MAC: 00\n"
+                ).encode("utf-8"),
+                "PPK missing either Public-Lines or Private-Lines",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Comment: test\n"
+                    "Public-Lines: 1\n"
+                    "AA==\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                ).encode("utf-8"),
+                "missing Private-MAC field in PPK",
+            ),
+            (
+                (
+                    "PuTTY-User-Key-File-3: ssh-ed25519\n"
+                    "Encryption: none\n"
+                    "Comment: test\n"
+                    "Public-Lines: 1\n"
+                    "@@@@\n"
+                    "Private-Lines: 1\n"
+                    "AA==\n"
+                    "Private-MAC: 00\n"
+                ).encode("utf-8"),
+                "invalid base64 data in PPK",
+            ),
+        ],
+    )
+    def test_decode_ppk_text_rejects_invalid_fields(self, key_data, message):
+        with pytest.raises(ValueError, match=message):
+            SFTPClient._decode_ppk_text(key_data)
+
+    def test_convert_ppk_v3_native_rejects_version_keytype_encryption_and_mac(self):
+        with patch("portkeydrop.protocols.SFTPClient._decode_ppk_text") as mock_decode:
+            mock_decode.return_value = _build_native_converter_input()
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is not None
+            assert reason == ""
+
+            mock_decode.return_value = (
+                2,
+                "ssh-ed25519",
+                "none",
+                "native",
+                _pack_ppk_string(b"ssh-ed25519") + _pack_ppk_string(b"P" * 32),
+                _pack_ppk_string(b"S" * 32),
+                "00",
+            )
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "unsupported PPK version" in reason
+
+            mock_decode.return_value = _build_native_converter_input(key_type="ssh-rsa")
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "unsupported PPK key type" in reason
+
+            mock_decode.return_value = _build_native_converter_input(encryption="aes256-cbc")
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "unsupported PPK encryption" in reason
+
+            tuple_with_bad_mac = _build_native_converter_input()
+            mock_decode.return_value = (*tuple_with_bad_mac[:-1], "deadbeef")
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "private MAC mismatch" in reason
+
+    def test_convert_ppk_v3_native_rejects_public_private_blob_edge_cases(self):
+        with patch("portkeydrop.protocols.SFTPClient._decode_ppk_text") as mock_decode:
+            bad_public_type = _pack_ppk_string(b"ssh-rsa") + _pack_ppk_string(b"P" * 32)
+            mock_decode.return_value = _build_native_converter_input(public_blob=bad_public_type)
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "unsupported public key type" in reason
+
+            trailing_public = (
+                _pack_ppk_string(b"ssh-ed25519") + _pack_ppk_string(b"P" * 32) + b"extra"
+            )
+            mock_decode.return_value = _build_native_converter_input(public_blob=trailing_public)
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "trailing data in PPK public blob" in reason
+
+            trailing_private = _pack_ppk_string(b"S" * 32) + b"extra"
+            mock_decode.return_value = _build_native_converter_input(private_blob=trailing_private)
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert "trailing data in PPK private blob" in reason
+
+            mock_decode.return_value = _build_native_converter_input(private_blob=b"\x00\x00")
+            result, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(b"unused")
+            assert result is None
+            assert reason == "truncated PPK binary data"
+
+    def test_convert_ppk_with_pure_python_branches(self, monkeypatch):
+        fake_puttykeys = types.ModuleType("puttykeys")
+        fake_puttykeys.ppkraw_to_openssh = lambda _text, _pass: b"converted-key"
+        monkeypatch.setitem(sys.modules, "puttykeys", fake_puttykeys)
+
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            b"not-ppk", passphrase=None, ppk_variant="PPK (.ppk)"
+        )
+        assert reason == ""
+        assert converted == b"converted-key"
+
+        fake_puttykeys.ppkraw_to_openssh = lambda _text, _pass: ""
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            b"not-ppk", passphrase=None, ppk_variant="PPK v3 (ssh-ed25519, encryption=aes256-cbc)"
+        )
+        assert converted is None
+        assert "unsupported PPK variant" in reason
+
+        fake_puttykeys.ppkraw_to_openssh = lambda _text, _pass: "converted-text"
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            b"not-ppk", passphrase=None, ppk_variant="PPK (.ppk)"
+        )
+        assert reason == ""
+        assert converted == b"converted-text"
+
+        fake_puttykeys.ppkraw_to_openssh = lambda _text, _pass: (_ for _ in ()).throw(
+            RuntimeError("conversion boom")
+        )
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            b"not-ppk", passphrase=None, ppk_variant="PPK (.ppk)"
+        )
+        assert converted is None
+        assert reason == "conversion boom"
+
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            b"\xff", passphrase=None, ppk_variant="PPK (.ppk)"
+        )
+        assert converted is None
+        assert reason == "PPK data is not valid UTF-8 text"
+
+    def test_convert_ppk_with_pure_python_handles_missing_puttykeys(self, monkeypatch):
+        monkeypatch.delitem(sys.modules, "puttykeys", raising=False)
+
+        original_import = __import__
+
+        def fail_puttykeys_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "puttykeys":
+                raise ImportError("no puttykeys")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fail_puttykeys_import):
+            converted, reason = SFTPClient._convert_ppk_with_pure_python(
+                b"not-ppk",
+                passphrase=None,
+                ppk_variant="PPK (.ppk)",
+            )
+
+        assert converted is None
+        assert reason == "required dependency 'puttykeys' is not installed"
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.import_private_key")
+    def test_load_client_key_ppk_import_private_key_error(self, mock_import_private_key, _exists):
+        import asyncssh
+
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+        mock_import_private_key.side_effect = asyncssh.KeyImportError("bad converted key")
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_with_pure_python",
+                return_value=(b"-----BEGIN OPENSSH PRIVATE KEY-----\n", ""),
+            ),
+            pytest.raises(ConnectionError, match="converted OpenSSH key import failed"),
+        ):
+            client._load_client_key("/tmp/key.ppk", None)
+
+    def test_format_key_import_error_covers_fallback_paths(self):
+        ppk_passphrase_msg = SFTPClient._format_key_import_error(
+            "wrong passphrase", is_ppk=True, ppk_variant="PPK v3 (ssh-ed25519, encryption=none)"
+        )
+        assert (
+            "key is likely encrypted or the passphrase is incorrect" in ppk_passphrase_msg.lower()
+        )
+
+        ppk_generic_msg = SFTPClient._format_key_import_error(
+            "unexpected parser failure", is_ppk=True, ppk_variant="PPK"
+        )
+        assert "direct parsing failed" in ppk_generic_msg.lower()
+
+        generic_non_ppk_msg = SFTPClient._format_key_import_error("totally unknown", is_ppk=False)
+        assert "could not import the private key" in generic_non_ppk_msg.lower()
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_disconnect(self, mock_connect):
