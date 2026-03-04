@@ -450,27 +450,21 @@ class TestSFTPClient:
     @patch("asyncssh.import_private_key")
     @patch("asyncssh.read_private_key")
     @patch("asyncssh.connect", new_callable=AsyncMock)
-    def test_connect_ppk_v3_uses_pure_python_conversion_without_cli(
+    def test_connect_ppk_v3_uses_conversion_first_path_without_native_parse(
         self,
         mock_connect,
         mock_read_private_key,
         mock_import_private_key,
         _mock_exists,
     ):
-        import asyncssh
-
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
 
-        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
         converted_key_obj = object()
-        mock_import_private_key.side_effect = [
-            asyncssh.KeyImportError("Invalid private key"),
-            converted_key_obj,
-        ]
+        mock_import_private_key.return_value = converted_key_obj
 
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
@@ -494,6 +488,8 @@ class TestSFTPClient:
             client.connect()
             mock_subprocess_run.assert_not_called()
 
+        mock_read_private_key.assert_not_called()
+        mock_import_private_key.assert_called_once_with(b"-----BEGIN OPENSSH PRIVATE KEY-----\n")
         kwargs = mock_connect.call_args[1]
         assert kwargs["client_keys"] == [converted_key_obj]
         assert kwargs["agent_path"] is None
@@ -505,10 +501,6 @@ class TestSFTPClient:
     def test_connect_ppk_v3_unsupported_subtype_has_actionable_error(
         self, mock_connect, mock_read_private_key, mock_import_private_key, _mock_exists
     ):
-        import asyncssh
-
-        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
-        mock_import_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -524,7 +516,10 @@ class TestSFTPClient:
             ),
             patch(
                 "portkeydrop.protocols.SFTPClient._convert_ppk_with_pure_python",
-                return_value=(None, "PPK v3 conversion is not supported by puttykeys"),
+                return_value=(
+                    None,
+                    "unsupported PPK variant for PPK v3 (ssh-ed25519, encryption=aes256-cbc)",
+                ),
             ),
             pytest.raises(ConnectionError) as exc,
         ):
@@ -532,8 +527,10 @@ class TestSFTPClient:
 
         msg = str(exc.value)
         assert "PPK v3 (ssh-ed25519, encryption=aes256-cbc)" in msg
-        assert "not supported" in msg
+        assert "not supported by puttykeys" in msg
         assert "Export OpenSSH key" in msg
+        mock_read_private_key.assert_not_called()
+        mock_import_private_key.assert_not_called()
         mock_connect.assert_not_called()
 
     @patch("os.path.exists", return_value=True)
@@ -543,10 +540,6 @@ class TestSFTPClient:
     def test_connect_ppk_wrong_passphrase_has_hint(
         self, mock_connect, mock_read_private_key, mock_import_private_key, _
     ):
-        import asyncssh
-
-        mock_read_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
-        mock_import_private_key.side_effect = asyncssh.KeyImportError("Invalid private key")
         info = ConnectionInfo(
             protocol=Protocol.SFTP,
             host="example.com",
@@ -572,6 +565,43 @@ class TestSFTPClient:
         msg = str(exc.value).lower()
         assert "passphrase" in msg
         assert "re-export as openssh" in msg
+        mock_read_private_key.assert_not_called()
+        mock_import_private_key.assert_not_called()
+        mock_connect.assert_not_called()
+
+    @patch("os.path.exists", return_value=True)
+    @patch("asyncssh.import_private_key")
+    @patch("asyncssh.read_private_key")
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_connect_ppk_missing_puttykeys_has_clear_error(
+        self, mock_connect, mock_read_private_key, mock_import_private_key, _
+    ):
+        info = ConnectionInfo(
+            protocol=Protocol.SFTP,
+            host="example.com",
+            username="user",
+            key_path="/tmp/key.ppk",
+        )
+        client = SFTPClient(info)
+
+        with (
+            patch(
+                "portkeydrop.protocols.SFTPClient._read_private_key_file",
+                return_value=b"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\n",
+            ),
+            patch(
+                "portkeydrop.protocols.SFTPClient._convert_ppk_with_pure_python",
+                return_value=(None, "required dependency 'puttykeys' is not installed"),
+            ),
+            pytest.raises(ConnectionError) as exc,
+        ):
+            client.connect()
+
+        msg = str(exc.value).lower()
+        assert "puttykeys" in msg
+        assert "required" in msg
+        mock_read_private_key.assert_not_called()
+        mock_import_private_key.assert_not_called()
         mock_connect.assert_not_called()
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
