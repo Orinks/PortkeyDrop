@@ -28,6 +28,12 @@ from portkeydrop.local_files import (
     parent_local,
     rename_local,
 )
+from portkeydrop.migration import (
+    get_migration_candidates,
+    has_migration_candidates,
+    migrate_files,
+)
+from portkeydrop.portable import get_config_dir, is_portable_mode
 from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
 from portkeydrop.settings import (
     load_settings,
@@ -37,6 +43,7 @@ from portkeydrop.settings import (
 )
 from portkeydrop.sites import Site, SiteManager
 from portkeydrop.screen_reader import ScreenReaderAnnouncer
+from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +72,8 @@ ID_FILTER = wx.NewIdRef()
 ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
+ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
+ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -351,6 +360,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
         self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
+        self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
+        self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
 
@@ -370,6 +381,13 @@ class MainFrame(wx.Frame):
         # Path bar enter
         self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
         self.remote_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_remote_path_enter)
+
+        # Global accelerators for pane navigation and toolbar focus
+        entries = [
+            wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
+        ]
+        self.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
@@ -628,6 +646,19 @@ class MainFrame(wx.Frame):
         else:
             self._refresh_remote_files()
 
+    def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
+        focused = self.FindFocus()
+        if focused is self.local_file_list:
+            self.remote_file_list.SetFocus()
+            self._announce("Remote Files pane")
+            return
+        self.local_file_list.SetFocus()
+        self._announce("Local Files pane")
+
+    def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
+        self.tb_host.SetFocus()
+        self._announce("Address bar")
+
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
             return
@@ -644,6 +675,7 @@ class MainFrame(wx.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
+        restore_focus = self.FindFocus() is self.remote_file_list
         self._apply_sort(files)
         # Insert ".." entry at the top to navigate to parent
         if cwd != "/":
@@ -662,7 +694,8 @@ class MainFrame(wx.Frame):
         if self.remote_file_list.GetItemCount() > 0:
             self.remote_file_list.Select(0)
             self.remote_file_list.Focus(0)
-            self.remote_file_list.SetFocus()
+            if restore_focus:
+                self.remote_file_list.SetFocus()
         count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
         if self._settings.display.announce_file_count:
             self._status(f"{cwd}: {count} items")
@@ -677,6 +710,7 @@ class MainFrame(wx.Frame):
         wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
+        restore_focus = self.FindFocus() is self.local_file_list
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
@@ -694,7 +728,8 @@ class MainFrame(wx.Frame):
             if self.local_file_list.GetItemCount() > 0:
                 self.local_file_list.Select(0)
                 self.local_file_list.Focus(0)
-                self.local_file_list.SetFocus()
+                if restore_focus:
+                    self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
             if self._settings.display.announce_file_count:
                 self._status(f"{self._local_cwd}: {count} items")
@@ -1386,6 +1421,42 @@ class PortkeyDropApp(wx.App):
     """Main wxPython application."""
 
     def OnInit(self) -> bool:
+        if is_portable_mode():
+            portable_dir = get_config_dir()
+            standard_dir = Path.home() / ".portkeydrop"
+            is_fresh_portable_dir = (
+                not (portable_dir / "sites.json").exists()
+                or not (portable_dir / "known_hosts").exists()
+            )
+            if is_fresh_portable_dir and has_migration_candidates(portable_dir, standard_dir):
+                candidates = get_migration_candidates(standard_dir)
+                dialog = MigrationDialog(None, candidates)
+                try:
+                    if dialog.ShowModal() == wx.ID_OK:
+                        selected_files = dialog.get_selected_filenames()
+                        migrate_files(selected_files, standard_dir, portable_dir)
+                finally:
+                    dialog.Destroy()
+
+            keyring_migration_marker = portable_dir / ".keyring_migrated"
+            if not keyring_migration_marker.exists():
+                site_manager = SiteManager(config_dir=portable_dir)
+                if site_manager.should_offer_keyring_to_vault_migration():
+                    prompt_message = (
+                        "Portable mode stores saved passwords in a local encrypted vault "
+                        "(vault.enc).\n\n"
+                        "Import passwords from your system keyring into the portable vault?"
+                    )
+                    result = wx.MessageBox(
+                        prompt_message,
+                        "Import Passwords to Portable Vault",
+                        wx.YES_NO | wx.ICON_INFORMATION,
+                    )
+                    if result == wx.YES:
+                        site_manager.migrate_keyring_passwords_to_vault()
+                    keyring_migration_marker.parent.mkdir(parents=True, exist_ok=True)
+                    keyring_migration_marker.touch(exist_ok=True)
+
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)
