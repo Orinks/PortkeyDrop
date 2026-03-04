@@ -246,6 +246,7 @@ def _make_fake_wx():
     wx.EVT_LISTBOX = object()
     wx.EVT_CHAR_HOOK = object()
     wx.MessageBox = MagicMock(return_value=wx.OK)
+    wx.CallAfter = lambda fn, *a, **kw: fn(*a, **kw)
     return wx
 
 
@@ -451,3 +452,29 @@ class TestRemoveFocusManagement:
         # No items left, focus should go to the list itself
         assert dlg.site_list.GetCount() == 0
         assert dlg.site_list._focused is True
+
+    def test_remove_with_stale_selection_uses_selected_site_index(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["A", "B", "C"])
+
+        # Simulate stale list selection while a site is still logically selected.
+        dlg.site_list.SetSelection(fake_wx.NOT_FOUND)
+        dlg._selected_site = sites[1]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # Should still select/focus index 1 (now "C").
+        assert dlg.site_list._selection == 1
+        assert dlg.site_list._focused is True
+
+    def test_remove_updates_selected_site_to_remaining_selection(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["A", "B", "C"])
+
+        dlg.site_list.SetSelection(1)
+        dlg._selected_site = sites[1]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # Logical selection should track the newly selected row ("C").
+        assert dlg._selected_site is dlg._site_manager.sites[1]
