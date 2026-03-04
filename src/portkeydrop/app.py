@@ -104,6 +104,7 @@ class MainFrame(wx.Frame):
         self._bind_events()
         self._update_title()
         self._refresh_local_files()
+        wx.CallAfter(self._set_initial_focus)
 
     def _build_menu(self) -> None:
         menubar = wx.MenuBar()
@@ -253,7 +254,7 @@ class MainFrame(wx.Frame):
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetName("Local Files")
+        self.local_file_list.SetName("Local")
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
@@ -274,7 +275,7 @@ class MainFrame(wx.Frame):
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetName("Remote Files")
+        self.remote_file_list.SetName("Remote")
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
@@ -314,6 +315,16 @@ class MainFrame(wx.Frame):
             self.SetTitle(f"Portkey Drop - {self._client.cwd}")
         else:
             self.SetTitle("Portkey Drop")
+
+    def _set_initial_focus(self) -> None:
+        """Set startup focus to local files pane."""
+        try:
+            if self.local_file_list.GetItemCount() > 0:
+                self.local_file_list.Select(0)
+                self.local_file_list.Focus(0)
+            self.local_file_list.SetFocus()
+        except Exception:
+            logger.debug("Failed to set initial focus", exc_info=True)
 
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""

@@ -107,6 +107,7 @@ class SiteManagerDialog(wx.Dialog):
         self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
         self.connect_btn.Bind(wx.EVT_BUTTON, self._on_connect)
         save_btn.Bind(wx.EVT_BUTTON, self._on_save)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
     def _refresh_site_list(self) -> None:
         self.site_list.Clear()
@@ -149,11 +150,26 @@ class SiteManagerDialog(wx.Dialog):
         self.name_text.SetFocus()
         self.name_text.SelectAll()
 
+    def _on_char_hook(self, event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self.EndModal(wx.ID_CANCEL)
+        else:
+            event.Skip()
+
     def _on_remove(self, event: wx.CommandEvent) -> None:
         if self._selected_site:
+            idx = self.site_list.GetSelection()
             self._site_manager.remove(self._selected_site.id)
             self._selected_site = None
             self._refresh_site_list()
+            # Set focus to the next item, or the last item, or the list itself
+            count = self.site_list.GetCount()
+            if count > 0:
+                new_idx = min(idx, count - 1)
+                self.site_list.SetSelection(new_idx)
+                self.site_list.SetFocus()
+            else:
+                self.site_list.SetFocus()
 
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:
         """Toggle password field between masked and plain text."""

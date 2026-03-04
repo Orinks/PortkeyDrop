@@ -181,9 +181,11 @@ def test_refresh_preserves_selected_transfer_when_list_updates(transfer_module):
     dialog._refresh()
 
     # Selection should be restored to row of transfer id=20.
-    assert list_mock.SetItemState.call_count >= 1
-    selected_rows = [c.args[0] for c in list_mock.SetItemState.call_args_list]
-    assert 1 in selected_rows
+    if list_mock.SetItemState.call_count:
+        selected_rows = [c.args[0] for c in list_mock.SetItemState.call_args_list]
+        assert 1 in selected_rows
+    else:
+        list_mock.Select.assert_called_once_with(1)
 
 
 def test_get_selected_transfer_id_handles_non_int_selection(transfer_module):

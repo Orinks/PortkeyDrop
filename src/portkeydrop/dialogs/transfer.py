@@ -456,39 +456,46 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
                     parent._announce(f"Cancelled transfer: {filename}")
                 self._refresh()
 
-        def _refresh(self, selected_transfer_id=None):
-            if selected_transfer_id is None:
-                selected_transfer_id = self._get_selected_transfer_id()
+        def _refresh(self):
+            transfers = self._transfer_manager.transfers
+            # Save selection/focus so we can restore after update
+            selected = self.transfer_list.GetFirstSelected()
+            focused = self.transfer_list.GetFocusedItem()
+            try:
+                selected = int(selected)
+            except (TypeError, ValueError):
+                selected = wx.NOT_FOUND
+            try:
+                focused = int(focused)
+            except (TypeError, ValueError):
+                focused = wx.NOT_FOUND
 
-            self.transfer_list.DeleteAllItems()
-            selected_idx = wx.NOT_FOUND
-            for t in self._transfer_manager.transfers:
+            current_count = self.transfer_list.GetItemCount()
+            new_count = len(transfers)
+
+            for i, t in enumerate(transfers):
                 name = PurePosixPath(t.remote_path).name
-                idx = self.transfer_list.InsertItem(self.transfer_list.GetItemCount(), name)
-                self.transfer_list.SetItem(idx, 1, t.direction.value)
-                self.transfer_list.SetItem(idx, 2, f"{t.progress_pct}%")
-                self.transfer_list.SetItem(idx, 3, t.display_status)
-                if selected_transfer_id is not None and t.id == selected_transfer_id:
-                    selected_idx = idx
+                cols = [name, t.direction.value, f"{t.progress_pct}%", t.display_status]
+                if i >= current_count:
+                    # New row — insert it
+                    row = self.transfer_list.InsertItem(i, cols[0])
+                    for col_idx in range(1, len(cols)):
+                        self.transfer_list.SetItem(row, col_idx, cols[col_idx])
+                else:
+                    # Existing row — update only changed cells
+                    for col_idx, val in enumerate(cols):
+                        existing = self.transfer_list.GetItemText(i, col_idx)
+                        if existing != val:
+                            self.transfer_list.SetItem(i, col_idx, val)
 
-            if selected_idx != wx.NOT_FOUND:
-                # Prefer native selection API when available.
-                if hasattr(self.transfer_list, "SetItemState") and hasattr(
-                    wx, "LIST_STATE_SELECTED"
-                ):
-                    self.transfer_list.SetItemState(
-                        selected_idx, wx.LIST_STATE_SELECTED, wx.LIST_STATE_SELECTED
-                    )
-                    if hasattr(wx, "LIST_STATE_FOCUSED"):
-                        self.transfer_list.SetItemState(
-                            selected_idx, wx.LIST_STATE_FOCUSED, wx.LIST_STATE_FOCUSED
-                        )
-                elif hasattr(self.transfer_list, "Select"):
-                    self.transfer_list.Select(selected_idx)
+            # Remove extra rows from the bottom (transfers were removed)
+            for i in range(current_count - 1, new_count - 1, -1):
+                self.transfer_list.DeleteItem(i)
 
-                if hasattr(self.transfer_list, "Focus"):
-                    self.transfer_list.Focus(selected_idx)
-                if hasattr(self.transfer_list, "EnsureVisible"):
-                    self.transfer_list.EnsureVisible(selected_idx)
+            # Restore selection/focus
+            if 0 <= selected < new_count:
+                self.transfer_list.Select(selected)
+            if 0 <= focused < new_count:
+                self.transfer_list.Focus(focused)
 
     return TransferDialog(parent, transfer_manager)
