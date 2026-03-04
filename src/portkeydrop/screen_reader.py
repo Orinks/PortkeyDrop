@@ -42,19 +42,50 @@ class ScreenReaderAnnouncer:
     """Announce text via screen reader with graceful fallback."""
 
     def __init__(self) -> None:
-        self._backend, self._backend_name = _try_import_backend()
-        self._available = self._backend is not None
-        if self._available:
-            logger.info("%s available; announcements enabled", self._backend_name)
-        else:
+        self._module, self._backend_name = _try_import_backend()
+        self._speaker = None
+        self._available = False
+
+        if self._module is None:
             logger.debug("No speech backend available; announcements will use status bar only")
+            return
+
+        # Preferred API: Context()->acquire_best()->speak(...)
+        ctx_cls = getattr(self._module, "Context", None)
+        if ctx_cls is not None:
+            try:
+                ctx = ctx_cls()
+                backend = ctx.acquire_best()
+                self._speaker = backend.speak
+                self._available = True
+                logger.info(
+                    "%s backend active: %s",
+                    self._backend_name,
+                    getattr(backend, "name", "unknown"),
+                )
+                return
+            except Exception:
+                logger.debug("%s Context backend unavailable", self._backend_name, exc_info=True)
+
+        # Fallback API: module-level speak(text)
+        speak_fn = getattr(self._module, "speak", None)
+        if callable(speak_fn):
+            self._speaker = speak_fn
+            self._available = True
+            logger.info("%s module-level speak() available", self._backend_name)
+            return
+
+        logger.warning(
+            "%s loaded but no usable speech API found (expected Context or speak)",
+            self._backend_name,
+        )
 
     def announce(self, text: str) -> None:
         """Speak text, if backend is available."""
-        if self._backend is None:
+        if self._speaker is None:
             return
         try:
-            self._backend.speak(text)
+            self._speaker(text)
         except Exception:
             logger.warning(
                 "Failed to announce text via %s",
