@@ -243,3 +243,19 @@ def test_parse_ini_missing_password_field(tmp_path):
     ini = tmp_path / "w.ini"
     ini.write_text("[Sessions\\H]\nHostName=h.com\nPortNumber=22\nUserName=u\n")
     assert parse_ini_file(ini)[0].password == ""
+
+
+def test_parse_ini_decodes_urlencoded_public_key_path(tmp_path):
+    ini = tmp_path / "winscp.ini"
+    ini.write_text(
+        """
+[Sessions\\EncodedKey]
+HostName=example.com
+UserName=test
+PublicKeyFile=C:%5CUsers%5Cstick%5CDocuments%5Ckey.ppk
+""".strip(),
+        encoding="utf-8",
+    )
+
+    site = parse_ini_file(ini)[0]
+    assert site.key_path == r"C:\Users\stick\Documents\key.ppk"

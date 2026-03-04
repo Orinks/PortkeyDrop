@@ -56,7 +56,7 @@ def parse_ini_file(path: Path) -> list[ImportedSite]:
 
         username = cfg.get("UserName", "").strip()
         initial_dir = cfg.get("RemoteDirectory", "").strip() or "/"
-        key_path = cfg.get("PublicKeyFile", "").strip()
+        key_path = _decode_path(cfg.get("PublicKeyFile", "").strip())
         name = _decode_name(section.removeprefix("Sessions\\"))
         password = _safe_decrypt(cfg.get("Password", "").strip(), username, host)
 
@@ -113,7 +113,7 @@ def parse_registry_sessions() -> list[ImportedSite]:
 
                     username = values.get("UserName", "").strip()
                     initial_dir = values.get("RemoteDirectory", "").strip() or "/"
-                    key_path_value = values.get("PublicKeyFile", "").strip()
+                    key_path_value = _decode_path(values.get("PublicKeyFile", "").strip())
                     password = _safe_decrypt(values.get("Password", "").strip(), username, host)
 
                     sites.append(
@@ -164,6 +164,11 @@ def _detect_protocol(cfg: configparser.SectionProxy | dict[str, str]) -> str:
 
 def _decode_name(raw_name: str) -> str:
     return unquote(raw_name).replace("%5C", "\\")
+
+
+def _decode_path(raw_path: str) -> str:
+    """Decode WinSCP-encoded path values (e.g. C:%5CUsers%5C...)."""
+    return unquote(raw_path)
 
 
 def _safe_decrypt(encrypted: str, username: str, hostname: str) -> str:
