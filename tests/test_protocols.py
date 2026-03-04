@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import base64
+import hashlib
+import hmac
 import stat as stat_mod
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -445,6 +448,56 @@ class TestSFTPClient:
 
         assert is_ppk is True
         assert variant == "PPK v3 (ssh-ed25519, encryption=aes256-cbc)"
+
+    def test_convert_ppk_v3_ed25519_unencrypted_uses_native_path(self):
+        import asyncssh
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        seed = bytes(range(1, 33))
+        private_key = ed25519.Ed25519PrivateKey.from_private_bytes(seed)
+        public_value = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        key_type = b"ssh-ed25519"
+        comment = b"native-v3-ed25519"
+
+        public_blob = (
+            len(key_type).to_bytes(4, "big")
+            + key_type
+            + len(public_value).to_bytes(4, "big")
+            + public_value
+        )
+        private_blob = len(seed).to_bytes(4, "big") + seed
+
+        mac_payload = b"".join(
+            len(part).to_bytes(4, "big") + part
+            for part in (key_type, b"none", comment, public_blob, private_blob)
+        )
+        private_mac = hmac.new(b"", mac_payload, hashlib.sha256).hexdigest()
+
+        ppk_text = (
+            "PuTTY-User-Key-File-3: ssh-ed25519\n"
+            "Encryption: none\n"
+            f"Comment: {comment.decode()}\n"
+            "Public-Lines: 1\n"
+            f"{base64.b64encode(public_blob).decode()}\n"
+            "Private-Lines: 1\n"
+            f"{base64.b64encode(private_blob).decode()}\n"
+            f"Private-MAC: {private_mac}\n"
+        )
+
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            ppk_text.encode("utf-8"),
+            passphrase=None,
+            ppk_variant="PPK v3 (ssh-ed25519, encryption=none)",
+        )
+
+        assert reason == ""
+        assert converted is not None
+        imported = asyncssh.import_private_key(converted)
+        assert imported is not None
 
     @patch("os.path.exists", return_value=True)
     @patch("asyncssh.import_private_key")

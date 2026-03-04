@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import ftplib
+import hashlib
+import hmac
 import logging
 import os
 import ssl
@@ -432,14 +436,210 @@ class SFTPClient(TransferClient):
         return True, f"{version_label} ({key_type_label}, encryption={encryption_label})"
 
     @staticmethod
+    def _read_ppk_string(blob: bytes, offset: int) -> tuple[bytes, int]:
+        if offset + 4 > len(blob):
+            raise ValueError("truncated PPK binary data")
+        length = int.from_bytes(blob[offset : offset + 4], "big")
+        offset += 4
+        if offset + length > len(blob):
+            raise ValueError("truncated PPK binary data")
+        value = blob[offset : offset + length]
+        offset += length
+        return value, offset
+
+    @staticmethod
+    def _decode_ppk_text(key_data: bytes) -> tuple[int, str, str, str, bytes, bytes, str]:
+        try:
+            ppk_text = key_data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("PPK data is not valid UTF-8 text") from exc
+
+        lines = [line.strip() for line in ppk_text.splitlines()]
+        if not lines:
+            raise ValueError("empty PPK file")
+
+        first = lines[0]
+        if not first.startswith("PuTTY-User-Key-File-"):
+            raise ValueError("not a PuTTY PPK file")
+
+        prefix, _, key_type = first.partition(":")
+        if not key_type.strip():
+            raise ValueError("missing key type in PPK header")
+
+        try:
+            version = int(prefix.replace("PuTTY-User-Key-File-", "", 1).strip())
+        except ValueError as exc:
+            raise ValueError("invalid PPK version header") from exc
+
+        fields: dict[str, str] = {}
+        i = 1
+        while i < len(lines):
+            line = lines[i]
+            if ":" not in line:
+                i += 1
+                continue
+
+            name, value = line.split(":", 1)
+            name = name.strip()
+            value = value.strip()
+
+            if name in {"Public-Lines", "Private-Lines"}:
+                try:
+                    count = int(value)
+                except ValueError as exc:
+                    raise ValueError(f"invalid {name} value in PPK") from exc
+                start = i + 1
+                end = start + count
+                if end > len(lines):
+                    raise ValueError(f"truncated {name} data in PPK")
+                fields[name] = "".join(lines[start:end])
+                i = end
+                continue
+
+            fields[name] = value
+            i += 1
+
+        if "Encryption" not in fields:
+            raise ValueError("missing Encryption field in PPK")
+        if "Comment" not in fields:
+            raise ValueError("missing Comment field in PPK")
+        if "Public-Lines" not in fields or "Private-Lines" not in fields:
+            raise ValueError("PPK missing either Public-Lines or Private-Lines")
+        if "Private-MAC" not in fields:
+            raise ValueError("missing Private-MAC field in PPK")
+
+        try:
+            public_blob = base64.b64decode(fields["Public-Lines"], validate=True)
+            private_blob = base64.b64decode(fields["Private-Lines"], validate=True)
+        except binascii.Error as exc:
+            raise ValueError("invalid base64 data in PPK") from exc
+
+        return (
+            version,
+            key_type.strip(),
+            fields["Encryption"],
+            fields["Comment"],
+            public_blob,
+            private_blob,
+            fields["Private-MAC"],
+        )
+
+    @staticmethod
+    def _convert_ppk_v3_ed25519_unencrypted(key_data: bytes) -> tuple[bytes | None, str]:
+        try:
+            (
+                version,
+                header_key_type,
+                encryption,
+                comment,
+                public_blob,
+                private_blob,
+                private_mac,
+            ) = SFTPClient._decode_ppk_text(key_data)
+        except ValueError as exc:
+            return None, str(exc)
+
+        if version != 3:
+            return None, "unsupported PPK version for native converter"
+        if header_key_type != "ssh-ed25519":
+            return None, f"unsupported PPK key type '{header_key_type}' for native converter"
+        if encryption.lower() != "none":
+            return None, f"unsupported PPK encryption '{encryption}' for native converter"
+
+        comment_bytes = comment.encode("utf-8")
+        mac_payload = b"".join(
+            len(part).to_bytes(4, "big") + part
+            for part in (
+                header_key_type.encode("utf-8"),
+                encryption.encode("utf-8"),
+                comment_bytes,
+                public_blob,
+                private_blob,
+            )
+        )
+        expected_mac = hmac.new(b"", mac_payload, hashlib.sha256).hexdigest()
+        if expected_mac.lower() != private_mac.lower():
+            return None, "PPK v3 private MAC mismatch (file is corrupted or malformed)"
+
+        try:
+            pub_key_type, pub_offset = SFTPClient._read_ppk_string(public_blob, 0)
+            if pub_key_type != b"ssh-ed25519":
+                decoded_type = pub_key_type.decode("utf-8", errors="ignore")
+                return None, f"unsupported public key type '{decoded_type}'"
+            pub_value, pub_offset = SFTPClient._read_ppk_string(public_blob, pub_offset)
+            if pub_offset != len(public_blob):
+                return None, "unexpected trailing data in PPK public blob"
+
+            priv_value, priv_offset = SFTPClient._read_ppk_string(private_blob, 0)
+            if priv_offset != len(private_blob):
+                return None, "unexpected trailing data in PPK private blob"
+        except ValueError as exc:
+            return None, str(exc)
+
+        pub_part = (
+            len(b"ssh-ed25519").to_bytes(4, "big")
+            + b"ssh-ed25519"
+            + len(pub_value).to_bytes(4, "big")
+            + pub_value
+        )
+        private_part = (
+            (1).to_bytes(4, "big")
+            + (1).to_bytes(4, "big")
+            + pub_part
+            + (len(priv_value) + len(pub_value)).to_bytes(4, "big")
+            + priv_value
+            + pub_value
+            + len(comment_bytes).to_bytes(4, "big")
+            + comment_bytes
+        )
+        pad_len = 8 - (len(private_part) % 8)
+        if pad_len == 0:
+            pad_len = 8
+        private_part += bytes(range(1, pad_len + 1))
+
+        openssh_blob = (
+            b"openssh-key-v1\x00"
+            + len(b"none").to_bytes(4, "big")
+            + b"none"
+            + len(b"none").to_bytes(4, "big")
+            + b"none"
+            + (0).to_bytes(4, "big")
+            + (1).to_bytes(4, "big")
+            + len(pub_part).to_bytes(4, "big")
+            + pub_part
+            + len(private_part).to_bytes(4, "big")
+            + private_part
+        )
+        openssh_b64 = base64.b64encode(openssh_blob).decode("ascii")
+        lines = [openssh_b64[i : i + 70] for i in range(0, len(openssh_b64), 70)]
+        pem = (
+            "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+            + "\n".join(lines)
+            + "\n-----END OPENSSH PRIVATE KEY-----\n"
+        )
+        return pem.encode("utf-8"), ""
+
+    @staticmethod
     def _convert_ppk_with_pure_python(
         key_data: bytes,
         passphrase: str | None,
         ppk_variant: str,
     ) -> tuple[bytes | None, str]:
+        is_ppk, parsed_variant = SFTPClient._parse_ppk_header(key_data)
+        normalized_variant = parsed_variant if is_ppk else ppk_variant
+        if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
+            converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+            if converted:
+                return converted, ""
+
         try:
             from puttykeys import ppkraw_to_openssh
         except Exception:
+            if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
+                converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason or "required dependency 'puttykeys' is not installed"
             return None, "required dependency 'puttykeys' is not installed"
 
         try:
@@ -450,6 +650,11 @@ class SFTPClient(TransferClient):
         try:
             converted_text = ppkraw_to_openssh(ppk_text, passphrase or "")
         except Exception as exc:
+            if normalized_variant == "PPK v3 (ssh-ed25519, encryption=none)":
+                converted, reason = SFTPClient._convert_ppk_v3_ed25519_unencrypted(key_data)
+                if converted:
+                    return converted, ""
+                return None, reason or (str(exc).strip() or exc.__class__.__name__)
             return None, str(exc).strip() or exc.__class__.__name__
 
         if not converted_text:
