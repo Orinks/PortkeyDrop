@@ -452,8 +452,21 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
                     transfer.local_path
                 )
                 parent = self.GetParent()
-                if parent and hasattr(parent, "_announce") and filename:
-                    parent._announce(f"Cancelled transfer: {filename}")
+                status_message = (
+                    f"Transfer cancelled: {filename}" if filename else "Transfer cancelled."
+                )
+                announce = getattr(parent, "_announce", None) if parent else None
+                if callable(announce):
+                    announce(status_message)
+                update_status = getattr(parent, "_update_status", None) if parent else None
+                if callable(update_status):
+                    current_path = ""
+                    client = getattr(parent, "_client", None)
+                    if client is not None and bool(getattr(client, "connected", False)):
+                        cwd = getattr(client, "cwd", "")
+                        if isinstance(cwd, str):
+                            current_path = cwd
+                    update_status(status_message, current_path)
                 self._refresh()
 
         def _refresh(self):

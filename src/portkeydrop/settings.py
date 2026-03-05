@@ -55,6 +55,9 @@ class SpeechSettings:
 class AppSettings:
     remember_last_local_folder_on_startup: bool = True
     last_local_folder: str | None = None
+    auto_update_enabled: bool = True
+    update_check_interval_hours: int = 24
+    update_channel: str = "stable"
 
 
 @dataclass

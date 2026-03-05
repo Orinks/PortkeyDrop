@@ -1,6 +1,7 @@
 """Tests covering MainFrame helpers around uploads, deletes, and transfer updates."""
 
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,17 @@ from tests._wx_stub import load_module_with_fake_wx
 def app_module(monkeypatch):
     module, fake_wx = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
     return module, fake_wx
+
+
+class _ImmediateThread:
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target:
+            self._target(*self._args, **self._kwargs)
 
 
 def _build_frame(module, tmp_path):
@@ -935,3 +947,625 @@ def test_on_remote_item_activated_file_sets_status(app_module):
     frame._on_download.assert_called_once_with(None)
 
     threading.Thread = original_thread
+
+
+def test_get_update_channel_reads_settings(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+
+    assert frame._get_update_channel() == "nightly"
+
+
+def test_update_menu_label_reflects_channel(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+    frame._check_updates_item = MagicMock(SetItemLabel=MagicMock())
+
+    frame.update_check_updates_menu_label()
+
+    frame._check_updates_item.SetItemLabel.assert_called_once_with(
+        "Check for &Updates (Nightly)..."
+    )
+
+
+def test_start_auto_update_checks_starts_timer_with_interval(app_module):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(auto_update_enabled=True, update_check_interval_hours=3)
+    )
+    frame._auto_update_check_timer = None
+
+    timer = MagicMock(Bind=MagicMock(), Start=MagicMock(), Stop=MagicMock())
+    with patch.object(fake_wx, "Timer", return_value=timer):
+        frame._start_auto_update_checks()
+
+    timer.Bind.assert_called_once()
+    timer.Start.assert_called_once_with(3 * 60 * 60 * 1000)
+    assert frame._auto_update_check_timer is timer
+
+
+def test_start_auto_update_checks_stops_existing_and_skips_when_disabled(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    existing_timer = MagicMock(Stop=MagicMock())
+    frame._auto_update_check_timer = existing_timer
+    frame._settings = SimpleNamespace(app=SimpleNamespace(auto_update_enabled=False))
+
+    frame._start_auto_update_checks()
+
+    existing_timer.Stop.assert_called_once()
+    assert frame._auto_update_check_timer is None
+
+
+def test_on_settings_reconfigures_update_menu_and_timer(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="stable"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    frame._local_cwd = "/tmp"
+    frame.remote_file_list = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._remote_files = []
+    frame._local_files = []
+    frame._remote_filter_text = ""
+    frame._local_filter_text = ""
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame.update_check_updates_menu_label = MagicMock()
+    frame._start_auto_update_checks = MagicMock()
+
+    updated_settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="nightly"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_settings=MagicMock(return_value=updated_settings),
+        Destroy=MagicMock(),
+    )
+    with (
+        patch.object(app, "SettingsDialog", return_value=dialog),
+        patch.object(app, "save_settings"),
+        patch.object(app, "update_last_local_folder"),
+    ):
+        frame._on_settings(None)
+
+    frame.update_check_updates_menu_label.assert_called_once()
+    frame._start_auto_update_checks.assert_called_once()
+
+
+def test_on_settings_passes_check_updates_callback(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="stable"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    frame._local_cwd = "/tmp"
+    frame.remote_file_list = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._remote_files = []
+    frame._local_files = []
+    frame._remote_filter_text = ""
+    frame._local_filter_text = ""
+    frame._get_visible_files = MagicMock(return_value=[])
+
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_settings=MagicMock(return_value=frame._settings),
+        Destroy=MagicMock(),
+    )
+    with (
+        patch.object(app, "SettingsDialog", return_value=dialog) as settings_dialog_cls,
+        patch.object(app, "save_settings"),
+        patch.object(app, "update_last_local_folder"),
+    ):
+        frame._on_settings(None)
+
+    assert settings_dialog_cls.call_count == 1
+    kwargs = settings_dialog_cls.call_args.kwargs
+    assert kwargs["on_check_updates"] == frame._on_check_updates_from_settings
+
+
+def test_on_check_updates_from_settings_forwards_channel_and_parent(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._on_check_updates = MagicMock()
+    parent = object()
+
+    frame._on_check_updates_from_settings("nightly", parent)
+
+    frame._on_check_updates.assert_called_once_with(
+        None,
+        channel_override="nightly",
+        parent=parent,
+    )
+
+
+def test_on_check_updates_from_source_shows_info_message(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    monkeypatch.setattr(app.sys, "frozen", False, raising=False)
+
+    frame._on_check_updates(None)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Running from Source"
+
+
+def test_startup_update_check_uses_update_dialog_and_respects_cancel(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(auto_update_enabled=True))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+    frame._download_and_apply_update = MagicMock()
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            assert kwargs["channel"] == "stable"
+            return (
+                SimpleNamespace(
+                    version="1.2.3",
+                    is_nightly=False,
+                    release_notes="Fixes",
+                ),
+                {"tag_name": "v1.2.3"},
+            )
+
+    created: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, parent=None, **kwargs):
+            created["parent"] = parent
+            created["kwargs"] = kwargs
+
+        def ShowModal(self):
+            return 0
+
+        def Destroy(self):
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    monkeypatch.setattr(app, "UpdateAvailableDialog", _FakeDialog)
+
+    frame._check_for_updates_on_startup()
+
+    assert created["parent"] is frame
+    kwargs = created["kwargs"]
+    assert kwargs["current_version"] == "1.0.0"
+    assert kwargs["new_version"] == "1.2.3"
+    assert kwargs["channel_label"] == "Stable"
+    frame._download_and_apply_update.assert_not_called()
+
+
+def test_on_check_updates_honors_channel_override(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    called: dict[str, object] = {}
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            called["channel"] = kwargs["channel"]
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None, channel_override="nightly")
+
+    assert called["channel"] == "nightly"
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "No Updates Available"
+
+
+def test_on_close_stops_auto_update_timer_and_skips_event(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._auto_update_check_timer = MagicMock(Stop=MagicMock())
+    event = MagicMock(Skip=MagicMock())
+
+    frame._on_close(event)
+
+    frame._auto_update_check_timer.Stop.assert_called_once()
+    event.Skip.assert_called_once()
+
+
+def test_get_update_channel_falls_back_to_stable_on_exception(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+
+    class _BrokenSettings:
+        @property
+        def app(self):
+            raise RuntimeError("bad settings")
+
+    frame._settings = _BrokenSettings()
+    assert frame._get_update_channel() == "stable"
+
+
+def test_auto_update_timer_event_calls_startup_check(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._check_for_updates_on_startup = MagicMock()
+    frame._on_auto_update_check_timer(None)
+    frame._check_for_updates_on_startup.assert_called_once()
+
+
+def test_show_update_available_dialog_calls_accept_and_always_destroys(app_module):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    accepted = MagicMock()
+    created = {}
+
+    class _Dialog:
+        def __init__(self, **kwargs):
+            created["kwargs"] = kwargs
+
+        def ShowModal(self):
+            return fake_wx.ID_OK
+
+        def Destroy(self):
+            created["destroyed"] = True
+
+    with patch.object(app, "UpdateAvailableDialog", _Dialog):
+        frame._show_update_available_dialog(
+            current_display_version="1.0.0",
+            update_info=SimpleNamespace(version="1.1.0", is_nightly=True, release_notes="notes"),
+            on_accept=accepted,
+            parent=None,
+        )
+
+    accepted.assert_called_once()
+    assert created["destroyed"] is True
+    assert created["kwargs"]["channel_label"] == "Nightly"
+
+
+def test_startup_update_check_skips_when_auto_updates_disabled(app_module, monkeypatch):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(auto_update_enabled=False))
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+
+    service_ctor = MagicMock(side_effect=AssertionError("should not construct service"))
+    monkeypatch.setattr(app, "UpdateService", service_ctor)
+    frame._check_for_updates_on_startup()
+    service_ctor.assert_not_called()
+
+
+def test_startup_update_check_skips_nightly_without_build_tag(app_module, monkeypatch):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(auto_update_enabled=True, update_channel="nightly")
+    )
+    frame.version = "1.0.0"
+    frame.build_tag = None
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+
+    service_ctor = MagicMock(side_effect=AssertionError("should not construct service"))
+    monkeypatch.setattr(app, "UpdateService", service_ctor)
+    frame._check_for_updates_on_startup()
+    service_ctor.assert_not_called()
+
+
+def test_on_check_updates_no_update_message_for_nightly_on_stable_channel(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+    frame.version = "1.0.0"
+    frame.build_tag = "nightly-20260305"
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            assert kwargs["channel"] == "stable"
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None, channel_override="stable")
+
+    msg = fake_wx.MessageBox.call_args.args[0]
+    assert "No newer stable release available" in msg
+
+
+def test_on_check_updates_no_update_message_for_latest_nightly(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+    frame.version = "1.0.0"
+    frame.build_tag = "nightly-20260305"
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            assert kwargs["channel"] == "nightly"
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None)
+
+    msg = fake_wx.MessageBox.call_args.args[0]
+    assert "latest nightly (20260305)" in msg
+
+
+def test_on_check_updates_ends_busy_cursor_and_reports_failures(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "BeginBusyCursor", MagicMock(), raising=False)
+    monkeypatch.setattr(fake_wx, "EndBusyCursor", MagicMock(), raising=False)
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            raise RuntimeError("network down")
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None)
+    fake_wx.BeginBusyCursor.assert_called_once()
+    fake_wx.EndBusyCursor.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Update Check Failed"
+
+
+def test_download_and_apply_update_success_with_progress_and_apply(
+    app_module, monkeypatch, tmp_path
+):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    update_info = SimpleNamespace(artifact_name="PortkeyDrop.zip")
+    artifact_path = tmp_path / "PortkeyDrop.zip"
+    artifact_path.write_text("payload", encoding="utf-8")
+    progress_dialog = MagicMock(Update=MagicMock(return_value=(True, False)), Destroy=MagicMock())
+
+    monkeypatch.setattr(
+        fake_wx, "ProgressDialog", MagicMock(return_value=progress_dialog), raising=False
+    )
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "PD_APP_MODAL", 1, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_AUTO_HIDE", 2, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_CAN_ABORT", 4, raising=False)
+    monkeypatch.setattr(fake_wx, "YES", 101, raising=False)
+    monkeypatch.setattr(fake_wx, "ICON_QUESTION", 106, raising=False)
+    monkeypatch.setattr(fake_wx, "MessageBox", MagicMock(return_value=fake_wx.YES), raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(app.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(app, "is_portable_mode", lambda: False)
+    apply_mock = MagicMock()
+    monkeypatch.setattr(app, "apply_update", apply_mock)
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def download_update(self, *args, **kwargs):
+            kwargs["progress_callback"](50, 100)
+            return artifact_path
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._download_and_apply_update(update_info, {"tag_name": "v1.2.3"})
+    progress_dialog.Update.assert_called_once()
+    progress_dialog.Destroy.assert_called_once()
+    apply_mock.assert_called_once_with(artifact_path, portable=False)
+
+
+def test_download_and_apply_update_checksum_failure_shows_error(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    update_info = SimpleNamespace(artifact_name="PortkeyDrop.zip")
+    progress_dialog = MagicMock(Update=MagicMock(), Destroy=MagicMock())
+
+    monkeypatch.setattr(
+        fake_wx, "ProgressDialog", MagicMock(return_value=progress_dialog), raising=False
+    )
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "PD_APP_MODAL", 1, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_AUTO_HIDE", 2, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_CAN_ABORT", 4, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def download_update(self, *args, **kwargs):
+            raise app.ChecksumVerificationError("bad checksum")
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._download_and_apply_update(update_info, {"tag_name": "v1.2.3"})
+    progress_dialog.Destroy.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Update Verification Failed"
+
+
+def test_download_and_apply_update_download_failure_shows_error(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    update_info = SimpleNamespace(artifact_name="PortkeyDrop.zip")
+    progress_dialog = MagicMock(Update=MagicMock(), Destroy=MagicMock())
+
+    monkeypatch.setattr(
+        fake_wx, "ProgressDialog", MagicMock(return_value=progress_dialog), raising=False
+    )
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "PD_APP_MODAL", 1, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_AUTO_HIDE", 2, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_CAN_ABORT", 4, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def download_update(self, *args, **kwargs):
+            raise RuntimeError("download failed")
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._download_and_apply_update(update_info, {"tag_name": "v1.2.3"})
+    progress_dialog.Destroy.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Download Error"
+
+
+def test_startup_update_check_returns_cleanly_when_no_result(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(auto_update_enabled=True, update_channel="stable")
+    )
+    frame.version = "1.0.0"
+    frame.build_tag = None
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    frame._show_update_available_dialog = MagicMock()
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    frame._check_for_updates_on_startup()
+    frame._show_update_available_dialog.assert_not_called()
+
+
+def test_startup_update_check_logs_failure(app_module, monkeypatch):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(auto_update_enabled=True, update_channel="stable")
+    )
+    frame.version = "1.0.0"
+    frame.build_tag = None
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    warning = MagicMock()
+    monkeypatch.setattr(app.logger, "warning", warning)
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    frame._check_for_updates_on_startup()
+    warning.assert_called_once()
+
+
+def test_on_check_updates_with_result_prompts_update_dialog(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+    frame._download_and_apply_update = MagicMock()
+    frame._show_update_available_dialog = MagicMock()
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "BeginBusyCursor", MagicMock(), raising=False)
+    monkeypatch.setattr(fake_wx, "EndBusyCursor", MagicMock(), raising=False)
+
+    update_info = SimpleNamespace(version="1.1.0", is_nightly=False, release_notes="notes")
+    release = {"tag_name": "v1.1.0"}
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            return update_info, release
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    parent = object()
+    frame._on_check_updates(None, parent=parent)
+    fake_wx.EndBusyCursor.assert_called_once()
+    frame._show_update_available_dialog.assert_called_once()
+    assert frame._show_update_available_dialog.call_args.kwargs["parent"] is parent
+
+
+def test_download_and_apply_update_ignores_progress_when_total_unknown(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    update_info = SimpleNamespace(artifact_name="PortkeyDrop.zip")
+    progress_dialog = MagicMock(Update=MagicMock(), Destroy=MagicMock())
+    artifact_path = Path("/tmp/PortkeyDrop.zip")
+
+    monkeypatch.setattr(
+        fake_wx, "ProgressDialog", MagicMock(return_value=progress_dialog), raising=False
+    )
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+    monkeypatch.setattr(fake_wx, "PD_APP_MODAL", 1, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_AUTO_HIDE", 2, raising=False)
+    monkeypatch.setattr(fake_wx, "PD_CAN_ABORT", 4, raising=False)
+    monkeypatch.setattr(fake_wx, "ICON_QUESTION", 106, raising=False)
+    monkeypatch.setattr(fake_wx, "YES", 101, raising=False)
+    monkeypatch.setattr(fake_wx, "MessageBox", MagicMock(return_value=0), raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(app, "apply_update", MagicMock())
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def download_update(self, *args, **kwargs):
+            kwargs["progress_callback"](1, 0)
+            return artifact_path
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    frame._download_and_apply_update(update_info, {"tag_name": "v1.2.3"})
+    progress_dialog.Update.assert_not_called()
