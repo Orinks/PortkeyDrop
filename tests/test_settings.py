@@ -67,6 +67,9 @@ class TestAppSettings:
         s = AppSettings()
         assert s.remember_last_local_folder_on_startup is True
         assert s.last_local_folder is None
+        assert s.auto_update_enabled is True
+        assert s.update_check_interval_hours == 24
+        assert s.update_channel == "stable"
 
 
 class TestSettings:
@@ -91,6 +94,9 @@ class TestLoadSaveSettings:
         settings.display.show_hidden_files = True
         settings.connection.timeout = 60
         settings.speech.rate = 75
+        settings.app.auto_update_enabled = False
+        settings.app.update_check_interval_hours = 12
+        settings.app.update_channel = "nightly"
 
         save_settings(settings, tmp_path)
         loaded = load_settings(tmp_path)
@@ -99,6 +105,9 @@ class TestLoadSaveSettings:
         assert loaded.display.show_hidden_files is True
         assert loaded.connection.timeout == 60
         assert loaded.speech.rate == 75
+        assert loaded.app.auto_update_enabled is False
+        assert loaded.app.update_check_interval_hours == 12
+        assert loaded.app.update_channel == "nightly"
 
     def test_load_corrupt_file(self, tmp_path):
         (tmp_path / "settings.json").write_text("not json", encoding="utf-8")

@@ -119,6 +119,11 @@ class _CheckBox(_Control):
     pass
 
 
+class _Button(_Control):
+    def Bind(self, _event, handler):
+        self._bound_handler = handler
+
+
 class _StaticText(_Window):
     created: list[_StaticText] = []
 
@@ -152,6 +157,7 @@ def _make_fake_wx():
         SpinCtrl=_SpinCtrl,
         Choice=_Choice,
         CheckBox=_CheckBox,
+        Button=_Button,
         TextCtrl=_TextCtrl,
         Control=_Control,
         DEFAULT_DIALOG_STYLE=1,
@@ -166,18 +172,19 @@ def _make_fake_wx():
         ALIGN_CENTER_VERTICAL=128,
         OK=1,
         CANCEL=2,
+        EVT_BUTTON=object(),
         CallAfter=lambda fn, *a, **kw: fn(*a, **kw),
     )
 
 
-def _load_dialog(monkeypatch):
+def _load_dialog(monkeypatch, *, on_check_updates=None):
     """Import SettingsDialog with fake wx and return a fresh instance."""
     monkeypatch.setitem(sys.modules, "wx", _make_fake_wx())
     _StaticText.created = []
     _creation_order.clear()
     mod = importlib.import_module("portkeydrop.dialogs.settings")
     mod = importlib.reload(mod)
-    return mod.SettingsDialog(None, Settings())
+    return mod.SettingsDialog(None, Settings(), on_check_updates=on_check_updates)
 
 
 # -- Tests -------------------------------------------------------------
@@ -210,6 +217,10 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
         "passive_check": "Passive mode",
         "verify_keys_choice": "Verify host keys",
         "remember_local_folder_check": "Remember last local folder on startup",
+        "auto_update_check": "Automatic update checks",
+        "update_interval_spin": "Update check interval",
+        "update_channel_choice": "Update channel",
+        "check_updates_button": "Check for updates now",
         # Speech
         "speech_rate_spin": "Speech rate",
         "speech_volume_spin": "Speech volume",
@@ -239,6 +250,8 @@ def test_labeled_controls_have_label_for_links(monkeypatch):
         "keepalive_spin",
         "retries_spin",
         "verify_keys_choice",
+        "update_interval_spin",
+        "update_channel_choice",
         "speech_rate_spin",
         "speech_volume_spin",
         "verbosity_choice",
@@ -280,6 +293,7 @@ def test_spin_inner_editors_carry_field_context(monkeypatch):
         dlg.timeout_spin,
         dlg.keepalive_spin,
         dlg.retries_spin,
+        dlg.update_interval_spin,
         dlg.speech_rate_spin,
         dlg.speech_volume_spin,
     ]
@@ -302,6 +316,7 @@ def test_spin_controls_have_tooltips(monkeypatch):
         dlg.timeout_spin,
         dlg.keepalive_spin,
         dlg.retries_spin,
+        dlg.update_interval_spin,
         dlg.speech_rate_spin,
         dlg.speech_volume_spin,
     ]
@@ -317,3 +332,40 @@ def test_notebook_receives_initial_focus(monkeypatch):
     """Tab control must receive focus on dialog open for keyboard navigation."""
     dlg = _load_dialog(monkeypatch)
     assert dlg.notebook.focused is True
+
+
+def test_check_updates_button_invokes_callback_with_selected_channel(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    def _on_check_updates(channel: str, parent) -> None:
+        calls.append((channel, parent))
+
+    dlg = _load_dialog(monkeypatch, on_check_updates=_on_check_updates)
+    dlg.update_channel_choice.SetSelection(1)
+
+    dlg._on_check_updates_now(None)
+
+    assert calls == [("nightly", dlg)]
+
+
+def test_get_settings_persists_updater_fields(monkeypatch):
+    dlg = _load_dialog(monkeypatch)
+    dlg.auto_update_check.SetValue(False)
+    dlg.update_interval_spin.SetValue(12)
+    dlg.update_channel_choice.SetSelection(1)
+    dlg.remember_local_folder_check.SetValue(False)
+    dlg.speech_rate_spin.SetValue(80)
+
+    settings = dlg.get_settings()
+
+    assert settings.app.auto_update_enabled is False
+    assert settings.app.update_check_interval_hours == 12
+    assert settings.app.update_channel == "nightly"
+    assert settings.app.remember_last_local_folder_on_startup is False
+    assert settings.speech.rate == 80
+
+
+def test_check_updates_now_returns_without_callback(monkeypatch):
+    dlg = _load_dialog(monkeypatch, on_check_updates=None)
+    dlg.update_channel_choice.SetSelection(1)
+    dlg._on_check_updates_now(None)

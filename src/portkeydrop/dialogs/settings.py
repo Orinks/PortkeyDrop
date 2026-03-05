@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import wx
 
 from portkeydrop.settings import Settings
 
 
+CheckUpdatesCallback = Callable[[str, object | None], None]
+
+
 class SettingsDialog(wx.Dialog):
     """Dialog for editing application settings."""
 
-    def __init__(self, parent: wx.Window | None, settings: Settings) -> None:
+    def __init__(
+        self,
+        parent: wx.Window | None,
+        settings: Settings,
+        on_check_updates: CheckUpdatesCallback | None = None,
+    ) -> None:
         super().__init__(
             parent,
             title="Settings",
@@ -20,6 +28,7 @@ class SettingsDialog(wx.Dialog):
             size=(560, 460),
         )
         self._settings = settings
+        self._on_check_updates = on_check_updates
         self._spin_controls: list[tuple[wx.SpinCtrl, str]] = []
 
         self._build_ui()
@@ -341,6 +350,38 @@ class SettingsDialog(wx.Dialog):
             name="Remember last local folder on startup",
         )
 
+        self.auto_update_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Check for updates &automatically"),
+            name="Automatic update checks",
+        )
+
+        self.update_interval_spin = self._add_spin_row(
+            panel,
+            sizer,
+            label="Update check inter&val (hours):",
+            control_name="Update check interval",
+            min_val=1,
+            max_val=168,
+        )
+
+        self.update_channel_choice = self._add_labeled_row(
+            panel,
+            sizer,
+            label="Update &channel:",
+            make_control=lambda p: wx.Choice(p, choices=["stable", "nightly"]),
+            control_name="Update channel",
+        )
+
+        self.check_updates_button = self._add_labeled_row(
+            panel,
+            sizer,
+            label="",
+            make_control=lambda p: wx.Button(p, label="Check for &Updates Now"),
+            control_name="Check for updates now",
+        )
+        self.check_updates_button.Bind(wx.EVT_BUTTON, self._on_check_updates_now)
+
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Connection")
 
@@ -410,6 +451,12 @@ class SettingsDialog(wx.Dialog):
         idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
         self.verify_keys_choice.SetSelection(idx)
         self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
+        self.auto_update_check.SetValue(getattr(s.app, "auto_update_enabled", True))
+        self.update_interval_spin.SetValue(
+            max(1, int(getattr(s.app, "update_check_interval_hours", 24)))
+        )
+        update_channel = getattr(s.app, "update_channel", "stable")
+        self.update_channel_choice.SetSelection(0 if update_channel == "stable" else 1)
         # Speech
         self.speech_rate_spin.SetValue(s.speech.rate)
         self.speech_volume_spin.SetValue(s.speech.volume)
@@ -440,8 +487,18 @@ class SettingsDialog(wx.Dialog):
         s.connection.passive_mode = self.passive_check.GetValue()
         s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
         s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
+        s.app.auto_update_enabled = self.auto_update_check.GetValue()
+        s.app.update_check_interval_hours = self.update_interval_spin.GetValue()
+        s.app.update_channel = self.update_channel_choice.GetStringSelection()
 
         s.speech.rate = self.speech_rate_spin.GetValue()
         s.speech.volume = self.speech_volume_spin.GetValue()
         s.speech.verbosity = self.verbosity_choice.GetStringSelection()
         return s
+
+    def _on_check_updates_now(self, event: wx.CommandEvent) -> None:
+        """Run a manual update check using the selected channel."""
+        if not self._on_check_updates:
+            return
+        channel = self.update_channel_choice.GetStringSelection()
+        self._on_check_updates(channel, self)
