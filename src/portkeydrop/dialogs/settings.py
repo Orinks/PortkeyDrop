@@ -51,6 +51,7 @@ class SettingsDialog(wx.Dialog):
         self._build_transfer_tab()
         self._build_display_tab()
         self._build_connection_tab()
+        self._build_updates_tab()
         self._build_speech_tab()
 
         root.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 8)
@@ -350,6 +351,12 @@ class SettingsDialog(wx.Dialog):
             name="Remember last local folder on startup",
         )
 
+        sizer.AddStretchSpacer(1)
+        self.notebook.AddPage(panel, "Connection")
+
+    def _build_updates_tab(self) -> None:
+        panel, sizer = self._new_tab_panel()
+
         self.auto_update_check = self._add_checkbox_row(
             sizer,
             wx.CheckBox(panel, label="Check for updates &automatically"),
@@ -383,7 +390,7 @@ class SettingsDialog(wx.Dialog):
         self.check_updates_button.Bind(wx.EVT_BUTTON, self._on_check_updates_now)
 
         sizer.AddStretchSpacer(1)
-        self.notebook.AddPage(panel, "Connection")
+        self.notebook.AddPage(panel, "Updates")
 
     def _build_speech_tab(self) -> None:
         panel, sizer = self._new_tab_panel()
