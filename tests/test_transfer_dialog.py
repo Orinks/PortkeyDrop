@@ -106,8 +106,8 @@ def test_cancel_announces_filename_before_refresh(transfer_module):
     dialog._on_cancel(None)
 
     manager.cancel.assert_called_once_with(5)
-    parent._announce.assert_called_once_with("Transfer cancelled: report.csv")
-    parent._update_status.assert_called_once_with("Transfer cancelled: report.csv", "")
+    parent._announce.assert_called_once_with("Cancelled transfer: report.csv")
+    parent._update_status.assert_called_once_with("Cancelled transfer: report.csv", "")
     dialog._refresh.assert_called_once()
 
 
@@ -168,8 +168,8 @@ def test_cancel_announces_generic_message_when_filename_missing(transfer_module)
     dialog._on_cancel(None)
 
     manager.cancel.assert_called_once_with(7)
-    parent._announce.assert_called_once_with("Transfer cancelled.")
-    parent._update_status.assert_called_once_with("Transfer cancelled.", "")
+    parent._announce.assert_called_once_with("Cancelled transfer.")
+    parent._update_status.assert_called_once_with("Cancelled transfer.", "")
     dialog._refresh.assert_called_once()
 
 
