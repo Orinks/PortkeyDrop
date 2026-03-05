@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Replaced local/remote file panes with `wx.dataview.DataViewListCtrl` to improve accessibility semantics while preserving dual-pane keyboard workflows and file operations.
+
 ---
 
 ## [0.1.0] - 2026-02-25

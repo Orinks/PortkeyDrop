@@ -62,9 +62,15 @@ class _SimpleWidget(MagicMock):
         self.SetSizer = MagicMock()
         self.InsertItem = MagicMock(return_value=0)
         self.SetItem = MagicMock()
+        self.AppendItem = MagicMock()
+        self.AppendTextColumn = MagicMock()
+        self.DeleteAllItems = MagicMock()
         self.GetItemCount = MagicMock(return_value=0)
+        self.GetSelectedRow = MagicMock(return_value=-1)
         self.Select = MagicMock()
+        self.SelectRow = MagicMock()
         self.Focus = MagicMock()
+        self.SetCurrentRow = MagicMock()
         self.SetValue = MagicMock()
         self.GetValue = MagicMock()
 
@@ -189,6 +195,14 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_adv.AboutBox = lambda info: None
     fake_wx.adv = fake_adv
 
+    fake_dv = types.ModuleType("wx.dataview")
+    fake_dv.DataViewListCtrl = lambda *args, **kwargs: _SimpleWidget()
+    fake_dv.EVT_DATAVIEW_ITEM_ACTIVATED = object()
+    fake_dv.DV_SINGLE = 1
+    fake_dv.DV_ROW_LINES = 2
+    fake_dv.DV_VERT_RULES = 4
+    fake_wx.dataview = fake_dv
+
     return fake_wx, fake_adv
 
 
@@ -198,6 +212,7 @@ def load_module_with_fake_wx(
     fake_wx, fake_adv = _create_fake_wx()
     monkeypatch.setitem(sys.modules, "wx", fake_wx)
     monkeypatch.setitem(sys.modules, "wx.adv", fake_adv)
+    monkeypatch.setitem(sys.modules, "wx.dataview", fake_wx.dataview)
     sys.modules.pop(module_name, None)
     module = importlib.import_module(module_name)
     return module, fake_wx

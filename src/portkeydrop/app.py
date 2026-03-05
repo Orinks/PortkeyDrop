@@ -8,9 +8,11 @@ import sys
 import tempfile
 import threading
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 from pathlib import Path, PurePosixPath
 
 import wx
+import wx.dataview as dv
 
 from portkeydrop import __version__
 from portkeydrop.dialogs.properties import PropertiesDialog
@@ -86,6 +88,12 @@ ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
+
+
+if TYPE_CHECKING:
+    FileListCtrl = wx.ListCtrl | dv.DataViewListCtrl
+else:
+    FileListCtrl = Any
 
 
 class MainFrame(wx.Frame):
@@ -277,13 +285,7 @@ class MainFrame(wx.Frame):
         self.local_path_bar.SetName("Local Path")
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
-        self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetName("Local")
-        self.local_file_list.InsertColumn(0, "Name", width=200)
-        self.local_file_list.InsertColumn(1, "Size", width=80)
-        self.local_file_list.InsertColumn(2, "Type", width=70)
-        self.local_file_list.InsertColumn(3, "Modified", width=130)
-        self.local_file_list.InsertColumn(4, "Permissions", width=100)
+        self.local_file_list = self._create_file_list(local_panel, "Local Files pane")
         local_sizer.Add(self.local_file_list, 1, wx.EXPAND)
         local_panel.SetSizer(local_sizer)
 
@@ -298,13 +300,7 @@ class MainFrame(wx.Frame):
         self.remote_path_bar.SetName("Remote Path")
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
-        self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetName("Remote")
-        self.remote_file_list.InsertColumn(0, "Name", width=200)
-        self.remote_file_list.InsertColumn(1, "Size", width=80)
-        self.remote_file_list.InsertColumn(2, "Type", width=70)
-        self.remote_file_list.InsertColumn(3, "Modified", width=130)
-        self.remote_file_list.InsertColumn(4, "Permissions", width=100)
+        self.remote_file_list = self._create_file_list(remote_panel, "Remote Files pane")
         remote_sizer.Add(self.remote_file_list, 1, wx.EXPAND)
         remote_panel.SetSizer(remote_sizer)
 
@@ -344,8 +340,8 @@ class MainFrame(wx.Frame):
         """Set startup focus to local files pane."""
         try:
             if self.local_file_list.GetItemCount() > 0:
-                self.local_file_list.Select(0)
-                self.local_file_list.Focus(0)
+                self._select_row(self.local_file_list, 0)
+                self._focus_row(self.local_file_list, 0)
             self.local_file_list.SetFocus()
         except Exception:
             logger.debug("Failed to set initial focus", exc_info=True)
@@ -360,7 +356,7 @@ class MainFrame(wx.Frame):
         focused = self.FindFocus()
         return focused is self.remote_file_list
 
-    def _get_focused_file_list(self) -> wx.ListCtrl | None:
+    def _get_focused_file_list(self) -> FileListCtrl | None:
         """Return whichever file list has focus, or None."""
         focused = self.FindFocus()
         if focused is self.local_file_list:
@@ -406,12 +402,12 @@ class MainFrame(wx.Frame):
         self.tb_connect_btn.Bind(wx.EVT_BUTTON, self._on_connect_toolbar)
 
         # File list events - remote
-        self.remote_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_remote_item_activated)
+        self.remote_file_list.Bind(dv.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_remote_item_activated)
         self.remote_file_list.Bind(wx.EVT_KEY_DOWN, self._on_remote_file_list_key)
         self.remote_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_remote_context_menu)
 
         # File list events - local
-        self.local_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_local_item_activated)
+        self.local_file_list.Bind(dv.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_local_item_activated)
         self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
         self.local_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_local_context_menu)
 
@@ -729,8 +725,8 @@ class MainFrame(wx.Frame):
         self._update_title()
         # Select first item so screen readers announce the new directory
         if self.remote_file_list.GetItemCount() > 0:
-            self.remote_file_list.Select(0)
-            self.remote_file_list.Focus(0)
+            self._select_row(self.remote_file_list, 0)
+            self._focus_row(self.remote_file_list, 0)
             if restore_focus:
                 self.remote_file_list.SetFocus()
         count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
@@ -763,8 +759,8 @@ class MainFrame(wx.Frame):
             self.local_path_bar.SetValue(self._local_cwd)
             # Select first item so screen readers announce the new directory
             if self.local_file_list.GetItemCount() > 0:
-                self.local_file_list.Select(0)
-                self.local_file_list.Focus(0)
+                self._select_row(self.local_file_list, 0)
+                self._focus_row(self.local_file_list, 0)
                 if restore_focus:
                     self.local_file_list.SetFocus()
             count = len(self._get_visible_files(self._local_files, self._local_filter_text))
@@ -805,14 +801,24 @@ class MainFrame(wx.Frame):
         key_fn = key_map.get(self._settings.display.sort_by, key_map["name"])
         files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
 
-    def _populate_file_list(self, list_ctrl: wx.ListCtrl, files: list[RemoteFile]) -> None:
+    def _populate_file_list(self, list_ctrl: FileListCtrl, files: list[RemoteFile]) -> None:
         list_ctrl.DeleteAllItems()
         for f in files:
-            idx = list_ctrl.InsertItem(list_ctrl.GetItemCount(), f.name)
-            list_ctrl.SetItem(idx, 1, f.display_size)
-            list_ctrl.SetItem(idx, 2, "Directory" if f.is_dir else "File")
-            list_ctrl.SetItem(idx, 3, f.display_modified)
-            list_ctrl.SetItem(idx, 4, f.permissions)
+            row = [
+                f.name,
+                f.display_size,
+                "Directory" if f.is_dir else "File",
+                f.display_modified,
+                f.permissions,
+            ]
+            if hasattr(list_ctrl, "AppendItem"):
+                list_ctrl.AppendItem(row)
+            else:
+                idx = list_ctrl.InsertItem(list_ctrl.GetItemCount(), row[0])
+                list_ctrl.SetItem(idx, 1, row[1])
+                list_ctrl.SetItem(idx, 2, row[2])
+                list_ctrl.SetItem(idx, 3, row[3])
+                list_ctrl.SetItem(idx, 4, row[4])
 
     def _on_toggle_hidden(self, event: wx.CommandEvent) -> None:
         self._settings.display.show_hidden_files = event.IsChecked()
@@ -865,9 +871,9 @@ class MainFrame(wx.Frame):
     # --- Selection helpers ---
 
     def _get_selected_file_from_list(
-        self, list_ctrl: wx.ListCtrl, files: list[RemoteFile], filter_text: str
+        self, list_ctrl: FileListCtrl, files: list[RemoteFile], filter_text: str
     ) -> RemoteFile | None:
-        idx = list_ctrl.GetFirstSelected()
+        idx = self._get_selected_row(list_ctrl)
         if idx == wx.NOT_FOUND:
             return None
         visible = self._get_visible_files(files, filter_text)
@@ -891,12 +897,10 @@ class MainFrame(wx.Frame):
 
     # --- Item activation ---
 
-    def _on_remote_item_activated(self, event: wx.ListEvent) -> None:
+    def _on_remote_item_activated(self, event: wx.Event) -> None:
         f = self._get_selected_remote_file()
         if not f:
-            logger.warning(
-                "Remote item activated but no file selected (index: %s)", event.GetIndex()
-            )
+            logger.warning("Remote item activated but no file selected")
             return
         if not self._client:
             logger.warning("Remote item activated but no client")
@@ -931,7 +935,7 @@ class MainFrame(wx.Frame):
             self._status(f"{f.name} detected as file, not directory")
             self._on_download(None)
 
-    def _on_local_item_activated(self, event: wx.ListEvent) -> None:
+    def _on_local_item_activated(self, event: wx.Event) -> None:
         f = self._get_selected_local_file()
         if not f:
             return
@@ -944,8 +948,40 @@ class MainFrame(wx.Frame):
                 self._on_upload(None)
 
     # Keep old name for compat
-    def _on_item_activated(self, event: wx.ListEvent) -> None:
+    def _on_item_activated(self, event: wx.Event) -> None:
         self._on_remote_item_activated(event)
+
+    def _create_file_list(self, parent: wx.Window, accessible_name: str) -> FileListCtrl:
+        style = dv.DV_SINGLE | dv.DV_ROW_LINES | dv.DV_VERT_RULES
+        list_ctrl = dv.DataViewListCtrl(parent, style=style)
+        list_ctrl.SetName(accessible_name)
+        list_ctrl.AppendTextColumn("Name", width=200)
+        list_ctrl.AppendTextColumn("Size", width=80)
+        list_ctrl.AppendTextColumn("Type", width=70)
+        list_ctrl.AppendTextColumn("Modified", width=130)
+        list_ctrl.AppendTextColumn("Permissions", width=100)
+        return list_ctrl
+
+    def _get_selected_row(self, list_ctrl: FileListCtrl) -> int:
+        if hasattr(list_ctrl, "GetSelectedRow"):
+            return list_ctrl.GetSelectedRow()
+        if hasattr(list_ctrl, "GetFirstSelected"):
+            return list_ctrl.GetFirstSelected()
+        return wx.NOT_FOUND
+
+    def _select_row(self, list_ctrl: FileListCtrl, idx: int) -> None:
+        if hasattr(list_ctrl, "SelectRow"):
+            list_ctrl.SelectRow(idx)
+            return
+        if hasattr(list_ctrl, "Select"):
+            list_ctrl.Select(idx)
+
+    def _focus_row(self, list_ctrl: FileListCtrl, idx: int) -> None:
+        if hasattr(list_ctrl, "SetCurrentRow"):
+            list_ctrl.SetCurrentRow(idx)
+            return
+        if hasattr(list_ctrl, "Focus"):
+            list_ctrl.Focus(idx)
 
     # --- Keyboard handling ---
 
