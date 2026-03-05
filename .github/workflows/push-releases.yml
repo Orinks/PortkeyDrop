@@ -47,7 +47,23 @@ jobs:
               -d "$PAYLOAD" \
               "${WP_URL%/}/wp-json/ogr/v1/push-releases")
 
-            echo "$RESPONSE" | jq -r '"Pushed \(.count) releases for \(.repo)"'
+            # Cache nudge: clear plugin data then immediately repush to keep data warm.
+            # This may help app-level cache invalidation; host/CDN cache may still need manual purge.
+            curl -sS -f \
+              -H "Content-Type: application/json" \
+              -H "X-OGR-Token: $WP_TOKEN" \
+              -X POST \
+              -d "{"repository":{"full_name":"$REPO"}}" \
+              "${WP_URL%/}/wp-json/ogr/v1/bust-cache" >/dev/null || true
+
+            RESPONSE2=$(curl -sS -f \
+              -H "Content-Type: application/json" \
+              -H "X-OGR-Token: $WP_TOKEN" \
+              -X POST \
+              -d "$PAYLOAD" \
+              "${WP_URL%/}/wp-json/ogr/v1/push-releases")
+
+            echo "$RESPONSE2" | jq -r '"Pushed \(.count) releases for \(.repo) (post-bust)"'
           }
 
           attempt || {
