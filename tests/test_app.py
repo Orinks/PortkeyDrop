@@ -15,6 +15,17 @@ def app_module(monkeypatch):
     return module, fake_wx
 
 
+class _ImmediateThread:
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target:
+            self._target(*self._args, **self._kwargs)
+
+
 def _build_frame(module, tmp_path):
     app, _ = module
     display = SimpleNamespace(
@@ -1036,6 +1047,89 @@ def test_on_check_updates_from_source_shows_info_message(app_module, monkeypatch
 
     fake_wx.MessageBox.assert_called_once()
     assert fake_wx.MessageBox.call_args.args[1] == "Running from Source"
+
+
+def test_startup_update_check_uses_update_dialog_and_respects_cancel(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(auto_update_enabled=True))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+    frame._download_and_apply_update = MagicMock()
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            assert kwargs["channel"] == "stable"
+            return (
+                SimpleNamespace(
+                    version="1.2.3",
+                    is_nightly=False,
+                    release_notes="Fixes",
+                ),
+                {"tag_name": "v1.2.3"},
+            )
+
+    created: dict[str, object] = {}
+
+    class _FakeDialog:
+        def __init__(self, parent=None, **kwargs):
+            created["parent"] = parent
+            created["kwargs"] = kwargs
+
+        def ShowModal(self):
+            return 0
+
+        def Destroy(self):
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+    monkeypatch.setattr(app, "UpdateAvailableDialog", _FakeDialog)
+
+    frame._check_for_updates_on_startup()
+
+    assert created["parent"] is frame
+    kwargs = created["kwargs"]
+    assert kwargs["current_version"] == "1.0.0"
+    assert kwargs["new_version"] == "1.2.3"
+    assert kwargs["channel_label"] == "Stable"
+    frame._download_and_apply_update.assert_not_called()
+
+
+def test_on_check_updates_honors_channel_override(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    frame.version = "1.0.0"
+    frame.build_tag = None
+
+    monkeypatch.setattr(app.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    called: dict[str, object] = {}
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            called["channel"] = kwargs["channel"]
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None, channel_override="nightly")
+
+    assert called["channel"] == "nightly"
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "No Updates Available"
 
 
 def test_on_close_stops_auto_update_timer_and_skips_event(app_module):

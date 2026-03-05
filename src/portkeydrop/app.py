@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import wx
@@ -53,6 +54,7 @@ from portkeydrop.services.updater import (
     parse_nightly_date,
 )
 from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
+from portkeydrop.ui.dialogs.update_dialog import UpdateAvailableDialog
 
 logger = logging.getLogger(__name__)
 
@@ -1478,6 +1480,29 @@ class MainFrame(wx.Frame):
         """Run automatic update check from timer ticks."""
         self._check_for_updates_on_startup()
 
+    def _show_update_available_dialog(
+        self,
+        *,
+        current_display_version: str,
+        update_info,
+        on_accept: Callable[[], None],
+        parent: wx.Window | None = None,
+    ) -> None:
+        """Show update dialog with release notes and invoke callback on accept."""
+        channel_label = "Nightly" if update_info.is_nightly else "Stable"
+        dlg = UpdateAvailableDialog(
+            parent=parent or self,
+            current_version=current_display_version,
+            new_version=update_info.version,
+            channel_label=channel_label,
+            release_notes=update_info.release_notes,
+        )
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                on_accept()
+        finally:
+            dlg.Destroy()
+
     def _check_for_updates_on_startup(self) -> None:
         """Check for updates at startup when running frozen builds."""
         if not getattr(sys, "frozen", False):
@@ -1512,21 +1537,15 @@ class MainFrame(wx.Frame):
                     return
 
                 update_info, release = result
-                channel_label = "nightly" if update_info.is_nightly else "stable"
+                display_version = current_nightly_date if current_nightly_date else current_version
 
                 def prompt() -> None:
-                    message = (
-                        f"Update available: {update_info.version} ({channel_label}).\n\n"
-                        "Download and install now?"
+                    self._show_update_available_dialog(
+                        current_display_version=display_version,
+                        update_info=update_info,
+                        on_accept=lambda: self._download_and_apply_update(update_info, release),
+                        parent=self,
                     )
-                    result_code = wx.MessageBox(
-                        message,
-                        "Update Available",
-                        wx.YES_NO | wx.ICON_INFORMATION,
-                        self,
-                    )
-                    if result_code == wx.YES:
-                        self._download_and_apply_update(update_info, release)
 
                 wx.CallAfter(prompt)
             except Exception as exc:
@@ -1534,7 +1553,13 @@ class MainFrame(wx.Frame):
 
         threading.Thread(target=do_check, daemon=True).start()
 
-    def _on_check_updates(self, event: wx.CommandEvent) -> None:
+    def _on_check_updates(
+        self,
+        event: wx.CommandEvent | None,
+        *,
+        channel_override: str | None = None,
+        parent: wx.Window | None = None,
+    ) -> None:
         """Manually check for updates from the Help menu."""
         if not getattr(sys, "frozen", False):
             wx.MessageBox(
@@ -1546,7 +1571,7 @@ class MainFrame(wx.Frame):
             )
             return
 
-        channel = self._get_update_channel()
+        channel = channel_override or self._get_update_channel()
         current_version = getattr(self, "version", "0.0.0")
         build_tag = getattr(self, "build_tag", None)
         current_nightly_date = parse_nightly_date(build_tag) if build_tag else None
@@ -1591,21 +1616,14 @@ class MainFrame(wx.Frame):
                     return
 
                 update_info, release = result
-                channel_label = "nightly" if update_info.is_nightly else "stable"
 
                 def prompt() -> None:
-                    message = (
-                        f"Update available: {update_info.version} ({channel_label}).\n\n"
-                        "Download and install now?"
+                    self._show_update_available_dialog(
+                        current_display_version=display_version,
+                        update_info=update_info,
+                        on_accept=lambda: self._download_and_apply_update(update_info, release),
+                        parent=parent or self,
                     )
-                    result_code = wx.MessageBox(
-                        message,
-                        "Update Available",
-                        wx.YES_NO | wx.ICON_INFORMATION,
-                        self,
-                    )
-                    if result_code == wx.YES:
-                        self._download_and_apply_update(update_info, release)
 
                 wx.CallAfter(prompt)
 
