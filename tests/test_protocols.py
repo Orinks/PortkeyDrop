@@ -63,9 +63,22 @@ def _build_native_converter_input(
     return (3, key_type, encryption, comment, pub_blob, priv_blob, private_mac)
 
 
-def _build_rsa_ppk_fixture(*, n: int, e: int, d: int, p: int, q: int, version: int = 2) -> bytes:
+def _build_rsa_ppk_fixture(
+    *,
+    n: int,
+    e: int,
+    d: int,
+    p: int,
+    q: int,
+    iqmp: int | None = None,
+    trailing_padding: bytes = b"",
+    version: int = 2,
+) -> bytes:
     public_blob = _pack_ppk_string(b"ssh-rsa") + _pack_ppk_mpint(e) + _pack_ppk_mpint(n)
     private_blob = _pack_ppk_mpint(d) + _pack_ppk_mpint(p) + _pack_ppk_mpint(q)
+    if iqmp is not None:
+        private_blob += _pack_ppk_mpint(iqmp)
+    private_blob += trailing_padding
     return (
         f"PuTTY-User-Key-File-{version}: ssh-rsa\n"
         "Encryption: none\n"
@@ -677,6 +690,50 @@ class TestSFTPClient:
 
         assert converted is None
         assert "n != p*q" in reason
+
+    def test_convert_ppk_rsa_unencrypted_accepts_iqmp_and_padding(self):
+        import asyncssh
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        numbers = private_key.private_numbers()
+        ppk_data = _build_rsa_ppk_fixture(
+            n=numbers.public_numbers.n,
+            e=numbers.public_numbers.e,
+            d=numbers.d,
+            p=numbers.p,
+            q=numbers.q,
+            iqmp=numbers.iqmp,
+            trailing_padding=b"\x01\x02\x03",
+            version=2,
+        )
+
+        converted, reason = SFTPClient._convert_ppk_with_pure_python(
+            ppk_data,
+            passphrase=None,
+            ppk_variant="PPK v2 (ssh-rsa, encryption=none)",
+        )
+
+        assert reason == ""
+        assert converted is not None
+        imported = asyncssh.import_private_key(converted)
+        assert imported is not None
+
+    def test_convert_ppk_rsa_unencrypted_rejects_non_padding_trailing_bytes(self):
+        malformed_ppk = _build_rsa_ppk_fixture(
+            n=143,
+            e=65537,
+            d=17,
+            p=11,
+            q=13,
+            iqmp=6,
+            trailing_padding=b"\xff",
+            version=2,
+        )
+        converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(malformed_ppk)
+
+        assert converted is None
+        assert "trailing data in PPK private blob" in reason
 
     def test_convert_ppk_with_pure_python_rsa_uses_native_rebuild_not_converter_output(
         self, monkeypatch

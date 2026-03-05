@@ -455,6 +455,34 @@ class SFTPClient(TransferClient):
         return int.from_bytes(value, "big", signed=False), offset
 
     @staticmethod
+    def _is_valid_ppk_rsa_padding(tail: bytes) -> bool:
+        if not tail:
+            return True
+        if all(byte == 0 for byte in tail):
+            return True
+        return tail == bytes(range(1, len(tail) + 1))
+
+    @staticmethod
+    def _read_ppk_rsa_private_values(private_blob: bytes) -> tuple[int, int, int, int | None]:
+        d, offset = SFTPClient._read_ppk_mpint(private_blob, 0)
+        p, offset = SFTPClient._read_ppk_mpint(private_blob, offset)
+        q, offset = SFTPClient._read_ppk_mpint(private_blob, offset)
+
+        iqmp: int | None = None
+        if offset < len(private_blob):
+            remaining = len(private_blob) - offset
+            if remaining >= 4:
+                try:
+                    iqmp, offset = SFTPClient._read_ppk_mpint(private_blob, offset)
+                except ValueError:
+                    iqmp = None
+
+        if not SFTPClient._is_valid_ppk_rsa_padding(private_blob[offset:]):
+            raise ValueError("unexpected trailing data in PPK private blob")
+
+        return d, p, q, iqmp
+
+    @staticmethod
     def _decode_ppk_text(key_data: bytes) -> tuple[int, str, str, str, bytes, bytes, str]:
         try:
             ppk_text = key_data.decode("utf-8")
@@ -564,11 +592,7 @@ class SFTPClient(TransferClient):
             if offset != len(public_blob):
                 return None, "unexpected trailing data in PPK public blob"
 
-            d, priv_offset = SFTPClient._read_ppk_mpint(private_blob, 0)
-            p, priv_offset = SFTPClient._read_ppk_mpint(private_blob, priv_offset)
-            q, priv_offset = SFTPClient._read_ppk_mpint(private_blob, priv_offset)
-            if priv_offset != len(private_blob):
-                return None, "unexpected trailing data in PPK private blob"
+            d, p, q, iqmp = SFTPClient._read_ppk_rsa_private_values(private_blob)
         except ValueError as exc:
             return None, str(exc)
 
@@ -576,6 +600,9 @@ class SFTPClient(TransferClient):
             return None, "PPK RSA parameters must be positive integers"
         if n != p * q:
             return None, "PPK RSA parameters are inconsistent (n != p*q)"
+        expected_iqmp = pow(q, -1, p)
+        if iqmp is not None and iqmp != expected_iqmp:
+            return None, "PPK RSA parameters are inconsistent (iqmp != q^-1 mod p)"
 
         try:
             from cryptography.hazmat.primitives import serialization
@@ -587,7 +614,7 @@ class SFTPClient(TransferClient):
                 d=d,
                 dmp1=d % (p - 1),
                 dmq1=d % (q - 1),
-                iqmp=pow(q, -1, p),
+                iqmp=expected_iqmp,
                 public_numbers=rsa.RSAPublicNumbers(e=e, n=n),
             ).private_key()
         except Exception as exc:
