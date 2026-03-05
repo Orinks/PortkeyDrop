@@ -119,6 +119,11 @@ class _CheckBox(_Control):
     pass
 
 
+class _Button(_Control):
+    def Bind(self, _event, handler):
+        self._bound_handler = handler
+
+
 class _StaticText(_Window):
     created: list[_StaticText] = []
 
@@ -152,6 +157,7 @@ def _make_fake_wx():
         SpinCtrl=_SpinCtrl,
         Choice=_Choice,
         CheckBox=_CheckBox,
+        Button=_Button,
         TextCtrl=_TextCtrl,
         Control=_Control,
         DEFAULT_DIALOG_STYLE=1,
@@ -166,18 +172,19 @@ def _make_fake_wx():
         ALIGN_CENTER_VERTICAL=128,
         OK=1,
         CANCEL=2,
+        EVT_BUTTON=object(),
         CallAfter=lambda fn, *a, **kw: fn(*a, **kw),
     )
 
 
-def _load_dialog(monkeypatch):
+def _load_dialog(monkeypatch, *, on_check_updates=None):
     """Import SettingsDialog with fake wx and return a fresh instance."""
     monkeypatch.setitem(sys.modules, "wx", _make_fake_wx())
     _StaticText.created = []
     _creation_order.clear()
     mod = importlib.import_module("portkeydrop.dialogs.settings")
     mod = importlib.reload(mod)
-    return mod.SettingsDialog(None, Settings())
+    return mod.SettingsDialog(None, Settings(), on_check_updates=on_check_updates)
 
 
 # -- Tests -------------------------------------------------------------
@@ -213,6 +220,7 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
         "auto_update_check": "Automatic update checks",
         "update_interval_spin": "Update check interval",
         "update_channel_choice": "Update channel",
+        "check_updates_button": "Check for updates now",
         # Speech
         "speech_rate_spin": "Speech rate",
         "speech_volume_spin": "Speech volume",
@@ -324,3 +332,17 @@ def test_notebook_receives_initial_focus(monkeypatch):
     """Tab control must receive focus on dialog open for keyboard navigation."""
     dlg = _load_dialog(monkeypatch)
     assert dlg.notebook.focused is True
+
+
+def test_check_updates_button_invokes_callback_with_selected_channel(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    def _on_check_updates(channel: str, parent) -> None:
+        calls.append((channel, parent))
+
+    dlg = _load_dialog(monkeypatch, on_check_updates=_on_check_updates)
+    dlg.update_channel_choice.SetSelection(1)
+
+    dlg._on_check_updates_now(None)
+
+    assert calls == [("nightly", dlg)]

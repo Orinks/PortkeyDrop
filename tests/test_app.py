@@ -1037,6 +1037,54 @@ def test_on_settings_reconfigures_update_menu_and_timer(app_module):
     frame._start_auto_update_checks.assert_called_once()
 
 
+def test_on_settings_passes_check_updates_callback(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="stable"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    frame._local_cwd = "/tmp"
+    frame.remote_file_list = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._remote_files = []
+    frame._local_files = []
+    frame._remote_filter_text = ""
+    frame._local_filter_text = ""
+    frame._get_visible_files = MagicMock(return_value=[])
+
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_settings=MagicMock(return_value=frame._settings),
+        Destroy=MagicMock(),
+    )
+    with (
+        patch.object(app, "SettingsDialog", return_value=dialog) as settings_dialog_cls,
+        patch.object(app, "save_settings"),
+        patch.object(app, "update_last_local_folder"),
+    ):
+        frame._on_settings(None)
+
+    assert settings_dialog_cls.call_count == 1
+    kwargs = settings_dialog_cls.call_args.kwargs
+    assert kwargs["on_check_updates"] == frame._on_check_updates_from_settings
+
+
+def test_on_check_updates_from_settings_forwards_channel_and_parent(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._on_check_updates = MagicMock()
+    parent = object()
+
+    frame._on_check_updates_from_settings("nightly", parent)
+
+    frame._on_check_updates.assert_called_once_with(
+        None,
+        channel_override="nightly",
+        parent=parent,
+    )
+
+
 def test_on_check_updates_from_source_shows_info_message(app_module, monkeypatch):
     app, fake_wx = app_module
     frame = object.__new__(app.MainFrame)

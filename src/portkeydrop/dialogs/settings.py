@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import wx
 
 from portkeydrop.settings import Settings
 
 
+CheckUpdatesCallback = Callable[[str, wx.Window | None], None]
+
+
 class SettingsDialog(wx.Dialog):
     """Dialog for editing application settings."""
 
-    def __init__(self, parent: wx.Window | None, settings: Settings) -> None:
+    def __init__(
+        self,
+        parent: wx.Window | None,
+        settings: Settings,
+        on_check_updates: CheckUpdatesCallback | None = None,
+    ) -> None:
         super().__init__(
             parent,
             title="Settings",
@@ -20,6 +28,7 @@ class SettingsDialog(wx.Dialog):
             size=(560, 460),
         )
         self._settings = settings
+        self._on_check_updates = on_check_updates
         self._spin_controls: list[tuple[wx.SpinCtrl, str]] = []
 
         self._build_ui()
@@ -364,6 +373,15 @@ class SettingsDialog(wx.Dialog):
             control_name="Update channel",
         )
 
+        self.check_updates_button = self._add_labeled_row(
+            panel,
+            sizer,
+            label="",
+            make_control=lambda p: wx.Button(p, label="Check for &Updates Now"),
+            control_name="Check for updates now",
+        )
+        self.check_updates_button.Bind(wx.EVT_BUTTON, self._on_check_updates_now)
+
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Connection")
 
@@ -477,3 +495,10 @@ class SettingsDialog(wx.Dialog):
         s.speech.volume = self.speech_volume_spin.GetValue()
         s.speech.verbosity = self.verbosity_choice.GetStringSelection()
         return s
+
+    def _on_check_updates_now(self, event: wx.CommandEvent) -> None:
+        """Run a manual update check using the selected channel."""
+        if not self._on_check_updates:
+            return
+        channel = self.update_channel_choice.GetStringSelection()
+        self._on_check_updates(channel, self)

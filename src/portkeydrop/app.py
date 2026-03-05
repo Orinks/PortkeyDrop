@@ -1421,7 +1421,11 @@ class MainFrame(wx.Frame):
             self._update_status(latest_status_message, current_path)
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
-        dlg = SettingsDialog(self, self._settings)
+        dlg = SettingsDialog(
+            self,
+            self._settings,
+            on_check_updates=self._on_check_updates_from_settings,
+        )
         if dlg.ShowModal() == wx.ID_OK:
             self._settings = dlg.get_settings()
             update_last_local_folder(self._settings, self._local_cwd)
@@ -1437,6 +1441,10 @@ class MainFrame(wx.Frame):
                 self._get_visible_files(self._local_files, self._local_filter_text),
             )
         dlg.Destroy()
+
+    def _on_check_updates_from_settings(self, channel: str, parent: wx.Window | None) -> None:
+        """Manual update check callback wired into settings dialog."""
+        self._on_check_updates(None, channel_override=channel, parent=parent)
 
     def _get_update_channel(self) -> str:
         """Get the configured update channel from settings."""
