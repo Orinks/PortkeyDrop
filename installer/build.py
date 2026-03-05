@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
@@ -65,6 +66,32 @@ def run_command(
     except FileNotFoundError:
         print(f"Command not found: {cmd[0]}")
         raise
+
+
+def _pip_module_available() -> bool:
+    """Return True when the current interpreter has the pip module."""
+    import importlib.util
+
+    return importlib.util.find_spec("pip") is not None
+
+
+def _install_python_package(package: str) -> None:
+    """Install a package for the current interpreter, preferring uv when available."""
+    uv_bin = _find_uv_binary()
+    if uv_bin:
+        run_command([uv_bin, "pip", "install", "--python", sys.executable, package])
+        return
+
+    if _pip_module_available():
+        run_command([sys.executable, "-m", "pip", "install", package])
+        return
+
+    raise RuntimeError(
+        f"Cannot install missing dependency '{package}': neither 'uv' nor the 'pip' "
+        "module is available for this Python interpreter. Install uv "
+        "(https://docs.astral.sh/uv/getting-started/installation/) and rerun, "
+        "or use a Python environment with pip."
+    )
 
 
 def get_version() -> str:
@@ -129,7 +156,7 @@ def install_dependencies() -> None:
         print(f"✓ PyInstaller {PyInstaller.__version__} found")
     except ImportError:
         print("Installing PyInstaller...")
-        run_command([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        _install_python_package("pyinstaller")
 
     # Check for Pillow (for icon generation)
     try:
@@ -141,7 +168,41 @@ def install_dependencies() -> None:
             raise ImportError
     except ImportError:
         print("Installing Pillow for icon generation...")
-        run_command([sys.executable, "-m", "pip", "install", "Pillow"])
+        _install_python_package("Pillow")
+
+    # Check for asyncssh (required at runtime for SFTP connections)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("asyncssh"):
+            import asyncssh
+
+            print(f"✓ asyncssh {getattr(asyncssh, '__version__', 'unknown')} found")
+        else:
+            raise ImportError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing required dependency: asyncssh. "
+            "Install it in the project env before building (e.g. 'uv add --dev asyncssh' "
+            "or 'uv pip install asyncssh')."
+        ) from exc
+
+    # Check for puttykeys (required at runtime for .ppk private key conversion)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("puttykeys"):
+            import puttykeys
+
+            print(f"✓ puttykeys {getattr(puttykeys, '__version__', 'unknown')} found")
+        else:
+            raise ImportError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing required dependency: puttykeys. "
+            "Install it in the project env before building (e.g. 'uv add puttykeys' "
+            "or 'uv pip install puttykeys')."
+        ) from exc
 
 
 def build_pyinstaller() -> bool:
@@ -330,6 +391,8 @@ def create_portable_zip() -> bool:
 
     version = get_version()
 
+    staging_dir: Path | None = None
+
     if IS_WINDOWS:
         # Look for directory distribution first, then single exe
         source_dir = DIST_DIR / "PortkeyDrop_dir"
@@ -340,9 +403,17 @@ def create_portable_zip() -> bool:
                 source_dir = DIST_DIR / "PortkeyDrop_portable"
                 source_dir.mkdir(exist_ok=True)
                 shutil.copy2(exe_path, source_dir / "PortkeyDrop.exe")
+                staging_dir = source_dir
             else:
                 print("Error: No build output found")
                 return False
+        else:
+            # Keep installer input untouched; stage a separate portable tree.
+            staging_dir = DIST_DIR / "PortkeyDrop_portable"
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+            shutil.copytree(source_dir, staging_dir)
+            source_dir = staging_dir
 
         zip_name = f"PortkeyDrop_Portable_v{version}"
     elif IS_MACOS:
@@ -364,8 +435,16 @@ def create_portable_zip() -> bool:
     if Path(f"{zip_path}.zip").exists():
         Path(f"{zip_path}.zip").unlink()
 
-    # Create zip
-    shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+    try:
+        # Create data/ directory to activate portable mode after extraction.
+        data_dir = source_dir / "data"
+        data_dir.mkdir(exist_ok=True)
+
+        # Create zip
+        shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+    finally:
+        if staging_dir and staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     print(f"\n✓ Portable ZIP created: {zip_path}.zip")
     return True
@@ -445,6 +524,92 @@ def generate_build_metadata(args: argparse.Namespace) -> None:
             run_command(cmd, cwd=ROOT)
 
 
+def _in_virtual_environment() -> bool:
+    """Return True when running inside an activated Python virtual environment."""
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix) or bool(
+        os.environ.get("VIRTUAL_ENV")
+    )
+
+
+def _find_uv_binary() -> str | None:
+    """Locate uv binary in PATH or common user install locations."""
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        return uv_bin
+
+    user_base = Path(getattr(sys, "base_prefix", sys.prefix)).parent
+    candidates = [
+        Path(sys.executable).parent / "uv",
+        Path(sys.executable).parent / "uv.exe",
+        Path.home() / ".local" / "bin" / "uv",
+        Path.home() / "AppData" / "Roaming" / "Python" / "Scripts" / "uv.exe",
+        user_base / "Scripts" / "uv.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def _ensure_uv_binary() -> str | None:
+    """Ensure uv is available; attempt installation via pip if missing."""
+    uv_bin = _find_uv_binary()
+    if uv_bin:
+        return uv_bin
+
+    if not _pip_module_available():
+        print(
+            "uv not found and pip module is unavailable; install uv manually from "
+            "https://docs.astral.sh/uv/getting-started/installation/."
+        )
+        return None
+
+    print("uv not found; installing uv via pip --user...")
+    try:
+        run_command([sys.executable, "-m", "pip", "install", "--user", "uv"], check=True)
+    except Exception:
+        print("Failed to install uv automatically.")
+        return None
+
+    return _find_uv_binary()
+
+
+def _maybe_reexec_with_uv(argv: list[str]) -> int | None:
+    """Re-exec build via `uv run` when user invokes script outside an active env."""
+    if os.environ.get("PKD_BUILD_UV_BOOTSTRAPPED") == "1":
+        return None
+
+    # Only intercept direct, non-venv execution path.
+    if _in_virtual_environment():
+        return None
+
+    uv_bin = _ensure_uv_binary()
+    if not uv_bin:
+        print("Continuing without uv bootstrap.")
+        return None
+
+    cmd = [
+        uv_bin,
+        "run",
+        "--with",
+        "pyinstaller",
+        "--with",
+        "pillow",
+        "--with",
+        "asyncssh",
+        "--with",
+        "puttykeys",
+        "python",
+        str(Path(__file__).resolve()),
+        *argv,
+    ]
+    print("No active virtual environment detected; bootstrapping via uv...")
+    print(f"$ {' '.join(cmd)}")
+    env = os.environ.copy()
+    env["PKD_BUILD_UV_BOOTSTRAPPED"] = "1"
+    return subprocess.run(cmd, cwd=str(ROOT), env=env).returncode
+
+
 def main() -> int:
     """Run the build process."""
     parser = argparse.ArgumentParser(
@@ -492,8 +657,18 @@ def main() -> int:
         default=None,
         help="Custom build tag (e.g. nightly-20260208). Overrides --nightly.",
     )
+    parser.add_argument(
+        "--no-uv-bootstrap",
+        action="store_true",
+        help="Do not auto-reexec with uv when no virtual environment is active.",
+    )
 
     args = parser.parse_args()
+
+    if not args.no_uv_bootstrap:
+        rc = _maybe_reexec_with_uv(sys.argv[1:])
+        if rc is not None:
+            return rc
 
     # Print banner
     print("\n" + "=" * 60)

@@ -16,12 +16,14 @@ def test_parse_filezilla_sites_fixture():
     assert first.port == 2222
     assert first.username == "alice"
     assert first.password == "secret"
+    assert first.key_path == "/home/alice/.ssh/id_ed25519"
     assert first.initial_dir == "/home/alice"
     assert first.notes == "Main production host"
 
     second = sites[1]
     assert second.protocol == "ftp"
     assert second.password == "plaintext"
+    assert second.key_path == ""
     assert second.initial_dir == "/incoming"
 
 
@@ -64,6 +66,42 @@ def test_parse_file_invalid_port(tmp_path):
     f = tmp_path / "sm.xml"
     f.write_text(xml)
     assert parse_file(f)[0].port == 0
+
+
+def test_parse_file_keyfile_casing_variant(tmp_path):
+    from portkeydrop.importers.filezilla import parse_file
+
+    xml = '<?xml version="1.0"?><FileZilla3><Servers><Server><Host>sftp.example.com</Host><Protocol>1</Protocol><Port>22</Port><User>u</User><Pass></Pass><KeyFile>/tmp/id_rsa</KeyFile><RemoteDir>/</RemoteDir><Name>X</Name></Server></Servers></FileZilla3>'
+    f = tmp_path / "sm.xml"
+    f.write_text(xml)
+    assert parse_file(f)[0].key_path == "/tmp/id_rsa"
+
+
+def test_parse_file_keyfile_file_url_windows_drive(tmp_path):
+    from portkeydrop.importers.filezilla import parse_file
+
+    xml = '<?xml version="1.0"?><FileZilla3><Servers><Server><Host>sftp.example.com</Host><Protocol>1</Protocol><Port>22</Port><User>u</User><Pass></Pass><Keyfile>file:///C:/Users/Alice/.ssh/id_ed25519%20prod.ppk</Keyfile><RemoteDir>/</RemoteDir><Name>X</Name></Server></Servers></FileZilla3>'
+    f = tmp_path / "sm.xml"
+    f.write_text(xml)
+    assert parse_file(f)[0].key_path == "C:\\Users\\Alice\\.ssh\\id_ed25519 prod.ppk"
+
+
+def test_parse_file_keyfile_file_url_unc(tmp_path):
+    from portkeydrop.importers.filezilla import parse_file
+
+    xml = '<?xml version="1.0"?><FileZilla3><Servers><Server><Host>sftp.example.com</Host><Protocol>1</Protocol><Port>22</Port><User>u</User><Pass></Pass><Keyfile>file://fileserver/keys/id_ed25519.ppk</Keyfile><RemoteDir>/</RemoteDir><Name>X</Name></Server></Servers></FileZilla3>'
+    f = tmp_path / "sm.xml"
+    f.write_text(xml)
+    assert parse_file(f)[0].key_path == "\\\\fileserver\\keys\\id_ed25519.ppk"
+
+
+def test_parse_file_keyfile_not_mapped_for_non_sftp(tmp_path):
+    from portkeydrop.importers.filezilla import parse_file
+
+    xml = '<?xml version="1.0"?><FileZilla3><Servers><Server><Host>ftp.example.com</Host><Protocol>0</Protocol><Port>21</Port><User>u</User><Pass></Pass><Keyfile>/should/not/import</Keyfile><RemoteDir>/incoming</RemoteDir><Name>X</Name></Server></Servers></FileZilla3>'
+    f = tmp_path / "sm.xml"
+    f.write_text(xml)
+    assert parse_file(f)[0].key_path == ""
 
 
 def test_decode_password_base64_invalid():

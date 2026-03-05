@@ -8,10 +8,13 @@ Usage:
     pyinstaller installer/portkeydrop.spec
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
 import tomllib
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
+
 
 # Determine paths
 SPEC_DIR = Path(SPECPATH).resolve()
@@ -32,14 +35,72 @@ try:
 except Exception:
     pass
 
+
+def _is_import_package(package: str) -> bool:
+    """Return True when the module exists and is importable as a package/module."""
+    try:
+        spec = importlib.util.find_spec(package)
+        return spec is not None
+    except Exception:
+        return False
+
+
+def collect_optional_all(package: str) -> tuple[list, list, list]:
+    """Collect package files when available, otherwise return empty tuples."""
+    if not _is_import_package(package):
+        return [], [], []
+    try:
+        return collect_all(package)
+    except Exception:
+        return [], [], []
+
+
+def collect_optional_submodules(package: str) -> list[str]:
+    """Collect submodules when available, otherwise return an empty list."""
+    if not _is_import_package(package):
+        return []
+    try:
+        return collect_submodules(package)
+    except Exception:
+        return []
+
+
+def collect_optional_dynamic_libs(package: str) -> list[tuple[str, str]]:
+    """Collect package dynamic libs when available, otherwise return empty list."""
+    if not _is_import_package(package):
+        return []
+    try:
+        return collect_dynamic_libs(package)
+    except Exception:
+        return []
+
+
 # Determine icon path
 ICON_PATH = SPEC_DIR / "app.ico"
 ICON_PATH = str(ICON_PATH) if ICON_PATH.exists() else None
 
 # Data files to bundle (only if resources dir exists)
 datas = []
+binaries = []
 if RESOURCES_DIR.exists():
     datas.append((str(RESOURCES_DIR), "portkeydrop/resources"))
+
+# Pull full asyncssh package metadata/submodules/binaries for frozen builds
+asyncssh_datas, asyncssh_binaries, asyncssh_hiddenimports = collect_all("asyncssh")
+datas += asyncssh_datas
+binaries += asyncssh_binaries
+puttykeys_datas, puttykeys_binaries, puttykeys_hiddenimports = collect_all("puttykeys")
+datas += puttykeys_datas
+binaries += puttykeys_binaries
+
+# Pull prism/prismatoid runtime package data/binaries for accessibility backend support
+prism_datas, prism_binaries, prism_hiddenimports = collect_optional_all("prism")
+prismatoid_datas, prismatoid_binaries, prismatoid_hiddenimports = collect_optional_all("prismatoid")
+datas += prism_datas + prismatoid_datas
+binaries += prism_binaries + prismatoid_binaries
+# Mirror AccessiWeather strategy: explicitly collect screen-reader dynamic libs.
+binaries += collect_optional_dynamic_libs("prism")
+binaries += collect_optional_dynamic_libs("prismatoid")
 
 # Hidden imports for wxPython and other dynamic imports
 hiddenimports = [
@@ -55,13 +116,21 @@ hiddenimports = [
     "keyring.backends.Windows",
     "keyring.backends.macOS",
     "keyring.backends.SecretService",
-    "paramiko",
-    "paramiko.transport",
-    "paramiko.sftp_client",
-    "prismatoid",
+    *collect_submodules("asyncssh"),
+    *asyncssh_hiddenimports,
+    *collect_submodules("puttykeys"),
+    *puttykeys_hiddenimports,
+    *collect_optional_submodules("prism"),
+    *collect_optional_submodules("prismatoid"),
+    *prism_hiddenimports,
+    *prismatoid_hiddenimports,
+    "prism",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
 ]
+
+if _is_import_package("prismatoid"):
+    hiddenimports.append("prismatoid")
 
 # Excludes to reduce size
 excludes = [
@@ -78,13 +147,14 @@ excludes = [
     "tests",
     "unittest",
     "pytest",
+    "paramiko",
 ]
 
 # Analysis
 a = Analysis(
     [str(SRC_DIR / "portkeydrop" / "main.py")],
     pathex=[str(SRC_DIR)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

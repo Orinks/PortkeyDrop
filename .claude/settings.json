@@ -1,28 +1,11 @@
 {
+  "defaultMode": "acceptEdits",
   "permissions": {
-    "allow": ["Bash(*)", "Edit(*)", "Write(*)", "Read(*)", "MultiEdit(*)"],
-    "defaultMode": "bypassPermissions"
-  },
-  "hooks": {
-    "WorktreeCreate": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/worktree-create.sh"
-          }
-        ]
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/worktree-remove.sh"
-          }
-        ]
-      }
+    "allow": [
+      "Edit",
+      "Write",
+      "Bash(*)",
+      "Read"
     ]
   }
 }

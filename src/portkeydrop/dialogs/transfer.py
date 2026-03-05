@@ -165,7 +165,8 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total
+                    if total > 0:
+                        item.total_bytes = total
                     self._notify()
 
                 client.download(item.remote_path, f, callback=callback)
@@ -187,7 +188,8 @@ class TransferManager:
                     if item.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
                     item.transferred_bytes = transferred
-                    item.total_bytes = total
+                    if total > 0:
+                        item.total_bytes = total
                     self._notify()
 
                 client.upload(f, item.remote_path, callback=callback)
@@ -208,6 +210,15 @@ class TransferManager:
             # Collect all files first to calculate total size
             file_queue: list[tuple[str, str, int]] = []  # (remote, local, size)
             self._collect_remote_files(client, item.remote_path, item.local_path, file_queue)
+            # Re-stat files with size=0 to resolve symlink targets
+            for i, (remote_file, local_file, size) in enumerate(file_queue):
+                if size == 0:
+                    try:
+                        real_size = client.stat(remote_file).size
+                        if real_size > 0:
+                            file_queue[i] = (remote_file, local_file, real_size)
+                    except Exception:
+                        pass
             item.total_bytes = sum(size for _, _, size in file_queue)
             item.transferred_bytes = 0
             self._notify()
@@ -415,22 +426,76 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
         def _on_timer(self, event):
             self._refresh()
 
+        def _get_selected_transfer_id(self):
+            """Return selected transfer id, if any."""
+            idx = self.transfer_list.GetFirstSelected()
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                return None
+            if idx == wx.NOT_FOUND:
+                return None
+            transfers = self._transfer_manager.transfers
+            if 0 <= idx < len(transfers):
+                return transfers[idx].id
+            return None
+
         def _on_cancel(self, event):
             idx = self.transfer_list.GetFirstSelected()
             if idx == wx.NOT_FOUND:
                 return
             transfers = self._transfer_manager.transfers
             if 0 <= idx < len(transfers):
-                self._transfer_manager.cancel(transfers[idx].id)
+                transfer = transfers[idx]
+                self._transfer_manager.cancel(transfer.id)
+                filename = PurePosixPath(transfer.remote_path).name or os.path.basename(
+                    transfer.local_path
+                )
+                parent = self.GetParent()
+                if parent and hasattr(parent, "_announce") and filename:
+                    parent._announce(f"Cancelled transfer: {filename}")
                 self._refresh()
 
         def _refresh(self):
-            self.transfer_list.DeleteAllItems()
-            for t in self._transfer_manager.transfers:
+            transfers = self._transfer_manager.transfers
+            # Save selection/focus so we can restore after update
+            selected = self.transfer_list.GetFirstSelected()
+            focused = self.transfer_list.GetFocusedItem()
+            try:
+                selected = int(selected)
+            except (TypeError, ValueError):
+                selected = wx.NOT_FOUND
+            try:
+                focused = int(focused)
+            except (TypeError, ValueError):
+                focused = wx.NOT_FOUND
+
+            current_count = self.transfer_list.GetItemCount()
+            new_count = len(transfers)
+
+            for i, t in enumerate(transfers):
                 name = PurePosixPath(t.remote_path).name
-                idx = self.transfer_list.InsertItem(self.transfer_list.GetItemCount(), name)
-                self.transfer_list.SetItem(idx, 1, t.direction.value)
-                self.transfer_list.SetItem(idx, 2, f"{t.progress_pct}%")
-                self.transfer_list.SetItem(idx, 3, t.display_status)
+                cols = [name, t.direction.value, f"{t.progress_pct}%", t.display_status]
+                if i >= current_count:
+                    # New row — insert it
+                    row = self.transfer_list.InsertItem(i, cols[0])
+                    for col_idx in range(1, len(cols)):
+                        self.transfer_list.SetItem(row, col_idx, cols[col_idx])
+                else:
+                    # Existing row — update only changed cells
+                    for col_idx, val in enumerate(cols):
+                        existing = self.transfer_list.GetItemText(i, col_idx)
+                        if existing != val:
+                            self.transfer_list.SetItem(i, col_idx, val)
+
+            # Remove extra rows from the bottom (transfers were removed)
+            for i in range(current_count - 1, new_count - 1, -1):
+                self.transfer_list.DeleteItem(i)
+
+            # Restore selection/focus
+            if 0 <= selected < new_count:
+                self.transfer_list.Select(selected)
+            if 0 <= focused < new_count:
+                self.transfer_list.Focus(focused)
 
     return TransferDialog(parent, transfer_manager)

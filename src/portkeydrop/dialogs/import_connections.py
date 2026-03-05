@@ -165,21 +165,28 @@ class ImportConnectionsDialog(wx.Dialog):
         panel.SetSizer(sizer)
         return panel
 
+    def _selected_source_key(self) -> str:
+        """Return currently selected source key from available choices."""
+        index = self.source_radio.GetSelection()
+        if 0 <= index < len(self._available_sources):
+            return self._available_sources[index].key
+        return "from_file"
+
     def _on_source_change(self, event: wx.CommandEvent) -> None:
-        self._source = SOURCES[self.source_radio.GetSelection()].key
+        self._source = self._selected_source_key()
         self._run_autodetect()
 
     def _on_autodetect(self, event: wx.CommandEvent) -> None:
         self._run_autodetect()
 
     def _run_autodetect(self) -> None:
-        source = SOURCES[self.source_radio.GetSelection()].key
+        source = self._selected_source_key()
         default_path = detect_default_path(source)
         if default_path is not None:
             self.path_text.SetValue(str(default_path))
 
     def _on_browse_file(self, event: wx.CommandEvent) -> None:
-        source = SOURCES[self.source_radio.GetSelection()].key
+        source = self._selected_source_key()
         wildcard = self._file_wildcard_for_source(source)
         with wx.FileDialog(
             self,
@@ -244,7 +251,7 @@ class ImportConnectionsDialog(wx.Dialog):
         use_registry = input_path == WINSCP_REGISTRY_SENTINEL
         path = None if use_registry else (Path(input_path).expanduser() if input_path else None)
 
-        source = SOURCES[self.source_radio.GetSelection()].key
+        source = self._selected_source_key()
         if source == "from_file" and not path:
             wx.MessageBox(
                 "Choose a file or folder for 'From file...' import.",
@@ -271,8 +278,14 @@ class ImportConnectionsDialog(wx.Dialog):
         try:
             self._loaded_sites = load_from_source(source, path)
         except Exception as exc:
+            message = f"Failed to parse configuration: {exc}"
+            if source == "winscp":
+                message += (
+                    "\n\nTip: WinSCP imports support INI exports and Windows Registry sessions. "
+                    "Passwords protected by WinSCP master password cannot be decrypted."
+                )
             wx.MessageBox(
-                f"Failed to parse configuration: {exc}",
+                message,
                 "Import Sites",
                 wx.OK | wx.ICON_ERROR,
                 self,
@@ -280,8 +293,14 @@ class ImportConnectionsDialog(wx.Dialog):
             return False
 
         if not self._loaded_sites:
+            message = "No connections were found in the selected source."
+            if source == "winscp":
+                message += (
+                    "\n\nTip: Make sure the file contains [Sessions\\...] entries, "
+                    "or use Auto-Detect to load sessions from the Windows Registry."
+                )
             wx.MessageBox(
-                "No connections were found in the selected source.",
+                message,
                 "Import Sites",
                 wx.OK | wx.ICON_INFORMATION,
                 self,

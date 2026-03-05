@@ -8,6 +8,7 @@
       <Protocol>1</Protocol>
       <User>alice</User>
       <Pass encoding="base64">c2VjcmV0</Pass>
+      <Keyfile>/home/alice/.ssh/id_ed25519</Keyfile>
       <RemoteDir>1 0 4 home 5 alice</RemoteDir>
       <Comments>Main production host</Comments>
     </Server>

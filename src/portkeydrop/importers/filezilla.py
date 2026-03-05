@@ -6,6 +6,7 @@ import base64
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from .models import ImportedSite
 
@@ -46,6 +47,7 @@ def _parse_root(root: ET.Element) -> list[ImportedSite]:
 
         username = (server.findtext("User") or "").strip()
         password = _decode_password(server)
+        key_path = _parse_key_path(server, protocol)
 
         raw_remote_dir = (server.findtext("RemoteDir") or "").strip()
         initial_dir = _parse_remote_dir(raw_remote_dir)
@@ -61,6 +63,7 @@ def _parse_root(root: ET.Element) -> list[ImportedSite]:
                 port=port,
                 username=username,
                 password=password,
+                key_path=key_path,
                 initial_dir=initial_dir,
                 notes=notes,
             )
@@ -81,6 +84,45 @@ def _decode_password(server: ET.Element) -> str:
         except Exception:
             return ""
     return raw_password
+
+
+def _parse_key_path(server: ET.Element, protocol: str) -> str:
+    if protocol != "sftp":
+        return ""
+
+    raw_key_path = ""
+    key_element = server.find("Keyfile")
+    if key_element is not None and key_element.text:
+        raw_key_path = key_element.text
+    else:
+        # Some exports/custom XML variants use KeyFile casing.
+        key_element = server.find("KeyFile")
+        if key_element is not None and key_element.text:
+            raw_key_path = key_element.text
+
+    raw_key_path = raw_key_path.strip()
+    if not raw_key_path:
+        return ""
+    return _normalize_key_path(raw_key_path)
+
+
+def _normalize_key_path(raw_key_path: str) -> str:
+    parsed = urlparse(raw_key_path)
+    if parsed.scheme.lower() != "file":
+        return raw_key_path
+
+    decoded_path = unquote(parsed.path or "")
+    if parsed.netloc:
+        unc_tail = decoded_path.lstrip("/").replace("/", "\\")
+        return f"\\\\{parsed.netloc}\\{unc_tail}" if unc_tail else f"\\\\{parsed.netloc}"
+
+    # file:///C:/... => C:\...
+    if len(decoded_path) >= 3 and decoded_path[0] == "/" and decoded_path[2] == ":":
+        return decoded_path[1:].replace("/", "\\")
+
+    if decoded_path:
+        return decoded_path
+    return raw_key_path
 
 
 def _parse_remote_dir(raw_remote_dir: str) -> str:
