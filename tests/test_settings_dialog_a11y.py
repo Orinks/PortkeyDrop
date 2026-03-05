@@ -346,3 +346,26 @@ def test_check_updates_button_invokes_callback_with_selected_channel(monkeypatch
     dlg._on_check_updates_now(None)
 
     assert calls == [("nightly", dlg)]
+
+
+def test_get_settings_persists_updater_fields(monkeypatch):
+    dlg = _load_dialog(monkeypatch)
+    dlg.auto_update_check.SetValue(False)
+    dlg.update_interval_spin.SetValue(12)
+    dlg.update_channel_choice.SetSelection(1)
+    dlg.remember_local_folder_check.SetValue(False)
+    dlg.speech_rate_spin.SetValue(80)
+
+    settings = dlg.get_settings()
+
+    assert settings.app.auto_update_enabled is False
+    assert settings.app.update_check_interval_hours == 12
+    assert settings.app.update_channel == "nightly"
+    assert settings.app.remember_last_local_folder_on_startup is False
+    assert settings.speech.rate == 80
+
+
+def test_check_updates_now_returns_without_callback(monkeypatch):
+    dlg = _load_dialog(monkeypatch, on_check_updates=None)
+    dlg.update_channel_choice.SetSelection(1)
+    dlg._on_check_updates_now(None)
