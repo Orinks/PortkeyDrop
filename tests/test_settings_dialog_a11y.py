@@ -210,6 +210,9 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
         "passive_check": "Passive mode",
         "verify_keys_choice": "Verify host keys",
         "remember_local_folder_check": "Remember last local folder on startup",
+        "auto_update_check": "Automatic update checks",
+        "update_interval_spin": "Update check interval",
+        "update_channel_choice": "Update channel",
         # Speech
         "speech_rate_spin": "Speech rate",
         "speech_volume_spin": "Speech volume",
@@ -239,6 +242,8 @@ def test_labeled_controls_have_label_for_links(monkeypatch):
         "keepalive_spin",
         "retries_spin",
         "verify_keys_choice",
+        "update_interval_spin",
+        "update_channel_choice",
         "speech_rate_spin",
         "speech_volume_spin",
         "verbosity_choice",
@@ -280,6 +285,7 @@ def test_spin_inner_editors_carry_field_context(monkeypatch):
         dlg.timeout_spin,
         dlg.keepalive_spin,
         dlg.retries_spin,
+        dlg.update_interval_spin,
         dlg.speech_rate_spin,
         dlg.speech_volume_spin,
     ]
@@ -302,6 +308,7 @@ def test_spin_controls_have_tooltips(monkeypatch):
         dlg.timeout_spin,
         dlg.keepalive_spin,
         dlg.retries_spin,
+        dlg.update_interval_spin,
         dlg.speech_rate_spin,
         dlg.speech_volume_spin,
     ]
