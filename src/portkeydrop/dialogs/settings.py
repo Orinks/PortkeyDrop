@@ -9,7 +9,7 @@ import wx
 from portkeydrop.settings import Settings
 
 
-CheckUpdatesCallback = Callable[[str, wx.Window | None], None]
+CheckUpdatesCallback = Callable[[str, object | None], None]
 
 
 class SettingsDialog(wx.Dialog):
