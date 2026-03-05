@@ -748,7 +748,6 @@ class SFTPClient(TransferClient):
                 converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
                 if converted:
                     return converted, ""
-                return None, reason
 
             if (
                 version == 3
@@ -841,7 +840,6 @@ class SFTPClient(TransferClient):
                 converted, reason = SFTPClient._convert_ppk_rsa_unencrypted(key_data)
                 if converted:
                     return converted, ""
-                return None, reason
 
         if isinstance(converted_text, bytes):
             return converted_text, ""
