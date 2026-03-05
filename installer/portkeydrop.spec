@@ -8,6 +8,7 @@ Usage:
     pyinstaller installer/portkeydrop.spec
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -35,8 +36,19 @@ except Exception:
     pass
 
 
+def _is_import_package(package: str) -> bool:
+    """Return True when the module exists and is importable as a package/module."""
+    try:
+        spec = importlib.util.find_spec(package)
+        return spec is not None
+    except Exception:
+        return False
+
+
 def collect_optional_all(package: str) -> tuple[list, list, list]:
     """Collect package files when available, otherwise return empty tuples."""
+    if not _is_import_package(package):
+        return [], [], []
     try:
         return collect_all(package)
     except Exception:
@@ -45,6 +57,8 @@ def collect_optional_all(package: str) -> tuple[list, list, list]:
 
 def collect_optional_submodules(package: str) -> list[str]:
     """Collect submodules when available, otherwise return an empty list."""
+    if not _is_import_package(package):
+        return []
     try:
         return collect_submodules(package)
     except Exception:
@@ -53,6 +67,8 @@ def collect_optional_submodules(package: str) -> list[str]:
 
 def collect_optional_dynamic_libs(package: str) -> list[tuple[str, str]]:
     """Collect package dynamic libs when available, otherwise return empty list."""
+    if not _is_import_package(package):
+        return []
     try:
         return collect_dynamic_libs(package)
     except Exception:
@@ -109,10 +125,12 @@ hiddenimports = [
     *prism_hiddenimports,
     *prismatoid_hiddenimports,
     "prism",
-    "prismatoid",
     # Generated build-time file (wrapped in try/except, so PyInstaller misses it)
     "portkeydrop._build_meta",
 ]
+
+if _is_import_package("prismatoid"):
+    hiddenimports.append("prismatoid")
 
 # Excludes to reduce size
 excludes = [
