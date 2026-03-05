@@ -91,8 +91,12 @@ class SiteManagerDialog(wx.Dialog):
 
         right_sizer.Add(grid, 1, wx.EXPAND | wx.ALL, 4)
 
+        action_sizer = wx.BoxSizer(wx.HORIZONTAL)
         save_btn = wx.Button(self, label="&Save")
-        right_sizer.Add(save_btn, 0, wx.ALL | wx.ALIGN_RIGHT, 4)
+        self.close_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Close")
+        action_sizer.Add(save_btn, 0, wx.RIGHT, 4)
+        action_sizer.Add(self.close_btn, 0)
+        right_sizer.Add(action_sizer, 0, wx.ALL | wx.ALIGN_RIGHT, 4)
 
         main_sizer.Add(right_sizer, 2, wx.EXPAND | wx.ALL, 4)
 
