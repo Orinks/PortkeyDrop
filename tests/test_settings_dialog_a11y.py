@@ -334,6 +334,17 @@ def test_notebook_receives_initial_focus(monkeypatch):
     assert dlg.notebook.focused is True
 
 
+def test_notebook_includes_dedicated_updates_tab(monkeypatch):
+    dlg = _load_dialog(monkeypatch)
+    assert [title for _panel, title in dlg.notebook.pages] == [
+        "Transfer",
+        "Display",
+        "Connection",
+        "Updates",
+        "Speech",
+    ]
+
+
 def test_check_updates_button_invokes_callback_with_selected_channel(monkeypatch):
     calls: list[tuple[str, object]] = []
 
