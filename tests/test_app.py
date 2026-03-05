@@ -935,3 +935,116 @@ def test_on_remote_item_activated_file_sets_status(app_module):
     frame._on_download.assert_called_once_with(None)
 
     threading.Thread = original_thread
+
+
+def test_get_update_channel_reads_settings(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+
+    assert frame._get_update_channel() == "nightly"
+
+
+def test_update_menu_label_reflects_channel(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="nightly"))
+    frame._check_updates_item = MagicMock(SetItemLabel=MagicMock())
+
+    frame.update_check_updates_menu_label()
+
+    frame._check_updates_item.SetItemLabel.assert_called_once_with(
+        "Check for &Updates (Nightly)..."
+    )
+
+
+def test_start_auto_update_checks_starts_timer_with_interval(app_module):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(auto_update_enabled=True, update_check_interval_hours=3)
+    )
+    frame._auto_update_check_timer = None
+
+    timer = MagicMock(Bind=MagicMock(), Start=MagicMock(), Stop=MagicMock())
+    with patch.object(fake_wx, "Timer", return_value=timer):
+        frame._start_auto_update_checks()
+
+    timer.Bind.assert_called_once()
+    timer.Start.assert_called_once_with(3 * 60 * 60 * 1000)
+    assert frame._auto_update_check_timer is timer
+
+
+def test_start_auto_update_checks_stops_existing_and_skips_when_disabled(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    existing_timer = MagicMock(Stop=MagicMock())
+    frame._auto_update_check_timer = existing_timer
+    frame._settings = SimpleNamespace(app=SimpleNamespace(auto_update_enabled=False))
+
+    frame._start_auto_update_checks()
+
+    existing_timer.Stop.assert_called_once()
+    assert frame._auto_update_check_timer is None
+
+
+def test_on_settings_reconfigures_update_menu_and_timer(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="stable"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    frame._local_cwd = "/tmp"
+    frame.remote_file_list = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._remote_files = []
+    frame._local_files = []
+    frame._remote_filter_text = ""
+    frame._local_filter_text = ""
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame.update_check_updates_menu_label = MagicMock()
+    frame._start_auto_update_checks = MagicMock()
+
+    updated_settings = SimpleNamespace(
+        app=SimpleNamespace(update_channel="nightly"),
+        display=SimpleNamespace(show_hidden_files=True),
+    )
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_settings=MagicMock(return_value=updated_settings),
+        Destroy=MagicMock(),
+    )
+    with (
+        patch.object(app, "SettingsDialog", return_value=dialog),
+        patch.object(app, "save_settings"),
+        patch.object(app, "update_last_local_folder"),
+    ):
+        frame._on_settings(None)
+
+    frame.update_check_updates_menu_label.assert_called_once()
+    frame._start_auto_update_checks.assert_called_once()
+
+
+def test_on_check_updates_from_source_shows_info_message(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    monkeypatch.setattr(app.sys, "frozen", False, raising=False)
+
+    frame._on_check_updates(None)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Running from Source"
+
+
+def test_on_close_stops_auto_update_timer_and_skips_event(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._auto_update_check_timer = MagicMock(Stop=MagicMock())
+    event = MagicMock(Skip=MagicMock())
+
+    frame._on_close(event)
+
+    frame._auto_update_check_timer.Stop.assert_called_once()
+    event.Skip.assert_called_once()

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import tempfile
 import threading
 from pathlib import Path, PurePosixPath
 
 import wx
 
+from portkeydrop import __version__
 from portkeydrop.dialogs.properties import PropertiesDialog
 from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
@@ -43,6 +46,12 @@ from portkeydrop.settings import (
 )
 from portkeydrop.sites import Site, SiteManager
 from portkeydrop.screen_reader import ScreenReaderAnnouncer
+from portkeydrop.services.updater import (
+    ChecksumVerificationError,
+    UpdateService,
+    apply_update,
+    parse_nightly_date,
+)
 from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 
 logger = logging.getLogger(__name__)
@@ -71,6 +80,7 @@ ID_HOME_DIR = wx.NewIdRef()
 ID_FILTER = wx.NewIdRef()
 ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
+ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
@@ -88,6 +98,9 @@ class MainFrame(wx.Frame):
         self._remote_files: list[RemoteFile] = []
         self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
+        self.version = __version__
+        self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
+        self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
         self._transfer_manager = TransferManager(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
@@ -105,6 +118,8 @@ class MainFrame(wx.Frame):
         self._update_title()
         self._refresh_local_files()
         wx.CallAfter(self._set_initial_focus)
+        self._start_auto_update_checks()
+        wx.CallAfter(self._check_for_updates_on_startup)
 
     def _build_menu(self) -> None:
         menubar = wx.MenuBar()
@@ -176,6 +191,13 @@ class MainFrame(wx.Frame):
 
         # Help menu
         help_menu = wx.Menu()
+        channel = self._get_update_channel()
+        self._check_updates_item = help_menu.Append(
+            ID_CHECK_UPDATES,
+            f"Check for &Updates ({channel.title()})...",
+            "Check for application updates",
+        )
+        help_menu.AppendSeparator()
         help_menu.Append(wx.ID_ABOUT, "&About", "About Portkey Drop")
         menubar.Append(help_menu, "&Help")
 
@@ -370,10 +392,12 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_properties, id=ID_PROPERTIES)
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
+        self.Bind(wx.EVT_MENU, self._on_check_updates, id=ID_CHECK_UPDATES)
         self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
         self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
         self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
+        self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
 
         # Toolbar connect button
@@ -1400,6 +1424,8 @@ class MainFrame(wx.Frame):
             self._settings = dlg.get_settings()
             update_last_local_folder(self._settings, self._local_cwd)
             save_settings(self._settings)
+            self.update_check_updates_menu_label()
+            self._start_auto_update_checks()
             self._populate_file_list(
                 self.remote_file_list,
                 self._get_visible_files(self._remote_files, self._remote_filter_text),
@@ -1410,10 +1436,283 @@ class MainFrame(wx.Frame):
             )
         dlg.Destroy()
 
+    def _get_update_channel(self) -> str:
+        """Get the configured update channel from settings."""
+        try:
+            return getattr(self._settings.app, "update_channel", "stable")
+        except Exception:
+            return "stable"
+
+    def update_check_updates_menu_label(self) -> None:
+        """Refresh check-for-updates menu text after settings changes."""
+        if hasattr(self, "_check_updates_item"):
+            channel = self._get_update_channel()
+            self._check_updates_item.SetItemLabel(f"Check for &Updates ({channel.title()})...")
+
+    def _start_auto_update_checks(self) -> None:
+        """Start periodic update checks based on current settings."""
+        try:
+            auto_enabled = bool(getattr(self._settings.app, "auto_update_enabled", True))
+
+            if self._auto_update_check_timer:
+                self._auto_update_check_timer.Stop()
+                self._auto_update_check_timer = None
+
+            if not auto_enabled:
+                logger.debug("Automatic update checks disabled")
+                return
+
+            interval_hours = max(
+                1,
+                int(getattr(self._settings.app, "update_check_interval_hours", 24)),
+            )
+            interval_ms = interval_hours * 60 * 60 * 1000
+            self._auto_update_check_timer = wx.Timer(self)
+            self._auto_update_check_timer.Bind(wx.EVT_TIMER, self._on_auto_update_check_timer)
+            self._auto_update_check_timer.Start(interval_ms)
+            logger.info("Automatic update checks scheduled every %s hour(s)", interval_hours)
+        except Exception as exc:
+            logger.warning("Failed to start automatic update checks: %s", exc)
+
+    def _on_auto_update_check_timer(self, event) -> None:
+        """Run automatic update check from timer ticks."""
+        self._check_for_updates_on_startup()
+
+    def _check_for_updates_on_startup(self) -> None:
+        """Check for updates at startup when running frozen builds."""
+        if not getattr(sys, "frozen", False):
+            logger.debug("Running from source, skipping startup update check")
+            return
+
+        if not getattr(self._settings.app, "auto_update_enabled", True):
+            logger.debug("Automatic update checks disabled")
+            return
+
+        channel = self._get_update_channel()
+        current_version = getattr(self, "version", "0.0.0")
+        build_tag = getattr(self, "build_tag", None)
+        current_nightly_date = parse_nightly_date(build_tag) if build_tag else None
+
+        if channel == "nightly" and not build_tag:
+            logger.warning(
+                "Skipping startup nightly check because build tag is unavailable; "
+                "manual check still allowed."
+            )
+            return
+
+        def do_check() -> None:
+            try:
+                service = UpdateService("PortkeyDrop")
+                result = service.check_for_updates(
+                    current_version=current_version,
+                    current_nightly_date=current_nightly_date,
+                    channel=channel,
+                )
+                if not result:
+                    return
+
+                update_info, release = result
+                channel_label = "nightly" if update_info.is_nightly else "stable"
+
+                def prompt() -> None:
+                    message = (
+                        f"Update available: {update_info.version} ({channel_label}).\n\n"
+                        "Download and install now?"
+                    )
+                    result_code = wx.MessageBox(
+                        message,
+                        "Update Available",
+                        wx.YES_NO | wx.ICON_INFORMATION,
+                        self,
+                    )
+                    if result_code == wx.YES:
+                        self._download_and_apply_update(update_info, release)
+
+                wx.CallAfter(prompt)
+            except Exception as exc:
+                logger.warning("Startup update check failed: %s", exc)
+
+        threading.Thread(target=do_check, daemon=True).start()
+
+    def _on_check_updates(self, event: wx.CommandEvent) -> None:
+        """Manually check for updates from the Help menu."""
+        if not getattr(sys, "frozen", False):
+            wx.MessageBox(
+                "Update checking is only available in installed builds.\n"
+                "You're running from source - use git pull to update.",
+                "Running from Source",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+
+        channel = self._get_update_channel()
+        current_version = getattr(self, "version", "0.0.0")
+        build_tag = getattr(self, "build_tag", None)
+        current_nightly_date = parse_nightly_date(build_tag) if build_tag else None
+        display_version = current_nightly_date if current_nightly_date else current_version
+
+        if hasattr(wx, "BeginBusyCursor"):
+            wx.BeginBusyCursor()
+
+        def do_check() -> None:
+            try:
+                service = UpdateService("PortkeyDrop")
+                result = service.check_for_updates(
+                    current_version=current_version,
+                    current_nightly_date=current_nightly_date,
+                    channel=channel,
+                )
+
+                def finish_busy() -> None:
+                    if hasattr(wx, "EndBusyCursor"):
+                        wx.EndBusyCursor()
+
+                wx.CallAfter(finish_busy)
+
+                if result is None:
+                    if current_nightly_date and channel == "stable":
+                        msg = (
+                            f"You're on nightly ({current_nightly_date}).\n"
+                            "No newer stable release available."
+                        )
+                    elif current_nightly_date:
+                        msg = f"You're on the latest nightly ({current_nightly_date})."
+                    else:
+                        msg = f"You're up to date ({display_version})."
+
+                    wx.CallAfter(
+                        wx.MessageBox,
+                        msg,
+                        "No Updates Available",
+                        wx.OK | wx.ICON_INFORMATION,
+                        self,
+                    )
+                    return
+
+                update_info, release = result
+                channel_label = "nightly" if update_info.is_nightly else "stable"
+
+                def prompt() -> None:
+                    message = (
+                        f"Update available: {update_info.version} ({channel_label}).\n\n"
+                        "Download and install now?"
+                    )
+                    result_code = wx.MessageBox(
+                        message,
+                        "Update Available",
+                        wx.YES_NO | wx.ICON_INFORMATION,
+                        self,
+                    )
+                    if result_code == wx.YES:
+                        self._download_and_apply_update(update_info, release)
+
+                wx.CallAfter(prompt)
+
+            except Exception as exc:
+                if hasattr(wx, "EndBusyCursor"):
+                    wx.CallAfter(wx.EndBusyCursor)
+                wx.CallAfter(
+                    wx.MessageBox,
+                    f"Failed to check for updates:\n{exc}",
+                    "Update Check Failed",
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+
+        threading.Thread(target=do_check, daemon=True).start()
+
+    def _download_and_apply_update(self, update_info, release: dict | None = None) -> None:
+        """Download selected update and apply it after confirmation."""
+        progress_dlg = None
+        if hasattr(wx, "ProgressDialog"):
+            progress_style = (
+                getattr(wx, "PD_APP_MODAL", 0)
+                | getattr(wx, "PD_AUTO_HIDE", 0)
+                | getattr(wx, "PD_CAN_ABORT", 0)
+            )
+            progress_dlg = wx.ProgressDialog(
+                "Downloading Update",
+                f"Downloading {update_info.artifact_name}...",
+                maximum=100,
+                parent=self,
+                style=progress_style,
+            )
+
+        def do_download() -> None:
+            try:
+                dest_dir = Path(tempfile.gettempdir())
+
+                def progress_callback(downloaded: int, total: int) -> None:
+                    if not progress_dlg or total <= 0:
+                        return
+                    percent = int((downloaded / total) * 100)
+                    wx.CallAfter(
+                        progress_dlg.Update,
+                        percent,
+                        f"Downloading... {downloaded // 1024} / {total // 1024} KB",
+                    )
+
+                service = UpdateService("PortkeyDrop")
+                update_path = service.download_update(
+                    update_info,
+                    dest_dir=dest_dir,
+                    progress_callback=progress_callback,
+                    release=release,
+                )
+
+                if progress_dlg:
+                    wx.CallAfter(progress_dlg.Destroy)
+
+                def confirm_apply() -> None:
+                    result_code = wx.MessageBox(
+                        "Download complete. Portkey Drop will now restart to apply the update.\n\n"
+                        "Continue?",
+                        "Apply Update",
+                        wx.YES_NO | wx.ICON_QUESTION,
+                        self,
+                    )
+                    if result_code == wx.YES:
+                        apply_update(update_path, portable=is_portable_mode())
+
+                wx.CallAfter(confirm_apply)
+
+            except ChecksumVerificationError as exc:
+                logger.error("Update checksum verification failed: %s", exc)
+                if progress_dlg:
+                    wx.CallAfter(progress_dlg.Destroy)
+                wx.CallAfter(
+                    wx.MessageBox,
+                    "Downloaded update failed checksum verification and was discarded.",
+                    "Update Verification Failed",
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+            except Exception as exc:
+                logger.error("Failed to download update: %s", exc)
+                if progress_dlg:
+                    wx.CallAfter(progress_dlg.Destroy)
+                wx.CallAfter(
+                    wx.MessageBox,
+                    f"Failed to download update:\n{exc}",
+                    "Download Error",
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def _on_close(self, event) -> None:
+        """Stop timers before closing the window."""
+        if self._auto_update_check_timer:
+            self._auto_update_check_timer.Stop()
+        if event is not None and hasattr(event, "Skip"):
+            event.Skip()
+
     def _on_about(self, event: wx.CommandEvent) -> None:
         info = wx.adv.AboutDialogInfo()
         info.SetName("Portkey Drop")
-        info.SetVersion("0.1.0")
+        info.SetVersion(self.version)
         info.SetDescription("Accessible file transfer client for screen reader users")
         wx.adv.AboutBox(info)
 
