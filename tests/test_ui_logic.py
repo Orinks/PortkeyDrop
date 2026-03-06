@@ -89,39 +89,39 @@ class TestFileSorting:
         assert len(filtered) == 2
 
 
-class TestTransferItem:
-    """Test TransferItem data class."""
+class TestTransferJob:
+    """Test TransferJob data class."""
 
-    def test_progress_pct(self):
-        from portkeydrop.dialogs.transfer import TransferItem
+    def test_progress_field(self):
+        from portkeydrop.services.transfer_service import TransferJob, TransferService
 
-        item = TransferItem(total_bytes=1000, transferred_bytes=500)
-        assert item.progress_pct == 50
+        job = TransferJob(total_bytes=1000, transferred_bytes=500)
+        TransferService._update_progress(job)
+        assert job.progress == 50
 
-    def test_progress_pct_zero_total(self):
-        from portkeydrop.dialogs.transfer import TransferItem
+    def test_progress_zero_total(self):
+        from portkeydrop.services.transfer_service import TransferJob, TransferService
 
-        item = TransferItem(total_bytes=0)
-        assert item.progress_pct == 0
+        job = TransferJob(total_bytes=0)
+        TransferService._update_progress(job)
+        assert job.progress == 0
 
-    def test_display_status_in_progress(self):
-        from portkeydrop.dialogs.transfer import TransferItem, TransferStatus
+    def test_status_in_progress(self):
+        from portkeydrop.services.transfer_service import TransferJob, TransferStatus
 
-        item = TransferItem(
-            total_bytes=100, transferred_bytes=75, status=TransferStatus.IN_PROGRESS
-        )
-        assert item.display_status == "75%"
+        job = TransferJob(status=TransferStatus.IN_PROGRESS)
+        assert job.status.value == "in_progress"
 
-    def test_display_status_completed(self):
-        from portkeydrop.dialogs.transfer import TransferItem, TransferStatus
+    def test_status_complete(self):
+        from portkeydrop.services.transfer_service import TransferJob, TransferStatus
 
-        item = TransferItem(status=TransferStatus.COMPLETED)
-        assert item.display_status == "completed"
+        job = TransferJob(status=TransferStatus.COMPLETE)
+        assert job.status.value == "complete"
 
     def test_cancel_event(self):
-        from portkeydrop.dialogs.transfer import TransferItem
+        from portkeydrop.services.transfer_service import TransferJob
 
-        item = TransferItem()
-        assert not item.cancel_event.is_set()
-        item.cancel_event.set()
-        assert item.cancel_event.is_set()
+        job = TransferJob()
+        assert not job.cancel_event.is_set()
+        job.cancel_event.set()
+        assert job.cancel_event.is_set()

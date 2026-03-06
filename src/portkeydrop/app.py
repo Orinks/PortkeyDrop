@@ -21,10 +21,10 @@ from portkeydrop.dialogs.site_manager import SiteManagerDialog
 from portkeydrop.dialogs.transfer import (
     TransferDirection,
     TransferStatus,
-    TransferManager,
     create_transfer_dialog,
     get_transfer_event_binder,
 )
+from portkeydrop.services.transfer_service import TransferService
 from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
@@ -104,7 +104,7 @@ class MainFrame(wx.Frame):
         self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
-        self._transfer_manager = TransferManager(notify_window=self)
+        self._transfer_service = TransferService(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
         self._announcer = ScreenReaderAnnouncer()
         self._remote_filter_text = ""
@@ -1129,10 +1129,10 @@ class MainFrame(wx.Frame):
         if f.is_dir:
             if f.name == "..":
                 return
-            self._transfer_manager.add_recursive_download(self._client, f.path, local_path)
+            self._transfer_service.submit_download(self._client, f.path, local_path, recursive=True)
             self._announce(f"Downloading folder {f.name} to {self._local_cwd}")
         else:
-            self._transfer_manager.add_download(self._client, f.path, local_path, f.size)
+            self._transfer_service.submit_download(self._client, f.path, local_path, f.size)
             self._announce(f"Downloading {f.name} to {self._local_cwd}")
         self._show_transfer_queue()
 
@@ -1148,12 +1148,14 @@ class MainFrame(wx.Frame):
         if f.is_dir:
             if f.name == "..":
                 return
-            self._transfer_manager.add_recursive_upload(self._client, local_path, remote_path)
+            self._transfer_service.submit_upload(
+                self._client, local_path, remote_path, recursive=True
+            )
             self._announce(f"Uploading folder {filename}")
             self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
-            self._transfer_manager.add_upload(self._client, local_path, remote_path, total)
+            self._transfer_service.submit_upload(self._client, local_path, remote_path, total)
             self._announce(f"Uploading {filename}")
             self._update_status(f"Uploading {filename}...", self._client.cwd)
         self._show_transfer_queue()
@@ -1187,10 +1189,12 @@ class MainFrame(wx.Frame):
             filename = p.name
             remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
             if p.is_dir():
-                self._transfer_manager.add_recursive_upload(self._client, str(p), remote_path)
+                self._transfer_service.submit_upload(
+                    self._client, str(p), remote_path, recursive=True
+                )
             else:
                 total = os.path.getsize(str(p))
-                self._transfer_manager.add_upload(self._client, str(p), remote_path, total)
+                self._transfer_service.submit_upload(self._client, str(p), remote_path, total)
             count += 1
         if count:
             self._announce(f"Uploading {count} item{'s' if count != 1 else ''} from clipboard")
@@ -1233,7 +1237,7 @@ class MainFrame(wx.Frame):
                 return
             except Exception:
                 pass
-        self._transfer_dlg = create_transfer_dialog(self, self._transfer_manager)
+        self._transfer_dlg = create_transfer_dialog(self, self._transfer_service)
         self._transfer_dlg.Show()
 
     # --- File operations (context-aware) ---
@@ -1387,28 +1391,28 @@ class MainFrame(wx.Frame):
         latest_status_message = None
         refresh_local_files = False
         refresh_remote_files = False
-        for transfer in self._transfer_manager.transfers:
-            current_state = transfer.status.value
-            previous_state = self._transfer_state_by_id.get(transfer.id)
+        for job in self._transfer_service.jobs:
+            current_state = job.status.value
+            previous_state = self._transfer_state_by_id.get(job.id)
             if current_state == previous_state:
                 continue
 
-            self._transfer_state_by_id[transfer.id] = current_state
-            direction_label = (
-                "Upload" if transfer.direction == TransferDirection.UPLOAD else "Download"
-            )
+            self._transfer_state_by_id[job.id] = current_state
+            direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
 
-            if transfer.status == TransferStatus.IN_PROGRESS:
+            if job.status == TransferStatus.IN_PROGRESS:
                 latest_status_message = f"{direction_label} in progress..."
-            elif transfer.status == TransferStatus.COMPLETED:
+            elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
-                if transfer.direction == TransferDirection.DOWNLOAD:
+                self._announce(f"{direction_label} complete.")
+                if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
                 else:
                     refresh_remote_files = True
-            elif transfer.status == TransferStatus.FAILED:
+            elif job.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
-            elif transfer.status == TransferStatus.CANCELLED:
+                self._announce(f"{direction_label} failed.")
+            elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
 
         if refresh_local_files:

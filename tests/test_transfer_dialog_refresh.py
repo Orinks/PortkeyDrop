@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -39,6 +40,9 @@ def transfer_module(monkeypatch):
         def Close(self):
             pass
 
+        def Hide(self):
+            pass
+
         def Destroy(self):
             pass
 
@@ -50,21 +54,17 @@ def transfer_module(monkeypatch):
     return module, fake_wx
 
 
-def _make_transfer(
-    module, transfer_id: int, path: str, direction="download", progress=0, status="queued"
-):
-    item = module.TransferItem()
-    item.id = transfer_id
-    item.remote_path = path
-    item.direction = (
-        module.TransferDirection.UPLOAD
-        if direction == "upload"
-        else module.TransferDirection.DOWNLOAD
+def _make_job(transfer_id, path, direction="download", progress=0, status="pending"):
+    from portkeydrop.services.transfer_service import TransferDirection, TransferStatus
+
+    return SimpleNamespace(
+        id=transfer_id,
+        source=path,
+        destination="/tmp/" + path.rsplit("/", 1)[-1],
+        direction=TransferDirection.UPLOAD if direction == "upload" else TransferDirection.DOWNLOAD,
+        progress=progress,
+        status=TransferStatus(status),
     )
-    item.transferred_bytes = progress
-    item.total_bytes = 100 if progress else 0
-    item.status = module.TransferStatus(status)
-    return item
 
 
 def _build_dialog(module, fake_wx):
@@ -76,18 +76,18 @@ def _build_dialog(module, fake_wx):
 
     fake_wx.ListCtrl = MagicMock(return_value=transfer_list)
     parent = MagicMock(name="parent_dialog")
-    transfer_manager = MagicMock(name="transfer_manager")
-    transfer_manager.transfers = []
+    service = MagicMock(name="transfer_service")
+    service.jobs = []
 
-    dialog = module.create_transfer_dialog(parent, transfer_manager)
+    dialog = module.create_transfer_dialog(parent, service)
     transfer_list.reset_mock()
-    return dialog, transfer_list, transfer_manager
+    return dialog, transfer_list, service
 
 
 def test_refresh_empty_transfers_removes_existing_rows(transfer_module):
     module, fake_wx = transfer_module
-    dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    transfer_manager.transfers = []
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = []
     transfer_list.GetItemCount.return_value = 3
 
     dialog._refresh()
@@ -98,10 +98,10 @@ def test_refresh_empty_transfers_removes_existing_rows(transfer_module):
 
 def test_refresh_adds_new_transfers_when_row_missing(transfer_module):
     module, fake_wx = transfer_module
-    dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    transfer_manager.transfers = [
-        _make_transfer(module, 1, "/tmp/a.txt", "download", progress=25, status="in_progress"),
-        _make_transfer(module, 2, "/tmp/b.txt", "upload", progress=0, status="queued"),
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = [
+        _make_job("j1", "/tmp/a.txt", "download", progress=25, status="in_progress"),
+        _make_job("j2", "/tmp/b.txt", "upload", progress=0, status="pending"),
     ]
     transfer_list.GetItemCount.return_value = 0
 
@@ -114,10 +114,8 @@ def test_refresh_adds_new_transfers_when_row_missing(transfer_module):
 
 def test_refresh_updates_only_changed_existing_cells(transfer_module):
     module, fake_wx = transfer_module
-    dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    transfer_manager.transfers = [
-        _make_transfer(module, 10, "/tmp/file.txt", "upload", progress=40, status="in_progress")
-    ]
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = [_make_job("j10", "/tmp/file.txt", "upload", progress=40, status="in_progress")]
     transfer_list.GetItemCount.return_value = 1
     transfer_list.GetItemText.side_effect = lambda _row, _col: "stale"
 
@@ -130,11 +128,10 @@ def test_refresh_updates_only_changed_existing_cells(transfer_module):
 
 def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
     module, fake_wx = transfer_module
-    dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    item = _make_transfer(
-        module, 11, "/tmp/same.txt", "download", progress=50, status="in_progress"
-    )
-    transfer_manager.transfers = [item]
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = [
+        _make_job("j11", "/tmp/same.txt", "download", progress=50, status="in_progress")
+    ]
     transfer_list.GetItemCount.return_value = 1
     current_values = ["same.txt", "download", "50%", "50%"]
     transfer_list.GetItemText.side_effect = lambda _row, col: current_values[col]
@@ -148,10 +145,10 @@ def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
 
 def test_refresh_restores_selection_and_focus(transfer_module):
     module, fake_wx = transfer_module
-    dialog, transfer_list, transfer_manager = _build_dialog(module, fake_wx)
-    transfer_manager.transfers = [
-        _make_transfer(module, 21, "/tmp/one.txt"),
-        _make_transfer(module, 22, "/tmp/two.txt"),
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = [
+        _make_job("j21", "/tmp/one.txt"),
+        _make_job("j22", "/tmp/two.txt"),
     ]
     transfer_list.GetItemCount.return_value = 2
     transfer_list.GetFirstSelected.return_value = 1

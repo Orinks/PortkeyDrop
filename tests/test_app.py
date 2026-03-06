@@ -36,7 +36,7 @@ def _build_frame(module, tmp_path):
         sort_ascending=True,
     )
     settings = SimpleNamespace(display=display)
-    fake_manager = MagicMock(transfers=[])
+    fake_manager = MagicMock(jobs=[])
     fake_site_manager = MagicMock()
 
     with ExitStack() as stack:
@@ -45,8 +45,8 @@ def _build_frame(module, tmp_path):
             patch.object(app, "resolve_startup_local_folder", return_value=str(tmp_path))
         )
         stack.enter_context(patch.object(app, "SiteManager", return_value=fake_site_manager))
-        transfer_manager_patch = stack.enter_context(patch.object(app, "TransferManager"))
-        transfer_manager_patch.return_value = fake_manager
+        transfer_service_patch = stack.enter_context(patch.object(app, "TransferService"))
+        transfer_service_patch.return_value = fake_manager
         for method in (
             "_build_menu",
             "_build_toolbar",
@@ -59,7 +59,7 @@ def _build_frame(module, tmp_path):
         ):
             stack.enter_context(patch.object(app.MainFrame, method, lambda self: None))
         frame = app.MainFrame()
-    return frame, fake_manager, transfer_manager_patch
+    return frame, fake_manager, transfer_service_patch
 
 
 def _hydrate_frame(module):
@@ -73,15 +73,15 @@ def _hydrate_frame(module):
     frame._refresh_remote_files = MagicMock()
     frame._get_selected_local_file = MagicMock()
     frame._get_selected_remote_file = MagicMock()
-    frame._transfer_manager = MagicMock()
+    frame._transfer_service = MagicMock()
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     return frame
 
 
 def test_main_frame_init_sets_transfer_state(tmp_path, app_module):
-    frame, _, transfer_manager_cls = _build_frame(app_module, tmp_path)
+    frame, _, transfer_service_cls = _build_frame(app_module, tmp_path)
     assert frame._transfer_state_by_id == {}
-    transfer_manager_cls.assert_called_once_with(notify_window=frame)
+    transfer_service_cls.assert_called_once_with(notify_window=frame)
 
 
 def test_bind_events_hooks_transfer_update(app_module):
@@ -176,11 +176,11 @@ def test_on_upload_directory_updates_status(app_module):
     selected.path = "/tmp/docs"
     selected.is_dir = True
     frame._get_selected_local_file.return_value = selected
-    frame._transfer_manager.add_recursive_upload = MagicMock()
+    frame._transfer_service.submit_upload = MagicMock()
 
     frame._on_upload(None)
 
-    frame._transfer_manager.add_recursive_upload.assert_called_once()
+    frame._transfer_service.submit_upload.assert_called_once()
     frame._update_status.assert_called_with("Uploading folder docs...", "/remote")
 
 
@@ -193,12 +193,12 @@ def test_on_upload_file_reports_progress(app_module):
     selected.name = "file.txt"
     selected.path = "/tmp/file.txt"
     frame._get_selected_local_file.return_value = selected
-    frame._transfer_manager.add_upload = MagicMock()
+    frame._transfer_service.submit_upload = MagicMock()
 
     with patch.object(app.os.path, "getsize", return_value=123):
         frame._on_upload(None)
 
-    frame._transfer_manager.add_upload.assert_called_once()
+    frame._transfer_service.submit_upload.assert_called_once()
     frame._update_status.assert_called_with("Uploading file.txt...", "/remote")
 
 
@@ -206,14 +206,14 @@ def test_paste_upload_shows_queue(tmp_path, app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
-    frame._transfer_manager.add_upload = MagicMock()
+    frame._transfer_service.submit_upload = MagicMock()
     file_path = tmp_path / "clip.txt"
     file_path.write_text("clip")
     frame._get_clipboard_files = MagicMock(return_value=[str(file_path)])
 
     frame._paste_upload()
 
-    frame._transfer_manager.add_upload.assert_called_once()
+    frame._transfer_service.submit_upload.assert_called_once()
     frame._update_status.assert_called()
     frame._show_transfer_queue.assert_called_once()
 
@@ -408,21 +408,16 @@ def test_import_connections_skips_duplicates(app_module):
 
 
 def test_on_transfer_update_reports_latest_status(app_module):
-    import importlib
-
-    transfer_module = importlib.import_module("portkeydrop.dialogs.transfer")
-
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
-    frame._transfer_manager = MagicMock()
-    upload = transfer_module.TransferItem(
-        id=1, direction=app.TransferDirection.UPLOAD, status=app.TransferStatus.IN_PROGRESS
+    upload = SimpleNamespace(
+        id="aaa", direction=app.TransferDirection.UPLOAD, status=app.TransferStatus.IN_PROGRESS
     )
-    download = transfer_module.TransferItem(
-        id=2, direction=app.TransferDirection.DOWNLOAD, status=app.TransferStatus.COMPLETED
+    download = SimpleNamespace(
+        id="bbb", direction=app.TransferDirection.DOWNLOAD, status=app.TransferStatus.COMPLETE
     )
-    frame._transfer_manager.transfers = [upload, download]
+    frame._transfer_service.jobs = [upload, download]
     frame._transfer_state_by_id = {}
 
     frame._on_transfer_update(None)
@@ -434,13 +429,12 @@ def test_on_transfer_update_refreshes_local_files_after_download_complete(app_mo
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
-    frame._transfer_manager = MagicMock()
     download = SimpleNamespace(
-        id=1,
+        id="ccc",
         direction=app.TransferDirection.DOWNLOAD,
-        status=app.TransferStatus.COMPLETED,
+        status=app.TransferStatus.COMPLETE,
     )
-    frame._transfer_manager.transfers = [download]
+    frame._transfer_service.jobs = [download]
     frame._transfer_state_by_id = {}
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
@@ -455,13 +449,12 @@ def test_on_transfer_update_refreshes_remote_files_after_upload_complete(app_mod
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
-    frame._transfer_manager = MagicMock()
     upload = SimpleNamespace(
-        id=1,
+        id="ddd",
         direction=app.TransferDirection.UPLOAD,
-        status=app.TransferStatus.COMPLETED,
+        status=app.TransferStatus.COMPLETE,
     )
-    frame._transfer_manager.transfers = [upload]
+    frame._transfer_service.jobs = [upload]
     frame._transfer_state_by_id = {}
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
@@ -470,6 +463,113 @@ def test_on_transfer_update_refreshes_remote_files_after_upload_complete(app_mod
 
     frame._refresh_remote_files.assert_called_once()
     frame._refresh_local_files.assert_not_called()
+
+
+def test_on_transfer_update_announces_download_complete(app_module):
+    """Acceptance: Prism announces completion even when dialog is hidden."""
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    download = SimpleNamespace(
+        id="ann1",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.COMPLETE,
+    )
+    frame._transfer_service.jobs = [download]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_any_call("Download complete.")
+
+
+def test_on_transfer_update_announces_upload_complete(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    upload = SimpleNamespace(
+        id="ann2",
+        direction=app.TransferDirection.UPLOAD,
+        status=app.TransferStatus.COMPLETE,
+    )
+    frame._transfer_service.jobs = [upload]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_any_call("Upload complete.")
+
+
+def test_on_transfer_update_announces_download_failed(app_module):
+    """Acceptance: Prism announces failure even when dialog is hidden."""
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    download = SimpleNamespace(
+        id="fail1",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.FAILED,
+    )
+    frame._transfer_service.jobs = [download]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_any_call("Download failed.")
+
+
+def test_on_transfer_update_announces_upload_failed(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    upload = SimpleNamespace(
+        id="fail2",
+        direction=app.TransferDirection.UPLOAD,
+        status=app.TransferStatus.FAILED,
+    )
+    frame._transfer_service.jobs = [upload]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_any_call("Upload failed.")
+
+
+def test_on_transfer_update_skips_already_seen_state(app_module):
+    """Don't re-announce if state hasn't changed."""
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    job = SimpleNamespace(
+        id="seen1",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.COMPLETE,
+    )
+    frame._transfer_service.jobs = [job]
+    frame._transfer_state_by_id = {"seen1": "complete"}
+
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_not_called()
+    frame._update_status.assert_not_called()
+
+
+def test_on_transfer_update_handles_disconnected_client(app_module):
+    """Status bar updates use empty path when client is disconnected."""
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=False)
+    job = SimpleNamespace(
+        id="disc1",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.IN_PROGRESS,
+    )
+    frame._transfer_service.jobs = [job]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._update_status.assert_called_once_with("Download in progress...", "")
 
 
 def test_build_toolbar_adds_mnemonics_and_label_associations(app_module):
