@@ -313,3 +313,84 @@ class TestTransferDialogLogCallback:
 
         dialog = module.create_transfer_dialog(parent, manager)
         assert dialog.log_callback is None
+
+
+class TestBuildDualPaneActivityLog:
+    """Cover the activity log panel creation in _build_dual_pane (lines 324-337)."""
+
+    def test_activity_log_widget_created(self, app_module):
+        app, fake_wx = app_module
+        frame = object.__new__(app.MainFrame)
+        # Minimal attributes needed by _build_dual_pane
+        frame._local_cwd = "/tmp"
+        frame._toolbar_panel = MagicMock()
+
+        frame._build_dual_pane()
+
+        # The activity log TextCtrl should be assigned
+        assert hasattr(frame, "activity_log")
+        # SetName should have been called on the widget
+        frame.activity_log.SetName.assert_called_with("Activity Log")
+        frame.activity_log.SetMinSize.assert_called_once()
+
+    def test_main_sizer_includes_log_panel(self, app_module):
+        app, fake_wx = app_module
+        frame = object.__new__(app.MainFrame)
+        frame._local_cwd = "/tmp"
+        frame._toolbar_panel = MagicMock()
+
+        frame._build_dual_pane()
+
+        # SetSizer is called on the frame itself (from _FakeFrame)
+        # Verify pane_container and file_list were created
+        assert hasattr(frame, "_pane_container")
+        assert hasattr(frame, "file_list")
+
+
+class TestShowTransferQueue:
+    """Cover _show_transfer_queue creating a new dialog (line 1257)."""
+
+    @staticmethod
+    def _make_frame(app_module):
+        app, _ = app_module
+        frame = object.__new__(app.MainFrame)
+        frame._announce = MagicMock()
+        frame._transfer_manager = MagicMock()
+        frame.activity_log = MagicMock()
+        frame.log_event = MagicMock()
+        return frame, app
+
+    def test_creates_new_dialog_when_none_exists(self, app_module, monkeypatch):
+        frame, app = self._make_frame(app_module)
+        frame._transfer_dlg = None
+
+        mock_dialog = MagicMock()
+        monkeypatch.setattr(app, "create_transfer_dialog", lambda *a, **kw: mock_dialog)
+
+        frame._show_transfer_queue()
+
+        assert frame._transfer_dlg is mock_dialog
+        mock_dialog.Show.assert_called_once()
+
+    def test_raises_existing_dialog(self, app_module, monkeypatch):
+        frame, app = self._make_frame(app_module)
+        existing = MagicMock()
+        frame._transfer_dlg = existing
+
+        frame._show_transfer_queue()
+
+        existing.Raise.assert_called_once()
+
+    def test_creates_new_dialog_when_existing_raises(self, app_module, monkeypatch):
+        frame, app = self._make_frame(app_module)
+        old_dlg = MagicMock()
+        old_dlg.Raise.side_effect = RuntimeError("destroyed")
+        frame._transfer_dlg = old_dlg
+
+        mock_dialog = MagicMock()
+        monkeypatch.setattr(app, "create_transfer_dialog", lambda *a, **kw: mock_dialog)
+
+        frame._show_transfer_queue()
+
+        assert frame._transfer_dlg is mock_dialog
+        mock_dialog.Show.assert_called_once()
