@@ -949,6 +949,127 @@ def test_on_remote_item_activated_file_sets_status(app_module):
     threading.Thread = original_thread
 
 
+def test_create_file_list_sets_accessible_name_and_columns(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    list_ctrl = MagicMock(SetName=MagicMock(), AppendTextColumn=MagicMock())
+
+    with patch.object(app.dv, "DataViewListCtrl", return_value=list_ctrl) as dv_list:
+        created = app.MainFrame._create_file_list(frame, MagicMock(), "Remote Files pane")
+
+    assert created is list_ctrl
+    dv_list.assert_called_once()
+    list_ctrl.SetName.assert_called_once_with("Remote Files pane")
+    assert list_ctrl.AppendTextColumn.call_count == 5
+
+
+def test_populate_file_list_uses_append_item_when_available(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    from portkeydrop.protocols import RemoteFile
+
+    list_ctrl = MagicMock(DeleteAllItems=MagicMock(), AppendItem=MagicMock())
+    files = [RemoteFile(name="a.txt", path="/a.txt", permissions="rw-r--r--")]
+
+    app.MainFrame._populate_file_list(frame, list_ctrl, files)
+
+    list_ctrl.DeleteAllItems.assert_called_once()
+    list_ctrl.AppendItem.assert_called_once()
+
+
+class _LegacyListCtrl:
+    def __init__(self):
+        self.rows: list[list[str]] = []
+
+    def DeleteAllItems(self):
+        self.rows.clear()
+
+    def GetItemCount(self):
+        return len(self.rows)
+
+    def InsertItem(self, idx, text):
+        self.rows.insert(idx, [text, "", "", "", ""])
+        return idx
+
+    def SetItem(self, idx, col, value):
+        self.rows[idx][col] = value
+
+
+def test_populate_file_list_falls_back_to_insert_item_for_listctrl(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    from portkeydrop.protocols import RemoteFile
+
+    list_ctrl = _LegacyListCtrl()
+    files = [RemoteFile(name="docs", path="/docs", is_dir=True, permissions="drwxr-xr-x")]
+
+    app.MainFrame._populate_file_list(frame, list_ctrl, files)
+
+    assert list_ctrl.rows[0][0] == "docs"
+    assert list_ctrl.rows[0][2] == "Directory"
+
+
+def test_selected_row_helpers_cover_all_control_types(app_module):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+
+    dataview = MagicMock(GetSelectedRow=MagicMock(return_value=3))
+    assert app.MainFrame._get_selected_row(frame, dataview) == 3
+
+    listctrl = MagicMock()
+    del listctrl.GetSelectedRow
+    listctrl.GetFirstSelected = MagicMock(return_value=2)
+    assert app.MainFrame._get_selected_row(frame, listctrl) == 2
+
+    bare = object()
+    assert app.MainFrame._get_selected_row(frame, bare) == fake_wx.NOT_FOUND
+
+
+def test_select_and_focus_row_helpers_cover_fallbacks(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+
+    dataview = MagicMock(SelectRow=MagicMock(), SetCurrentRow=MagicMock())
+    app.MainFrame._select_row(frame, dataview, 1)
+    app.MainFrame._focus_row(frame, dataview, 1)
+    dataview.SelectRow.assert_called_once_with(1)
+    dataview.SetCurrentRow.assert_called_once_with(1)
+
+    listctrl = MagicMock(Select=MagicMock(), Focus=MagicMock())
+    del listctrl.SelectRow
+    del listctrl.SetCurrentRow
+    app.MainFrame._select_row(frame, listctrl, 4)
+    app.MainFrame._focus_row(frame, listctrl, 4)
+    listctrl.Select.assert_called_once_with(4)
+    listctrl.Focus.assert_called_once_with(4)
+
+
+def test_get_selected_file_from_list_returns_none_when_no_row(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._get_selected_row = MagicMock(return_value=-1)
+
+    selected = app.MainFrame._get_selected_file_from_list(frame, MagicMock(), [], "")
+
+    assert selected is None
+
+
+def test_on_remote_item_activated_without_client_is_noop(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    from portkeydrop.protocols import RemoteFile
+
+    frame._get_selected_remote_file = MagicMock(
+        return_value=RemoteFile(name="docs", path="/remote/docs", is_dir=True)
+    )
+    frame._client = None
+    frame._status = MagicMock()
+
+    app.MainFrame._on_remote_item_activated(frame, MagicMock())
+
+    frame._status.assert_not_called()
+
+
 def test_get_update_channel_reads_settings(app_module):
     app, _ = app_module
     frame = object.__new__(app.MainFrame)
