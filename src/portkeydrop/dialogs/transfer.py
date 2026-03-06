@@ -453,7 +453,7 @@ def create_transfer_dialog(parent, transfer_manager: TransferManager):
                 )
                 parent = self.GetParent()
                 status_message = (
-                    f"Transfer cancelled: {filename}" if filename else "Transfer cancelled."
+                    f"Cancelled transfer: {filename}" if filename else "Cancelled transfer."
                 )
                 announce = getattr(parent, "_announce", None) if parent else None
                 if callable(announce):
