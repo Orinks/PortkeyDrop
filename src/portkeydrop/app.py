@@ -87,6 +87,7 @@ ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
 ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
+ID_RETRY_LAST_FAILED = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
 ID_TOGGLE_ACTIVITY_LOG = wx.NewIdRef()
@@ -118,7 +119,8 @@ class MainFrame(wx.Frame):
         self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
         self._transfer_service = TransferService(notify_window=self)
-        self._transfer_state_by_id: dict[int, str] = {}
+        self._transfer_state_by_id: dict[str, str] = {}
+        self._last_failed_transfer: str | None = None
         self._announcer = ScreenReaderAnnouncer()
         self._restore_transfer_queue()
         self._remote_filter_text = ""
@@ -189,6 +191,13 @@ class MainFrame(wx.Frame):
         )
         transfer_menu.Append(ID_UPLOAD, "&Upload\tCtrl+U", "Upload selected local file(s)")
         transfer_menu.Append(ID_DOWNLOAD, "&Download\tCtrl+D", "Download selected remote file(s)")
+        transfer_menu.AppendSeparator()
+        self._retry_last_failed_item = transfer_menu.Append(
+            ID_RETRY_LAST_FAILED,
+            "&Retry Last Failed Transfer",
+            "Retry the most recently failed transfer",
+        )
+        self._retry_last_failed_item.Enable(False)
         transfer_menu.AppendSeparator()
         transfer_menu.Append(
             ID_TRANSFER_QUEUE, "Transfer &Queue...\tCtrl+Shift+T", "Show transfer queue"
@@ -433,6 +442,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_rename, id=ID_RENAME)
         self.Bind(wx.EVT_MENU, self._on_mkdir, id=ID_MKDIR)
         self.Bind(wx.EVT_MENU, self._on_properties, id=ID_PROPERTIES)
+        self.Bind(wx.EVT_MENU, self._on_retry_last_failed, id=ID_RETRY_LAST_FAILED)
         self.Bind(wx.EVT_MENU, self._on_transfer_queue, id=ID_TRANSFER_QUEUE)
         self.Bind(wx.EVT_MENU, self._on_settings, id=ID_SETTINGS)
         self.Bind(wx.EVT_MENU, self._on_check_updates, id=ID_CHECK_UPDATES)
@@ -1481,6 +1491,34 @@ class MainFrame(wx.Frame):
         dlg.ShowModal()
         dlg.Destroy()
 
+    def _on_retry_last_failed(self, event: wx.CommandEvent) -> None:
+        """Retry the most recently failed transfer."""
+        if self._last_failed_transfer is None:
+            return
+        if not self._client or not self._client.connected:
+            self._announce("Not connected")
+            return
+        original = None
+        for j in self._transfer_service.jobs:
+            if j.id == self._last_failed_transfer:
+                original = j
+                break
+        if original is None or original.status != TransferStatus.FAILED:
+            return
+        new_job = self._transfer_service.retry(original.id, self._client)
+        if new_job is not None:
+            filename = PurePosixPath(original.source).name or os.path.basename(
+                original.destination
+            )
+            direction_label = original.direction.value
+            msg = f"Retrying {direction_label} of {filename}"
+            self._announce(msg)
+            current_path = self._client.cwd if self._client.connected else ""
+            self._update_status(msg, current_path)
+            self._retry_last_failed_item.Enable(False)
+            self._last_failed_transfer = None
+            self._show_transfer_queue()
+
     def _on_transfer_queue(self, event: wx.CommandEvent) -> None:
         self._show_transfer_queue()
 
@@ -1511,6 +1549,9 @@ class MainFrame(wx.Frame):
                 latest_status_message = f"{direction_label} failed."
                 error_msg = job.error or "Unknown error"
                 self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
+                self._announce(f"{direction_label} failed.")
+                self._last_failed_transfer = job.id
+                self._retry_last_failed_item.Enable(True)
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
                 self.log_event(f"{direction_label} cancelled: {filename}")

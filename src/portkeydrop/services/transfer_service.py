@@ -169,6 +169,34 @@ class TransferService:
                     return True
         return False
 
+    def retry(self, job_id: str, client: TransferClient) -> TransferJob | None:
+        """Clone a failed job into a new pending job and re-enqueue it."""
+        original: TransferJob | None = None
+        with self._lock:
+            for j in self._jobs:
+                if j.id == job_id and j.status == TransferStatus.FAILED:
+                    original = j
+                    break
+        if original is None:
+            return None
+
+        if original.direction == TransferDirection.DOWNLOAD:
+            return self.submit_download(
+                client,
+                original.source,
+                original.destination,
+                original.total_bytes,
+                recursive=original._recursive,
+            )
+        else:
+            return self.submit_upload(
+                client,
+                original.source,
+                original.destination,
+                original.total_bytes,
+                recursive=original._recursive,
+            )
+
     def cancel(self, job_id: str) -> None:
         with self._lock:
             for j in self._jobs:
