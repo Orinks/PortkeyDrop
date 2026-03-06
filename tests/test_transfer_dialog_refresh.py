@@ -93,6 +93,7 @@ def test_refresh_empty_transfers_removes_existing_rows(transfer_module):
     dialog._refresh()
 
     transfer_list.DeleteItem.assert_has_calls([call(2), call(1), call(0)])
+    transfer_list.DeleteAllItems.assert_not_called()
 
 
 def test_refresh_adds_new_transfers_when_row_missing(transfer_module):
@@ -108,6 +109,7 @@ def test_refresh_adds_new_transfers_when_row_missing(transfer_module):
 
     transfer_list.InsertItem.assert_has_calls([call(0, "a.txt"), call(1, "b.txt")])
     assert transfer_list.SetItem.call_count == 6
+    transfer_list.DeleteAllItems.assert_not_called()
 
 
 def test_refresh_updates_only_changed_existing_cells(transfer_module):
@@ -123,6 +125,7 @@ def test_refresh_updates_only_changed_existing_cells(transfer_module):
 
     transfer_list.InsertItem.assert_not_called()
     assert transfer_list.SetItem.call_count == 4
+    transfer_list.DeleteAllItems.assert_not_called()
 
 
 def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
@@ -140,6 +143,7 @@ def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
 
     transfer_list.InsertItem.assert_not_called()
     transfer_list.SetItem.assert_not_called()
+    transfer_list.DeleteAllItems.assert_not_called()
 
 
 def test_refresh_restores_selection_and_focus(transfer_module):
@@ -158,3 +162,4 @@ def test_refresh_restores_selection_and_focus(transfer_module):
 
     transfer_list.Select.assert_called_once_with(1)
     transfer_list.Focus.assert_called_once_with(0)
+    transfer_list.DeleteAllItems.assert_not_called()
