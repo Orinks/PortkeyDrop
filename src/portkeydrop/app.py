@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import sys
@@ -319,10 +320,21 @@ class MainFrame(wx.Frame):
         # For backward compat: file_list points to remote
         self.file_list = self.remote_file_list
 
+        # Activity log panel
+        log_box = wx.StaticBox(self, label="Activity Log")
+        log_sizer = wx.StaticBoxSizer(log_box, wx.VERTICAL)
+        self.activity_log = wx.TextCtrl(
+            self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL
+        )
+        self.activity_log.SetName("Activity Log")
+        self.activity_log.SetMinSize((-1, 150))
+        log_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 5)
+
         # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         main_sizer.Add(self._toolbar_panel, 0, wx.EXPAND)
-        main_sizer.Add(pane_container, 1, wx.EXPAND)
+        main_sizer.Add(pane_container, 1, wx.EXPAND | wx.ALL, 5)
+        main_sizer.Add(log_sizer, 0, wx.EXPAND | wx.ALL, 5)
         self.SetSizer(main_sizer)
 
     def _build_status_bar(self) -> None:
@@ -603,7 +615,8 @@ class MainFrame(wx.Frame):
         self._remote_home = client.cwd
         self._update_status("Connected", client.cwd)
         self._update_title()
-        self._announce(f"Connected to {client._info.host}")
+        protocol_type = client._info.protocol.value if hasattr(client._info.protocol, "value") else str(client._info.protocol)
+        self.log_event(f"Connected to {client._info.host} via {protocol_type}")
         self._refresh_remote_files()
         self._toolbar_panel.Hide()
         self.GetSizer().Layout()
@@ -613,9 +626,11 @@ class MainFrame(wx.Frame):
         """Called on the main thread when a background connection fails."""
         self._client = None
         self._update_status("Disconnected", "")
+        self.log_event(f"Connection failed: {exc}")
         wx.MessageBox(f"Connection failed: {exc}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_disconnect(self, event) -> None:
+        was_connected = self._client is not None
         if self._client:
             try:
                 self._client.disconnect()
@@ -627,6 +642,8 @@ class MainFrame(wx.Frame):
         self.remote_path_bar.SetValue("/")
         self._update_status("Disconnected", "")
         self._update_title()
+        if was_connected:
+            self.log_event("Disconnected from server")
         if not self._toolbar_panel.IsShown():
             self._toolbar_panel.Show()
             self.GetSizer().Layout()
@@ -1237,7 +1254,9 @@ class MainFrame(wx.Frame):
                 return
             except Exception:
                 pass
-        self._transfer_dlg = create_transfer_dialog(self, self._transfer_service)
+        self._transfer_dlg = create_transfer_dialog(
+            self, self._transfer_service, log_callback=self.log_event
+        )
         self._transfer_dlg.Show()
 
     # --- File operations (context-aware) ---
@@ -1399,21 +1418,27 @@ class MainFrame(wx.Frame):
 
             self._transfer_state_by_id[job.id] = current_state
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
+            filename = (
+                os.path.basename(job.destination)
+                or PurePosixPath(job.source).name
+            )
 
             if job.status == TransferStatus.IN_PROGRESS:
                 latest_status_message = f"{direction_label} in progress..."
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
-                self._announce(f"{direction_label} complete.")
+                self.log_event(f"{direction_label} complete: {filename}")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
                 else:
                     refresh_remote_files = True
             elif job.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
-                self._announce(f"{direction_label} failed.")
+                error_msg = job.error or "Unknown error"
+                self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+                self.log_event(f"{direction_label} cancelled: {filename}")
 
         if refresh_local_files:
             self._refresh_local_files()
@@ -1749,6 +1774,13 @@ class MainFrame(wx.Frame):
     def _status(self, message: str) -> None:
         """Update status bar text without forcing speech."""
         self.status_bar.SetStatusText(message, 0)
+
+    def log_event(self, message: str) -> None:
+        """Append a timestamped entry to the activity log and announce it."""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = f"[{timestamp}] {message}\n"
+        self.activity_log.AppendText(entry)
+        self._announce(message)
 
     def _announce(self, message: str) -> None:
         """Announce a message for screen readers via status bar + announcer wrapper."""

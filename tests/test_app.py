@@ -75,6 +75,7 @@ def _hydrate_frame(module):
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
+    frame.activity_log = MagicMock()
     return frame
 
 
@@ -411,11 +412,24 @@ def test_on_transfer_update_reports_latest_status(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
+    frame.activity_log = MagicMock()
     upload = SimpleNamespace(
-        id="aaa", direction=app.TransferDirection.UPLOAD, status=app.TransferStatus.IN_PROGRESS
+        id="aaa",
+        direction=app.TransferDirection.UPLOAD,
+        status=app.TransferStatus.IN_PROGRESS,
+        source="/local/file.txt",
+        destination="/remote/file.txt",
+        error=None,
+        progress=50,
     )
     download = SimpleNamespace(
-        id="bbb", direction=app.TransferDirection.DOWNLOAD, status=app.TransferStatus.COMPLETE
+        id="bbb",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.COMPLETE,
+        source="/remote/dl.txt",
+        destination="/local/dl.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [upload, download]
     frame._transfer_state_by_id = {}
@@ -433,6 +447,10 @@ def test_on_transfer_update_refreshes_local_files_after_download_complete(app_mo
         id="ccc",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/remote/file.txt",
+        destination="/tmp/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [download]
     frame._transfer_state_by_id = {}
@@ -453,6 +471,10 @@ def test_on_transfer_update_refreshes_remote_files_after_upload_complete(app_mod
         id="ddd",
         direction=app.TransferDirection.UPLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/tmp/file.txt",
+        destination="/remote/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [upload]
     frame._transfer_state_by_id = {}
