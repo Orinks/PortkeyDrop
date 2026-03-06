@@ -1329,11 +1329,13 @@ def test_on_check_updates_honors_channel_override(app_module, monkeypatch):
     assert fake_wx.MessageBox.call_args.args[1] == "No Updates Available"
 
 
-def test_on_close_stops_auto_update_timer_and_skips_event(app_module):
+def test_on_close_stops_auto_update_timer_and_skips_event(app_module, monkeypatch):
     app, _ = app_module
     frame = object.__new__(app.MainFrame)
     frame._auto_update_check_timer = MagicMock(Stop=MagicMock())
+    frame._transfer_service = MagicMock()
     event = MagicMock(Skip=MagicMock())
+    monkeypatch.setattr(app, "save_queue", lambda *a, **kw: None)
 
     frame._on_close(event)
 

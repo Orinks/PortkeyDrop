@@ -7,8 +7,10 @@ a running transfer.  All transfer logic lives in
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Re-export service types so existing imports keep working
@@ -24,6 +26,37 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def save_queue(service: TransferService, config_dir: Path) -> None:
+    """Save pending and failed jobs to queue.json. Passwords are never persisted."""
+    persistable = [
+        j
+        for j in service.jobs
+        if j.status in (TransferStatus.PENDING, TransferStatus.FAILED, TransferStatus.RESTORED)
+    ]
+    queue_path = config_dir / "queue.json"
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        data = [j.to_dict() for j in persistable]
+        queue_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        logger.exception("Failed to save transfer queue to %s", queue_path)
+
+
+def load_queue(config_dir: Path) -> list[TransferJob]:
+    """Load transfer queue from queue.json. Returns empty list on error or missing file."""
+    queue_path = config_dir / "queue.json"
+    if not queue_path.exists():
+        return []
+    try:
+        data = json.loads(queue_path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        return [TransferJob.from_dict(entry) for entry in data if isinstance(entry, dict)]
+    except Exception:
+        logger.exception("Failed to load transfer queue from %s", queue_path)
+        return []
 
 
 def create_transfer_dialog(parent, transfer_service: TransferService, log_callback=None):

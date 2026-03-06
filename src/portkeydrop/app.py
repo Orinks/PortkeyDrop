@@ -24,6 +24,8 @@ from portkeydrop.dialogs.transfer import (
     TransferStatus,
     create_transfer_dialog,
     get_transfer_event_binder,
+    load_queue,
+    save_queue,
 )
 from portkeydrop.services.transfer_service import TransferService
 from portkeydrop.local_files import (
@@ -118,6 +120,7 @@ class MainFrame(wx.Frame):
         self._transfer_service = TransferService(notify_window=self)
         self._transfer_state_by_id: dict[int, str] = {}
         self._announcer = ScreenReaderAnnouncer()
+        self._restore_transfer_queue()
         self._remote_filter_text = ""
         self._local_filter_text = ""
         self._local_cwd = resolve_startup_local_folder(self._settings)
@@ -1829,8 +1832,18 @@ class MainFrame(wx.Frame):
 
         threading.Thread(target=do_download, daemon=True).start()
 
+    def _restore_transfer_queue(self) -> None:
+        """Load persisted transfer queue and announce restored items."""
+        restored = load_queue(get_config_dir())
+        if restored:
+            self._transfer_service.restore_jobs(restored)
+            count = len(restored)
+            msg = f"Restored {count} pending transfer{'s' if count != 1 else ''} from last session"
+            wx.CallAfter(self._announce, msg)
+
     def _on_close(self, event) -> None:
-        """Stop timers before closing the window."""
+        """Save transfer queue and stop timers before closing the window."""
+        save_queue(self._transfer_service, get_config_dir())
         if self._auto_update_check_timer:
             self._auto_update_check_timer.Stop()
         if event is not None and hasattr(event, "Skip"):

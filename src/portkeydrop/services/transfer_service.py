@@ -35,6 +35,7 @@ class TransferStatus(Enum):
     COMPLETE = "complete"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    RESTORED = "pending (restored)"
 
 
 @dataclass
@@ -55,6 +56,35 @@ class TransferJob:
     # Internal: client + recursive flag (not part of the public data model)
     _client: TransferClient | None = field(default=None, repr=False)
     _recursive: bool = field(default=False, repr=False)
+
+    def to_dict(self) -> dict:
+        """Serialize to a dict for JSON persistence. Excludes client/event fields."""
+        return {
+            "id": self.id,
+            "direction": self.direction.value,
+            "source": self.source,
+            "destination": self.destination,
+            "protocol": self.protocol,
+            "total_bytes": self.total_bytes,
+            "transferred_bytes": self.transferred_bytes,
+            "status": self.status.value,
+            "error": self.error or "",
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> TransferJob:
+        """Deserialize from a dict. Restored jobs always get RESTORED status."""
+        return cls(
+            id=data.get("id") or uuid.uuid4().hex,
+            direction=TransferDirection(data.get("direction", "download")),
+            source=data.get("source", ""),
+            destination=data.get("destination", ""),
+            protocol=data.get("protocol", ""),
+            total_bytes=data.get("total_bytes", 0),
+            transferred_bytes=data.get("transferred_bytes", 0),
+            status=TransferStatus.RESTORED,
+            error=data.get("error") or None,
+        )
 
 
 class TransferService:
@@ -119,12 +149,18 @@ class TransferService:
         self._enqueue(job)
         return job
 
+    def restore_jobs(self, jobs: list[TransferJob]) -> None:
+        """Add restored jobs to the job list without starting transfers."""
+        with self._lock:
+            self._jobs.extend(jobs)
+        self._post_event()
+
     def cancel(self, job_id: str) -> None:
         with self._lock:
             for j in self._jobs:
                 if j.id == job_id:
                     j.cancel_event.set()
-                    if j.status == TransferStatus.PENDING:
+                    if j.status in (TransferStatus.PENDING, TransferStatus.RESTORED):
                         j.status = TransferStatus.CANCELLED
                     break
         self._post_event()
