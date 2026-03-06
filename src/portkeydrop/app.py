@@ -615,7 +615,11 @@ class MainFrame(wx.Frame):
         self._remote_home = client.cwd
         self._update_status("Connected", client.cwd)
         self._update_title()
-        protocol_type = client._info.protocol.value if hasattr(client._info.protocol, "value") else str(client._info.protocol)
+        protocol_type = (
+            client._info.protocol.value
+            if hasattr(client._info.protocol, "value")
+            else str(client._info.protocol)
+        )
         self.log_event(f"Connected to {client._info.host} via {protocol_type}")
         self._refresh_remote_files()
         self._toolbar_panel.Hide()
