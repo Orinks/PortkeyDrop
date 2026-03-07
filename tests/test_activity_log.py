@@ -340,6 +340,16 @@ class TestBuildDualPaneActivityLog:
         frame.activity_log.SetName.assert_called_with("Activity Log")
         frame.activity_log.SetMinSize.assert_called_once()
 
+    def test_activity_log_can_receive_focus(self, app_module):
+        app, fake_wx = app_module
+        frame = object.__new__(app.MainFrame)
+        frame._local_cwd = "/tmp"
+        frame._toolbar_panel = MagicMock()
+
+        frame._build_dual_pane()
+
+        frame.activity_log.SetCanFocus.assert_called_once_with(True)
+
     def test_activity_log_visible_by_default(self, app_module):
         app, fake_wx = app_module
         frame = object.__new__(app.MainFrame)

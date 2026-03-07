@@ -335,6 +335,7 @@ class MainFrame(wx.Frame):
         self.activity_log = wx.TextCtrl(
             self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL
         )
+        self.activity_log.SetCanFocus(True)
         self.activity_log.SetName("Activity Log")
         self.activity_log.SetMinSize((-1, 150))
         self._log_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 5)
