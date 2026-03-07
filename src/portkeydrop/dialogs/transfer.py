@@ -103,10 +103,13 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
             self.cancel_btn = wx.Button(self, label="Cancel &Transfer")
             self.cancel_btn.SetName("Cancel Transfer")
+            self.remove_btn = wx.Button(self, label="&Remove")
+            self.remove_btn.SetName("Remove Transfer")
             self.bg_btn = wx.Button(self, label="Send to &Background")
             self.bg_btn.SetName("Send to Background")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
             btn_sizer.Add(self.cancel_btn, 0, wx.RIGHT, 8)
+            btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.bg_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.close_btn, 0)
             sizer.Add(btn_sizer, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
@@ -114,6 +117,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.SetSizer(sizer)
 
             self.cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
+            self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
             self.bg_btn.Bind(wx.EVT_BUTTON, self._on_send_to_background)
             self.close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
 
@@ -166,6 +170,21 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                         if isinstance(cwd, str):
                             current_path = cwd
                     update_status(status_message, current_path)
+                self._refresh()
+
+        def _on_remove(self, event):
+            idx = self.transfer_list.GetFirstSelected()
+            if idx == wx.NOT_FOUND:
+                return
+            jobs = self._service.jobs
+            if 0 <= idx < len(jobs):
+                job = jobs[idx]
+                removed = self._service.remove_job(job.id)
+                if not removed:
+                    parent = self.GetParent()
+                    announce = getattr(parent, "_announce", None) if parent else None
+                    if callable(announce):
+                        announce("Cannot remove an active transfer. Cancel it first.")
                 self._refresh()
 
         def _get_selected_job_id(self):

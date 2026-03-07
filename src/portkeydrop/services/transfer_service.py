@@ -155,6 +155,20 @@ class TransferService:
             self._jobs.extend(jobs)
         self._post_event()
 
+    def remove_job(self, job_id: str) -> bool:
+        """Remove a finished job (cancelled, complete, or failed) from the job list.
+
+        Returns True if removed, False if not found or job is still active.
+        """
+        removable = {TransferStatus.CANCELLED, TransferStatus.COMPLETE, TransferStatus.FAILED}
+        with self._lock:
+            for j in self._jobs:
+                if j.id == job_id and j.status in removable:
+                    self._jobs.remove(j)
+                    self._post_event()
+                    return True
+        return False
+
     def cancel(self, job_id: str) -> None:
         with self._lock:
             for j in self._jobs:
