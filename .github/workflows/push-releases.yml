@@ -53,7 +53,7 @@ jobs:
               -H "Content-Type: application/json" \
               -H "X-OGR-Token: $WP_TOKEN" \
               -X POST \
-              -d "{"repository":{"full_name":"$REPO"}}" \
+              -d "{\"repository\":{\"full_name\":\"$REPO\"}}" \
               "${WP_URL%/}/wp-json/ogr/v1/bust-cache" >/dev/null || true
 
             RESPONSE2=$(curl -sS -f \

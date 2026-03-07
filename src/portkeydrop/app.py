@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import sys
@@ -86,6 +87,10 @@ ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
+ID_TOGGLE_ACTIVITY_LOG = wx.NewIdRef()
+ID_FOCUS_LOCAL_PANE = wx.NewIdRef()
+ID_FOCUS_REMOTE_PANE = wx.NewIdRef()
+ID_FOCUS_ACTIVITY_LOG_PANE = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -160,6 +165,12 @@ class MainFrame(wx.Frame):
         view_menu.AppendSubMenu(sort_menu, "&Sort By")
         view_menu.AppendSeparator()
         view_menu.Append(ID_FILTER, "&Filter...\tCtrl+F", "Filter file list")
+        view_menu.AppendSeparator()
+        self._toggle_log_item = view_menu.Append(
+            ID_TOGGLE_ACTIVITY_LOG,
+            "Hide &Activity Log",
+            "Toggle activity log panel visibility",
+        )
         menubar.Append(view_menu, "&View")
 
         # Transfer menu
@@ -262,7 +273,7 @@ class MainFrame(wx.Frame):
         self.tb_protocol.Bind(wx.EVT_CHOICE, self._on_toolbar_protocol_change)
 
     def _build_dual_pane(self) -> None:
-        pane_container = wx.Panel(self)
+        pane_container = wx.Panel(self, style=wx.TAB_TRAVERSAL)
 
         # --- Local pane (left) ---
         local_panel = wx.Panel(pane_container)
@@ -278,7 +289,7 @@ class MainFrame(wx.Frame):
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetName("Local")
+        self.local_file_list.SetLabel("Local Files")
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
@@ -299,19 +310,36 @@ class MainFrame(wx.Frame):
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetName("Remote")
+        self.remote_file_list.SetLabel("Remote Files")
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
         self.remote_file_list.InsertColumn(3, "Modified", width=130)
         self.remote_file_list.InsertColumn(4, "Permissions", width=100)
         remote_sizer.Add(self.remote_file_list, 1, wx.EXPAND)
+        self.remote_panel = remote_panel
         remote_panel.SetSizer(remote_sizer)
 
-        # Side-by-side layout
+        # --- Activity log pane (right column, sibling of local/remote) ---
+        activity_panel = wx.Panel(pane_container)
+        activity_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self._activity_log_label = wx.StaticText(activity_panel, label="Activity Log:")
+        activity_sizer.Add(self._activity_log_label, 0, wx.LEFT | wx.TOP, 4)
+
+        self.activity_log = wx.ListBox(activity_panel, name="Activity Log", style=wx.LB_SINGLE)
+        self.activity_log.SetMinSize((-1, 150))
+        activity_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 2)
+        activity_panel.SetSizer(activity_sizer)
+        self._activity_panel = activity_panel
+        self._activity_log_visible = True
+
+        # Three-column layout: local | remote | activity — natural tab order.
         h_sizer = wx.BoxSizer(wx.HORIZONTAL)
         h_sizer.Add(local_panel, 1, wx.EXPAND | wx.ALL, 2)
         h_sizer.Add(remote_panel, 1, wx.EXPAND | wx.ALL, 2)
+        h_sizer.Add(activity_panel, 1, wx.EXPAND | wx.ALL, 2)
+
         pane_container.SetSizer(h_sizer)
 
         self._pane_container = pane_container
@@ -322,7 +350,7 @@ class MainFrame(wx.Frame):
         # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         main_sizer.Add(self._toolbar_panel, 0, wx.EXPAND)
-        main_sizer.Add(pane_container, 1, wx.EXPAND)
+        main_sizer.Add(pane_container, 1, wx.EXPAND | wx.ALL, 5)
         self.SetSizer(main_sizer)
 
     def _build_status_bar(self) -> None:
@@ -398,6 +426,14 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
         self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
         self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
+        self.Bind(wx.EVT_MENU, self._on_toggle_activity_log, id=ID_TOGGLE_ACTIVITY_LOG)
+        self.Bind(wx.EVT_MENU, self._on_focus_local_pane, id=ID_FOCUS_LOCAL_PANE)
+        self.Bind(wx.EVT_MENU, self._on_focus_remote_pane, id=ID_FOCUS_REMOTE_PANE)
+        self.Bind(
+            wx.EVT_MENU,
+            self._on_focus_activity_log_pane,
+            id=ID_FOCUS_ACTIVITY_LOG_PANE,
+        )
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
@@ -415,6 +451,9 @@ class MainFrame(wx.Frame):
         self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
         self.local_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_local_context_menu)
 
+        # Activity log Shift+Tab to go back to remote file list
+        self.activity_log.Bind(wx.EVT_KEY_DOWN, self._on_activity_log_key)
+
         # Path bar enter
         self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
         self.remote_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_remote_path_enter)
@@ -423,6 +462,9 @@ class MainFrame(wx.Frame):
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("1"), ID_FOCUS_LOCAL_PANE),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("2"), ID_FOCUS_REMOTE_PANE),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("3"), ID_FOCUS_ACTIVITY_LOG_PANE),
         ]
         self.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
@@ -603,7 +645,12 @@ class MainFrame(wx.Frame):
         self._remote_home = client.cwd
         self._update_status("Connected", client.cwd)
         self._update_title()
-        self._announce(f"Connected to {client._info.host}")
+        protocol_type = (
+            client._info.protocol.value
+            if hasattr(client._info.protocol, "value")
+            else str(client._info.protocol)
+        )
+        self.log_event(f"Connected to {client._info.host} via {protocol_type}")
         self._refresh_remote_files()
         self._toolbar_panel.Hide()
         self.GetSizer().Layout()
@@ -613,9 +660,11 @@ class MainFrame(wx.Frame):
         """Called on the main thread when a background connection fails."""
         self._client = None
         self._update_status("Disconnected", "")
+        self.log_event(f"Connection failed: {exc}")
         wx.MessageBox(f"Connection failed: {exc}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_disconnect(self, event) -> None:
+        was_connected = self._client is not None
         if self._client:
             try:
                 self._client.disconnect()
@@ -627,6 +676,8 @@ class MainFrame(wx.Frame):
         self.remote_path_bar.SetValue("/")
         self._update_status("Disconnected", "")
         self._update_title()
+        if was_connected:
+            self.log_event("Disconnected from server")
         if not self._toolbar_panel.IsShown():
             self._toolbar_panel.Show()
             self.GetSizer().Layout()
@@ -685,12 +736,52 @@ class MainFrame(wx.Frame):
 
     def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
         focused = self.FindFocus()
-        if focused is self.local_file_list:
-            self.remote_file_list.SetFocus()
-            self._announce("Remote Files pane")
-            return
+        if self._activity_log_visible:
+            if focused is self.local_file_list:
+                self.remote_file_list.SetFocus()
+                self._announce("Remote Files pane")
+            elif focused is self.remote_file_list:
+                self.activity_log.SetFocus()
+                self._announce("Activity Log pane")
+            else:
+                self.local_file_list.SetFocus()
+                self._announce("Local Files pane")
+        else:
+            if focused is self.local_file_list:
+                self.remote_file_list.SetFocus()
+                self._announce("Remote Files pane")
+            else:
+                self.local_file_list.SetFocus()
+                self._announce("Local Files pane")
+
+    def _on_toggle_activity_log(self, event: wx.CommandEvent) -> None:
+        if self._activity_log_visible:
+            self._activity_panel.Hide()
+            self._activity_log_visible = False
+            self._toggle_log_item.SetItemLabel("Show &Activity Log")
+            self._announce("Activity log hidden")
+        else:
+            self._activity_panel.Show()
+            self._activity_log_visible = True
+            self._toggle_log_item.SetItemLabel("Hide &Activity Log")
+            self._announce("Activity log shown")
+        self._pane_container.GetSizer().Layout()
+        self.GetSizer().Layout()
+
+    def _on_focus_local_pane(self, event: wx.CommandEvent) -> None:
         self.local_file_list.SetFocus()
         self._announce("Local Files pane")
+
+    def _on_focus_remote_pane(self, event: wx.CommandEvent) -> None:
+        self.remote_file_list.SetFocus()
+        self._announce("Remote Files pane")
+
+    def _on_focus_activity_log_pane(self, event: wx.CommandEvent) -> None:
+        if self._activity_log_visible:
+            self.activity_log.SetFocus()
+            self._announce("Activity Log pane")
+        else:
+            self._announce("Activity log is hidden")
 
     def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
         self.tb_host.SetFocus()
@@ -975,6 +1066,14 @@ class MainFrame(wx.Frame):
         else:
             event.Skip()
 
+    def _on_activity_log_key(self, event: wx.KeyEvent) -> None:
+        key = event.GetKeyCode()
+        if key == wx.WXK_TAB and event.ShiftDown():
+            self.remote_file_list.SetFocus()
+            self._announce("Remote Files pane")
+        else:
+            event.Skip()
+
     # Keep old name for compat
     def _on_file_list_key(self, event: wx.KeyEvent) -> None:
         self._on_remote_file_list_key(event)
@@ -1237,7 +1336,9 @@ class MainFrame(wx.Frame):
                 return
             except Exception:
                 pass
-        self._transfer_dlg = create_transfer_dialog(self, self._transfer_service)
+        self._transfer_dlg = create_transfer_dialog(
+            self, self._transfer_service, log_callback=self.log_event
+        )
         self._transfer_dlg.Show()
 
     # --- File operations (context-aware) ---
@@ -1399,21 +1500,24 @@ class MainFrame(wx.Frame):
 
             self._transfer_state_by_id[job.id] = current_state
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
+            filename = os.path.basename(job.destination) or PurePosixPath(job.source).name
 
             if job.status == TransferStatus.IN_PROGRESS:
                 latest_status_message = f"{direction_label} in progress..."
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
-                self._announce(f"{direction_label} complete.")
+                self.log_event(f"{direction_label} complete: {filename}")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
                 else:
                     refresh_remote_files = True
             elif job.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
-                self._announce(f"{direction_label} failed.")
+                error_msg = job.error or "Unknown error"
+                self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+                self.log_event(f"{direction_label} cancelled: {filename}")
 
         if refresh_local_files:
             self._refresh_local_files()
@@ -1749,6 +1853,13 @@ class MainFrame(wx.Frame):
     def _status(self, message: str) -> None:
         """Update status bar text without forcing speech."""
         self.status_bar.SetStatusText(message, 0)
+
+    def log_event(self, message: str) -> None:
+        """Append a timestamped entry to the activity log and announce it."""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = f"[{timestamp}] {message}"
+        self.activity_log.Append(entry)
+        self._announce(message)
 
     def _announce(self, message: str) -> None:
         """Announce a message for screen readers via status bar + announcer wrapper."""

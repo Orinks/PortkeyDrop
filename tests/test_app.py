@@ -75,6 +75,8 @@ def _hydrate_frame(module):
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
+    frame.activity_log = MagicMock()
+    frame._activity_log_visible = True
     return frame
 
 
@@ -116,6 +118,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
     frame.remote_path_bar = MagicMock(Bind=MagicMock())
+    frame.activity_log = MagicMock(Bind=MagicMock())
 
     with patch.object(app, "get_transfer_event_binder", return_value=object()):
         frame._bind_events()
@@ -143,7 +146,7 @@ def test_switch_pane_focus_local_to_remote_announces(app_module):
     frame._announce.assert_called_once_with("Remote Files pane")
 
 
-def test_switch_pane_focus_remote_to_local_announces(app_module):
+def test_switch_pane_focus_remote_to_activity_log_announces(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.local_file_list = MagicMock(SetFocus=MagicMock())
@@ -152,8 +155,8 @@ def test_switch_pane_focus_remote_to_local_announces(app_module):
 
     frame._on_switch_pane_focus(None)
 
-    frame.local_file_list.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Local Files pane")
+    frame.activity_log.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Activity Log pane")
 
 
 def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
@@ -411,11 +414,24 @@ def test_on_transfer_update_reports_latest_status(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
+    frame.activity_log = MagicMock()
     upload = SimpleNamespace(
-        id="aaa", direction=app.TransferDirection.UPLOAD, status=app.TransferStatus.IN_PROGRESS
+        id="aaa",
+        direction=app.TransferDirection.UPLOAD,
+        status=app.TransferStatus.IN_PROGRESS,
+        source="/local/file.txt",
+        destination="/remote/file.txt",
+        error=None,
+        progress=50,
     )
     download = SimpleNamespace(
-        id="bbb", direction=app.TransferDirection.DOWNLOAD, status=app.TransferStatus.COMPLETE
+        id="bbb",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.COMPLETE,
+        source="/remote/dl.txt",
+        destination="/local/dl.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [upload, download]
     frame._transfer_state_by_id = {}
@@ -433,6 +449,10 @@ def test_on_transfer_update_refreshes_local_files_after_download_complete(app_mo
         id="ccc",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/remote/file.txt",
+        destination="/tmp/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [download]
     frame._transfer_state_by_id = {}
@@ -453,6 +473,10 @@ def test_on_transfer_update_refreshes_remote_files_after_upload_complete(app_mod
         id="ddd",
         direction=app.TransferDirection.UPLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/tmp/file.txt",
+        destination="/remote/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [upload]
     frame._transfer_state_by_id = {}
@@ -474,13 +498,17 @@ def test_on_transfer_update_announces_download_complete(app_module):
         id="ann1",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/remote/file.txt",
+        destination="/local/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [download]
     frame._transfer_state_by_id = {}
 
     frame._on_transfer_update(None)
 
-    frame._announce.assert_any_call("Download complete.")
+    frame._announce.assert_any_call("Download complete: file.txt")
 
 
 def test_on_transfer_update_announces_upload_complete(app_module):
@@ -491,13 +519,17 @@ def test_on_transfer_update_announces_upload_complete(app_module):
         id="ann2",
         direction=app.TransferDirection.UPLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/local/file.txt",
+        destination="/remote/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [upload]
     frame._transfer_state_by_id = {}
 
     frame._on_transfer_update(None)
 
-    frame._announce.assert_any_call("Upload complete.")
+    frame._announce.assert_any_call("Upload complete: file.txt")
 
 
 def test_on_transfer_update_announces_download_failed(app_module):
@@ -509,13 +541,17 @@ def test_on_transfer_update_announces_download_failed(app_module):
         id="fail1",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.FAILED,
+        source="/remote/file.txt",
+        destination="/local/file.txt",
+        error="Connection lost",
+        progress=50,
     )
     frame._transfer_service.jobs = [download]
     frame._transfer_state_by_id = {}
 
     frame._on_transfer_update(None)
 
-    frame._announce.assert_any_call("Download failed.")
+    frame._announce.assert_any_call("Download failed: file.txt \u2014 Connection lost")
 
 
 def test_on_transfer_update_announces_upload_failed(app_module):
@@ -526,13 +562,17 @@ def test_on_transfer_update_announces_upload_failed(app_module):
         id="fail2",
         direction=app.TransferDirection.UPLOAD,
         status=app.TransferStatus.FAILED,
+        source="/local/file.txt",
+        destination="/remote/file.txt",
+        error="Permission denied",
+        progress=0,
     )
     frame._transfer_service.jobs = [upload]
     frame._transfer_state_by_id = {}
 
     frame._on_transfer_update(None)
 
-    frame._announce.assert_any_call("Upload failed.")
+    frame._announce.assert_any_call("Upload failed: file.txt \u2014 Permission denied")
 
 
 def test_on_transfer_update_skips_already_seen_state(app_module):
@@ -544,6 +584,10 @@ def test_on_transfer_update_skips_already_seen_state(app_module):
         id="seen1",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.COMPLETE,
+        source="/remote/file.txt",
+        destination="/local/file.txt",
+        error=None,
+        progress=100,
     )
     frame._transfer_service.jobs = [job]
     frame._transfer_state_by_id = {"seen1": "complete"}
@@ -563,6 +607,10 @@ def test_on_transfer_update_handles_disconnected_client(app_module):
         id="disc1",
         direction=app.TransferDirection.DOWNLOAD,
         status=app.TransferStatus.IN_PROGRESS,
+        source="/remote/file.txt",
+        destination="/local/file.txt",
+        error=None,
+        progress=50,
     )
     frame._transfer_service.jobs = [job]
     frame._transfer_state_by_id = {}

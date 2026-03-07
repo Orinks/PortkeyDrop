@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def create_transfer_dialog(parent, transfer_service: TransferService):
+def create_transfer_dialog(parent, transfer_service: TransferService, log_callback=None):
     """Create and return a TransferDialog.  Requires wx."""
     import wx
     from pathlib import PurePosixPath
@@ -34,7 +34,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService):
     class TransferDialog(wx.Dialog):
         """Disposable observer over the :class:`TransferService` job list."""
 
-        def __init__(self, parent_win, svc: TransferService):
+        def __init__(self, parent_win, svc: TransferService, log_cb=None):
             super().__init__(
                 parent_win,
                 title="Transfer Queue",
@@ -42,6 +42,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService):
                 size=(500, 350),
             )
             self._service = svc
+            self.log_callback = log_cb
             self._build_ui()
             self._refresh()
             self.SetName("Transfer Queue Dialog")
@@ -120,6 +121,13 @@ def create_transfer_dialog(parent, transfer_service: TransferService):
                 status_message = (
                     f"Cancelled transfer: {filename}" if filename else "Cancelled transfer."
                 )
+                if self.log_callback:
+                    direction = job.direction.value
+                    self.log_callback(
+                        f"{direction.capitalize()} cancelled: {filename}"
+                        if filename
+                        else f"{direction.capitalize()} cancelled"
+                    )
                 announce = getattr(parent, "_announce", None) if parent else None
                 if callable(announce):
                     announce(status_message)
@@ -188,4 +196,4 @@ def create_transfer_dialog(parent, transfer_service: TransferService):
             if 0 <= focused < new_count:
                 self.transfer_list.Focus(focused)
 
-    return TransferDialog(parent, transfer_service)
+    return TransferDialog(parent, transfer_service, log_cb=log_callback)

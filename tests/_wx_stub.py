@@ -89,6 +89,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.StaticText = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Choice = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.TextCtrl = lambda *args, **kwargs: _SimpleWidget()
+    fake_wx.ListBox = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Button = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.ListCtrl = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Timer = lambda *args, **kwargs: _SimpleWidget()
@@ -118,12 +119,20 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.HORIZONTAL = 32
     fake_wx.LC_REPORT = 64
     fake_wx.LC_SINGLE_SEL = 128
+    fake_wx.LB_SINGLE = 0x0020
     fake_wx.TE_PASSWORD = 256
     fake_wx.TE_PROCESS_ENTER = 512
+    fake_wx.TE_MULTILINE = 1024
+    fake_wx.TE_READONLY = 2048
+    fake_wx.TE_RICH2 = 4096
+    fake_wx.HSCROLL = 8192
+    fake_wx.TAB_TRAVERSAL = 0x0080
+    fake_wx.TOP = 16384
     fake_wx.WXK_BACK = 513
     fake_wx.WXK_DELETE = 514
     fake_wx.WXK_F2 = 515
     fake_wx.WXK_F6 = 516
+    fake_wx.WXK_TAB = 9
     fake_wx.ACCEL_NORMAL = 1
     fake_wx.ACCEL_CTRL = 2
     fake_wx.ID_OK = 100
@@ -136,8 +145,12 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.ID_EXIT = 200
     fake_wx.ID_ABOUT = 201
 
+    fake_wx.StaticBox = lambda *args, **kwargs: _SimpleWidget()
+    fake_wx.StaticBoxSizer = lambda *args, **kwargs: _SimpleWidget()
+
     fake_wx.EVT_MENU = object()
     fake_wx.EVT_BUTTON = object()
+    fake_wx.EVT_CHOICE = object()
     fake_wx.EVT_LIST_ITEM_ACTIVATED = object()
     fake_wx.EVT_KEY_DOWN = object()
     fake_wx.EVT_CONTEXT_MENU = object()
