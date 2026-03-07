@@ -6,7 +6,6 @@ import json
 import threading
 from pathlib import Path
 
-import pytest
 
 from portkeydrop.dialogs.transfer import (
     TransferDirection,
@@ -142,7 +141,9 @@ class TestTransferJobFromDict:
 def _make_service_with_jobs(jobs):
     """Create a TransferService with pre-populated jobs (no threads started)."""
     svc = TransferService.__new__(TransferService)
-    import threading, queue
+    import threading
+    import queue
+
     svc._notify_window = None
     svc._lock = threading.Lock()
     svc._jobs = list(jobs)
@@ -217,11 +218,13 @@ class TestSaveQueue:
         assert data == []
 
     def test_multiple_jobs(self, tmp_path):
-        svc = _make_service_with_jobs([
-            TransferJob(id="1", status=TransferStatus.PENDING, source="/a.txt"),
-            TransferJob(id="2", status=TransferStatus.FAILED, source="/b.txt"),
-            TransferJob(id="3", status=TransferStatus.COMPLETE, source="/c.txt"),
-        ])
+        svc = _make_service_with_jobs(
+            [
+                TransferJob(id="1", status=TransferStatus.PENDING, source="/a.txt"),
+                TransferJob(id="2", status=TransferStatus.FAILED, source="/b.txt"),
+                TransferJob(id="3", status=TransferStatus.COMPLETE, source="/c.txt"),
+            ]
+        )
         save_queue(svc, tmp_path)
 
         data = json.loads((tmp_path / "queue.json").read_text())
@@ -318,27 +321,29 @@ class TestTransferServiceRestoreJobs:
 
 class TestRoundTrip:
     def test_save_then_load_preserves_data(self, tmp_path):
-        svc = _make_service_with_jobs([
-            TransferJob(
-                id="r1",
-                direction=TransferDirection.UPLOAD,
-                source="/home/user/data.csv",
-                destination="/srv/data.csv",
-                total_bytes=4096,
-                transferred_bytes=0,
-                status=TransferStatus.PENDING,
-            ),
-            TransferJob(
-                id="r2",
-                direction=TransferDirection.DOWNLOAD,
-                source="/srv/log.txt",
-                destination="/home/user/log.txt",
-                total_bytes=999,
-                transferred_bytes=500,
-                status=TransferStatus.FAILED,
-                error="network error",
-            ),
-        ])
+        svc = _make_service_with_jobs(
+            [
+                TransferJob(
+                    id="r1",
+                    direction=TransferDirection.UPLOAD,
+                    source="/home/user/data.csv",
+                    destination="/srv/data.csv",
+                    total_bytes=4096,
+                    transferred_bytes=0,
+                    status=TransferStatus.PENDING,
+                ),
+                TransferJob(
+                    id="r2",
+                    direction=TransferDirection.DOWNLOAD,
+                    source="/srv/log.txt",
+                    destination="/home/user/log.txt",
+                    total_bytes=999,
+                    transferred_bytes=500,
+                    status=TransferStatus.FAILED,
+                    error="network error",
+                ),
+            ]
+        )
         save_queue(svc, tmp_path)
         loaded = load_queue(tmp_path)
 
