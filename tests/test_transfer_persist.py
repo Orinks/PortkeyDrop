@@ -389,3 +389,36 @@ class TestRestoredStatus:
         """Dialog _refresh uses status.value for non-IN_PROGRESS jobs."""
         job = TransferJob(status=TransferStatus.RESTORED)
         assert job.status.value == "pending (restored)"
+
+
+# ── remove_job ───────────────────────────────────────────────────────
+
+
+class TestRemoveJob:
+    def test_remove_cancelled_job(self):
+        job = TransferJob(id="j1", status=TransferStatus.CANCELLED, source="/f.txt")
+        svc = _make_service_with_jobs([job])
+        assert svc.remove_job("j1") is True
+        assert all(j.id != "j1" for j in svc.jobs)
+
+    def test_remove_complete_job(self):
+        job = TransferJob(id="j2", status=TransferStatus.COMPLETE, source="/f.txt")
+        svc = _make_service_with_jobs([job])
+        assert svc.remove_job("j2") is True
+        assert svc.jobs == []
+
+    def test_remove_failed_job(self):
+        job = TransferJob(id="j3", status=TransferStatus.FAILED, source="/f.txt")
+        svc = _make_service_with_jobs([job])
+        assert svc.remove_job("j3") is True
+        assert svc.jobs == []
+
+    def test_cannot_remove_pending_job(self):
+        job = TransferJob(id="j4", status=TransferStatus.PENDING, source="/f.txt")
+        svc = _make_service_with_jobs([job])
+        assert svc.remove_job("j4") is False
+        assert len(svc.jobs) == 1
+
+    def test_remove_nonexistent_job_returns_false(self):
+        svc = _make_service_with_jobs([])
+        assert svc.remove_job("nope") is False

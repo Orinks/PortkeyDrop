@@ -1719,3 +1719,35 @@ def test_download_and_apply_update_ignores_progress_when_total_unknown(app_modul
     monkeypatch.setattr(app, "UpdateService", _FakeService)
     frame._download_and_apply_update(update_info, {"tag_name": "v1.2.3"})
     progress_dialog.Update.assert_not_called()
+
+
+def test_restore_transfer_queue_announces_when_jobs_restored(app_module, monkeypatch):
+    """_restore_transfer_queue should announce when jobs are loaded from queue.json."""
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    fake_job = MagicMock()
+    monkeypatch.setattr(app, "load_queue", lambda _: [fake_job])
+    monkeypatch.setattr(app, "get_config_dir", lambda: MagicMock())
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    frame._restore_transfer_queue()
+
+    frame._transfer_service.restore_jobs.assert_called_once_with([fake_job])
+    frame._announce.assert_called_once()
+    msg = frame._announce.call_args.args[0]
+    assert "restored" in msg.lower()
+
+
+def test_restore_transfer_queue_silent_when_empty(app_module, monkeypatch):
+    """_restore_transfer_queue should not announce if queue.json is empty."""
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    monkeypatch.setattr(app, "load_queue", lambda _: [])
+    monkeypatch.setattr(app, "get_config_dir", lambda: MagicMock())
+
+    frame._restore_transfer_queue()
+
+    frame._transfer_service.restore_jobs.assert_not_called()
+    frame._announce.assert_not_called()
