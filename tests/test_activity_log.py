@@ -521,3 +521,40 @@ class TestToggleActivityLog:
 
         frame._on_toggle_activity_log(None)
         assert frame._activity_log_visible is True
+
+
+class TestDirectPaneFocus:
+    """Ctrl+1/2/3 directly focus local, remote, and activity log panes."""
+
+    def test_ctrl1_focuses_local(self, app_module):
+        frame = _make_frame_with_log(app_module)
+
+        frame._on_focus_local_pane(None)
+
+        frame.local_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Local Files pane")
+
+    def test_ctrl2_focuses_remote(self, app_module):
+        frame = _make_frame_with_log(app_module)
+
+        frame._on_focus_remote_pane(None)
+
+        frame.remote_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Remote Files pane")
+
+    def test_ctrl3_focuses_activity_log_when_visible(self, app_module):
+        frame = _make_frame_with_log(app_module)
+
+        frame._on_focus_activity_log_pane(None)
+
+        frame.activity_log.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Activity Log pane")
+
+    def test_ctrl3_announces_hidden_when_log_not_visible(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame._activity_log_visible = False
+
+        frame._on_focus_activity_log_pane(None)
+
+        frame.activity_log.SetFocus.assert_not_called()
+        frame._announce.assert_called_with("Activity log is hidden")

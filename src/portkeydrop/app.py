@@ -88,6 +88,9 @@ ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
 ID_TOGGLE_ACTIVITY_LOG = wx.NewIdRef()
+ID_FOCUS_LOCAL_PANE = wx.NewIdRef()
+ID_FOCUS_REMOTE_PANE = wx.NewIdRef()
+ID_FOCUS_ACTIVITY_LOG_PANE = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -419,6 +422,13 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
         self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
         self.Bind(wx.EVT_MENU, self._on_toggle_activity_log, id=ID_TOGGLE_ACTIVITY_LOG)
+        self.Bind(wx.EVT_MENU, self._on_focus_local_pane, id=ID_FOCUS_LOCAL_PANE)
+        self.Bind(wx.EVT_MENU, self._on_focus_remote_pane, id=ID_FOCUS_REMOTE_PANE)
+        self.Bind(
+            wx.EVT_MENU,
+            self._on_focus_activity_log_pane,
+            id=ID_FOCUS_ACTIVITY_LOG_PANE,
+        )
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
@@ -444,6 +454,9 @@ class MainFrame(wx.Frame):
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("1"), ID_FOCUS_LOCAL_PANE),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("2"), ID_FOCUS_REMOTE_PANE),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("3"), ID_FOCUS_ACTIVITY_LOG_PANE),
         ]
         self.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
@@ -749,6 +762,21 @@ class MainFrame(wx.Frame):
             self._toggle_log_item.SetItemLabel("Hide &Activity Log")
             self._announce("Activity log shown")
         self.GetSizer().Layout()
+
+    def _on_focus_local_pane(self, event: wx.CommandEvent) -> None:
+        self.local_file_list.SetFocus()
+        self._announce("Local Files pane")
+
+    def _on_focus_remote_pane(self, event: wx.CommandEvent) -> None:
+        self.remote_file_list.SetFocus()
+        self._announce("Remote Files pane")
+
+    def _on_focus_activity_log_pane(self, event: wx.CommandEvent) -> None:
+        if self._activity_log_visible:
+            self.activity_log.SetFocus()
+            self._announce("Activity Log pane")
+        else:
+            self._announce("Activity log is hidden")
 
     def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
         self.tb_host.SetFocus()
