@@ -327,7 +327,11 @@ class MainFrame(wx.Frame):
         self._activity_log_label = wx.StaticText(activity_panel, label="Activity Log:")
         activity_sizer.Add(self._activity_log_label, 0, wx.LEFT | wx.TOP, 4)
 
-        self.activity_log = wx.ListBox(activity_panel, name="Activity Log", style=wx.LB_SINGLE)
+        self.activity_log = wx.TextCtrl(
+            activity_panel,
+            name="Activity Log",
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
+        )
         self.activity_log.SetMinSize((-1, 150))
         activity_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 2)
         activity_panel.SetSizer(activity_sizer)
@@ -1840,8 +1844,8 @@ class MainFrame(wx.Frame):
     def log_event(self, message: str) -> None:
         """Append a timestamped entry to the activity log and announce it."""
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        entry = f"[{timestamp}] {message}"
-        self.activity_log.Append(entry)
+        entry = f"[{timestamp}] {message}\n"
+        self.activity_log.AppendText(entry)
         self._announce(message)
 
     def _announce(self, message: str) -> None:
