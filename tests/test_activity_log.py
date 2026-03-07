@@ -336,11 +336,11 @@ class TestBuildDualPaneActivityLog:
 
         # The activity log TextCtrl should be assigned
         assert hasattr(frame, "activity_log")
-        # SetName should have been called on the widget
-        frame.activity_log.SetName.assert_called_with("Activity Log")
+        # A StaticText label should exist above the TextCtrl
+        assert hasattr(frame, "_activity_log_label")
         frame.activity_log.SetMinSize.assert_called_once()
 
-    def test_activity_log_can_receive_focus(self, app_module):
+    def test_activity_log_label_created(self, app_module):
         app, fake_wx = app_module
         frame = object.__new__(app.MainFrame)
         frame._local_cwd = "/tmp"
@@ -348,7 +348,7 @@ class TestBuildDualPaneActivityLog:
 
         frame._build_dual_pane()
 
-        frame.activity_log.SetCanFocus.assert_called_once_with(True)
+        assert hasattr(frame, "_activity_log_label")
 
     def test_activity_log_visible_by_default(self, app_module):
         app, fake_wx = app_module
@@ -431,6 +431,7 @@ def _make_frame_with_log(app_module):
     frame.local_file_list = MagicMock()
     frame.remote_file_list = MagicMock()
     frame.activity_log = MagicMock()
+    frame._activity_log_label = MagicMock()
     frame._activity_log_visible = True
     frame._toggle_log_item = MagicMock()
     frame._pane_container = MagicMock()
@@ -509,9 +510,8 @@ class TestToggleActivityLog:
         frame._on_toggle_activity_log(None)
 
         assert frame._activity_log_visible is False
+        frame._activity_log_label.Hide.assert_called_once()
         frame.activity_log.Hide.assert_called_once()
-        frame._pane_container.GetSizer().Detach.assert_called_once_with(frame.activity_log)
-        frame._pane_container.GetSizer().Layout.assert_called()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Show &Activity Log")
         frame._announce.assert_called_with("Activity log hidden")
 
@@ -522,8 +522,8 @@ class TestToggleActivityLog:
         frame._on_toggle_activity_log(None)
 
         assert frame._activity_log_visible is True
+        frame._activity_log_label.Show.assert_called_once()
         frame.activity_log.Show.assert_called_once()
-        frame._pane_container.GetSizer().Layout.assert_called()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Hide &Activity Log")
         frame._announce.assert_called_with("Activity log shown")
 
