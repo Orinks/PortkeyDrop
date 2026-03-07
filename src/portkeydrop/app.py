@@ -329,7 +329,7 @@ class MainFrame(wx.Frame):
 
         self.activity_log = wx.TextCtrl(
             activity_panel,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
         )
         self.activity_log.SetMinSize((-1, 150))
         activity_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 2)
