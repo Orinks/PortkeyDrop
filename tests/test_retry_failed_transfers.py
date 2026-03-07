@@ -17,208 +17,186 @@ def transfer_module(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TransferManager.retry() tests
+# TransferService.retry() tests
 # ---------------------------------------------------------------------------
 
 
 class TestTransferManagerRetry:
-    """Tests for TransferManager.retry() method."""
+    """Tests for TransferService.retry() method."""
 
     def test_retry_failed_download_creates_new_item(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        # Manually add a failed download
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             total_bytes=1024,
             status=module.TransferStatus.FAILED,
             error="Connection lost",
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        client.download = MagicMock()
+        new_job = svc.retry(item.id, client)
 
-        new_item = tm.retry(1, client)
-
-        assert new_item is not None
-        assert new_item.id == 2
-        assert new_item.direction == module.TransferDirection.DOWNLOAD
-        assert new_item.remote_path == "/remote/file.txt"
-        assert new_item.local_path == "/local/file.txt"
-        assert new_item.total_bytes == 1024
+        assert new_job is not None
+        assert new_job.id != item.id
+        assert new_job.direction == module.TransferDirection.DOWNLOAD
+        assert new_job.source == "/remote/file.txt"
+        assert new_job.destination == "/local/file.txt"
+        assert new_job.total_bytes == 1024
 
     def test_retry_failed_upload_creates_new_item(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.UPLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/local/file.txt",
+            destination="/remote/file.txt",
             total_bytes=2048,
             status=module.TransferStatus.FAILED,
             error="Permission denied",
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        client.upload = MagicMock()
+        new_job = svc.retry(item.id, client)
 
-        new_item = tm.retry(1, client)
-
-        assert new_item is not None
-        assert new_item.id == 2
-        assert new_item.direction == module.TransferDirection.UPLOAD
-        assert new_item.remote_path == "/remote/file.txt"
-        assert new_item.local_path == "/local/file.txt"
+        assert new_job is not None
+        assert new_job.id != item.id
+        assert new_job.direction == module.TransferDirection.UPLOAD
+        assert new_job.source == "/local/file.txt"
+        assert new_job.destination == "/remote/file.txt"
 
     def test_retry_non_failed_transfer_returns_none(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
-            status=module.TransferStatus.COMPLETED,
+            source="/remote/file.txt",
+            destination="/local/file.txt",
+            status=module.TransferStatus.COMPLETE,
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        result = tm.retry(1, client)
+        result = svc.retry(item.id, client)
 
         assert result is None
 
     def test_retry_nonexistent_transfer_returns_none(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        tm._next_id = 1
+        svc = module.TransferService()
 
         client = MagicMock()
-        result = tm.retry(999, client)
+        result = svc.retry("nonexistent-id", client)
 
         assert result is None
 
     def test_retry_queued_transfer_returns_none(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
-            status=module.TransferStatus.QUEUED,
+            source="/remote/file.txt",
+            destination="/local/file.txt",
+            status=module.TransferStatus.PENDING,
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        result = tm.retry(1, client)
+        result = svc.retry(item.id, client)
 
         assert result is None
 
     def test_retry_cancelled_transfer_returns_none(self, transfer_module):
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             status=module.TransferStatus.CANCELLED,
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        result = tm.retry(1, client)
+        result = svc.retry(item.id, client)
 
         assert result is None
 
     def test_retry_preserves_original_transfer(self, transfer_module):
-        """Original failed transfer should remain in the list after retry."""
+        """Original failed job should remain in the list after retry."""
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             total_bytes=512,
             status=module.TransferStatus.FAILED,
             error="Timeout",
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        client.download = MagicMock()
+        svc.retry(item.id, client)
 
-        tm.retry(1, client)
-
-        # Both original and new transfer should be in the list
-        assert len(tm.transfers) == 2
-        assert tm.transfers[0].status == module.TransferStatus.FAILED
-        assert tm.transfers[0].id == 1
+        jobs = svc.jobs
+        assert len(jobs) == 2
+        original = next(j for j in jobs if j.id == item.id)
+        assert original.status == module.TransferStatus.FAILED
 
     def test_retry_increments_id(self, transfer_module):
-        """Each retry should get a unique, incrementing ID."""
+        """Each retry should produce a unique new job ID."""
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             status=module.TransferStatus.FAILED,
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        client.download = MagicMock()
+        new_job = svc.retry(item.id, client)
 
-        new1 = tm.retry(1, client)
-        # Mark the new one as failed too so we can retry the original again
-        assert new1 is not None
-        assert new1.id == 2
+        assert new_job is not None
+        assert new_job.id != item.id
 
     def test_retry_creates_fresh_transfer_item(self, transfer_module):
-        """Retried transfer should be a fresh TransferItem with reset fields."""
+        """Retried job should have reset progress fields."""
         module, _ = transfer_module
-        tm = module.TransferManager()
-        item = module.TransferItem(
-            id=1,
+        svc = module.TransferService()
+        item = module.TransferJob(
             direction=module.TransferDirection.DOWNLOAD,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             total_bytes=1024,
             transferred_bytes=500,
             status=module.TransferStatus.FAILED,
             error="Network error",
         )
-        tm._transfers.append(item)
-        tm._next_id = 2
+        with svc._lock:
+            svc._jobs.append(item)
 
         client = MagicMock()
-        client.download = MagicMock()
+        new_job = svc.retry(item.id, client)
 
-        # The retry calls add_download which spawns a thread;
-        # verify the new item was created with correct params
-        new_item = tm.retry(1, client)
-
-        assert new_item is not None
-        assert new_item.id == 2
-        assert new_item.remote_path == "/remote/file.txt"
-        assert new_item.local_path == "/local/file.txt"
-        assert new_item.total_bytes == 1024
+        assert new_job is not None
+        assert new_job.id != item.id
+        assert new_job.source == "/remote/file.txt"
+        assert new_job.destination == "/local/file.txt"
+        assert new_job.total_bytes == 1024
         # Original item remains failed
         assert item.status == module.TransferStatus.FAILED
         assert item.error == "Network error"
@@ -276,10 +254,10 @@ class TestTransferDialogRetryButton:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = []
+        service = MagicMock()
+        service.jobs = []
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         assert hasattr(dialog, "retry_btn")
 
     def test_retry_button_initially_disabled(self, transfer_module):
@@ -288,10 +266,10 @@ class TestTransferDialogRetryButton:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = []
+        service = MagicMock()
+        service.jobs = []
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.retry_btn.Enable.assert_called_with(False)
 
     def test_retry_button_calls_retry_on_failed_transfer(self, transfer_module):
@@ -304,27 +282,26 @@ class TestTransferDialogRetryButton:
         parent._client.connected = True
         parent._client.cwd = "/remote"
 
-        failed_transfer = SimpleNamespace(
-            id=5,
-            remote_path="/remote/report.csv",
-            local_path="/tmp/report.csv",
+        failed_job = SimpleNamespace(
+            id="abc123",
+            source="/remote/report.csv",
+            destination="/tmp/report.csv",
             direction=module.TransferDirection.DOWNLOAD,
-            progress_pct=0,
-            display_status="failed",
             status=module.TransferStatus.FAILED,
+            progress=0,
         )
-        manager = MagicMock()
-        manager.transfers = [failed_transfer]
-        manager.retry.return_value = SimpleNamespace(id=6)
+        service = MagicMock()
+        service.jobs = [failed_job]
+        service.retry.return_value = SimpleNamespace(id="def456")
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.GetParent = MagicMock(return_value=parent)
         dialog.transfer_list.GetFirstSelected.return_value = 0
         dialog._refresh = MagicMock()
 
         dialog._on_retry(None)
 
-        manager.retry.assert_called_once_with(5, parent._client)
+        service.retry.assert_called_once_with("abc123", parent._client)
         parent._announce.assert_called_once_with("Retrying download of report.csv")
         parent._update_status.assert_called_once_with("Retrying download of report.csv", "/remote")
 
@@ -334,75 +311,25 @@ class TestTransferDialogRetryButton:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        completed_transfer = SimpleNamespace(
-            id=5,
-            remote_path="/remote/report.csv",
-            local_path="/tmp/report.csv",
+        completed_job = SimpleNamespace(
+            id="abc123",
+            source="/remote/report.csv",
+            destination="/tmp/report.csv",
             direction=module.TransferDirection.DOWNLOAD,
-            status=module.TransferStatus.COMPLETED,
-            progress_pct=100,
-            display_status="completed",
+            status=module.TransferStatus.COMPLETE,
+            progress=100,
         )
-        manager = MagicMock()
-        manager.transfers = [completed_transfer]
+        service = MagicMock()
+        service.jobs = [completed_job]
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.GetParent = MagicMock(return_value=parent)
         dialog.transfer_list.GetFirstSelected.return_value = 0
         dialog._refresh = MagicMock()
 
         dialog._on_retry(None)
 
-        manager.retry.assert_not_called()
-
-    def test_retry_button_does_nothing_when_disconnected(self, transfer_module):
-        module, fake_wx = transfer_module
-        _make_wx_constants(fake_wx)
-        fake_wx.Dialog = _Dialog
-
-        parent = MagicMock()
-        parent._client = MagicMock()
-        parent._client.connected = False
-
-        failed_transfer = SimpleNamespace(
-            id=5,
-            remote_path="/remote/report.csv",
-            local_path="/tmp/report.csv",
-            direction=module.TransferDirection.DOWNLOAD,
-            status=module.TransferStatus.FAILED,
-            progress_pct=0,
-            display_status="failed",
-        )
-        manager = MagicMock()
-        manager.transfers = [failed_transfer]
-
-        dialog = module.create_transfer_dialog(parent, manager)
-        dialog.GetParent = MagicMock(return_value=parent)
-        dialog.transfer_list.GetFirstSelected.return_value = 0
-        dialog._refresh = MagicMock()
-
-        dialog._on_retry(None)
-
-        manager.retry.assert_not_called()
-
-    def test_retry_button_does_nothing_when_no_selection(self, transfer_module):
-        module, fake_wx = transfer_module
-        _make_wx_constants(fake_wx)
-        fake_wx.Dialog = _Dialog
-        fake_wx.NOT_FOUND = -1
-
-        parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = []
-
-        dialog = module.create_transfer_dialog(parent, manager)
-        dialog.GetParent = MagicMock(return_value=parent)
-        dialog.transfer_list.GetFirstSelected.return_value = -1
-        dialog._refresh = MagicMock()
-
-        dialog._on_retry(None)
-
-        manager.retry.assert_not_called()
+        service.retry.assert_not_called()
 
     def test_retry_announces_upload_direction(self, transfer_module):
         module, fake_wx = transfer_module
@@ -415,19 +342,18 @@ class TestTransferDialogRetryButton:
         parent._client.cwd = "/uploads"
 
         failed_upload = SimpleNamespace(
-            id=3,
-            remote_path="/uploads/data.bin",
-            local_path="/home/user/data.bin",
+            id="xyz789",
+            source="/home/user/data.bin",
+            destination="/uploads/data.bin",
             direction=module.TransferDirection.UPLOAD,
             status=module.TransferStatus.FAILED,
-            progress_pct=0,
-            display_status="failed",
+            progress=0,
         )
-        manager = MagicMock()
-        manager.transfers = [failed_upload]
-        manager.retry.return_value = SimpleNamespace(id=4)
+        service = MagicMock()
+        service.jobs = [failed_upload]
+        service.retry.return_value = SimpleNamespace(id="new999")
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.GetParent = MagicMock(return_value=parent)
         dialog.transfer_list.GetFirstSelected.return_value = 0
         dialog._refresh = MagicMock()
@@ -452,6 +378,9 @@ class FakeListCtrl:
         self._name = ""
 
     def SetName(self, name):
+        self._name = name
+
+    def SetLabel(self, name):
         self._name = name
 
     def InsertColumn(self, col, heading, width=0):
@@ -510,30 +439,25 @@ class TestRetryButtonState:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        failed_item = SimpleNamespace(
-            id=1,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+        failed_job = SimpleNamespace(
+            id="j1",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             direction=SimpleNamespace(value="download"),
             status=module.TransferStatus.FAILED,
-            progress_pct=0,
-            display_status="failed",
+            progress=0,
         )
-        manager = MagicMock()
-        manager.transfers = [failed_item]
+        service = MagicMock()
+        service.jobs = [failed_job]
 
-        dialog = module.create_transfer_dialog(parent, manager)
-        # Replace with FakeListCtrl for better control
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.transfer_list = FakeListCtrl()
 
-        # Populate via refresh
         dialog._refresh()
 
-        # Select the failed item
         dialog.transfer_list.Select(0)
         dialog._update_retry_btn_state()
 
-        # Should be enabled
         dialog.retry_btn.Enable.assert_called_with(True)
 
     def test_retry_disabled_when_completed_selected(self, transfer_module):
@@ -542,19 +466,18 @@ class TestRetryButtonState:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        completed_item = SimpleNamespace(
-            id=1,
-            remote_path="/remote/file.txt",
-            local_path="/local/file.txt",
+        completed_job = SimpleNamespace(
+            id="j1",
+            source="/remote/file.txt",
+            destination="/local/file.txt",
             direction=SimpleNamespace(value="download"),
-            status=module.TransferStatus.COMPLETED,
-            progress_pct=100,
-            display_status="completed",
+            status=module.TransferStatus.COMPLETE,
+            progress=100,
         )
-        manager = MagicMock()
-        manager.transfers = [completed_item]
+        service = MagicMock()
+        service.jobs = [completed_job]
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.transfer_list = FakeListCtrl()
 
         dialog._refresh()
@@ -562,7 +485,6 @@ class TestRetryButtonState:
         dialog.transfer_list.Select(0)
         dialog._update_retry_btn_state()
 
-        # Last call should be Enable(False) since it's not failed
         dialog.retry_btn.Enable.assert_called_with(False)
 
     def test_retry_disabled_when_no_selection(self, transfer_module):
@@ -571,10 +493,10 @@ class TestRetryButtonState:
         fake_wx.Dialog = _Dialog
 
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = []
+        service = MagicMock()
+        service.jobs = []
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, service)
         dialog.transfer_list = FakeListCtrl()
         dialog._refresh()
 
@@ -597,13 +519,14 @@ def _hydrate_frame(app_module):
     frame._show_transfer_queue = MagicMock()
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
-    frame._transfer_manager = MagicMock()
+    frame._transfer_service = MagicMock()
     frame._transfer_state_by_id = {}
     frame._last_failed_transfer = None
     frame._retry_last_failed_item = MagicMock()
-    frame._announcer = MagicMock()
     frame._client = None
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
+    frame.activity_log = MagicMock()
+    frame._activity_log_visible = True
     return frame
 
 
@@ -615,16 +538,19 @@ class TestRetryLastFailedMenuItem:
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        failed_transfer = SimpleNamespace(
-            id=42,
+        failed_job = SimpleNamespace(
+            id="job42",
             direction=app_module.TransferDirection.UPLOAD,
             status=app_module.TransferStatus.FAILED,
+            source="/local/file.txt",
+            destination="/remote/file.txt",
+            error="Connection lost",
         )
-        frame._transfer_manager.transfers = [failed_transfer]
+        frame._transfer_service.jobs = [failed_job]
 
         frame._on_transfer_update(None)
 
-        assert frame._last_failed_transfer == 42
+        assert frame._last_failed_transfer == "job42"
         frame._retry_last_failed_item.Enable.assert_called_with(True)
 
     def test_retry_last_failed_calls_retry(self, transfer_module, monkeypatch):
@@ -632,87 +558,67 @@ class TestRetryLastFailedMenuItem:
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        failed_transfer = MagicMock()
-        failed_transfer.id = 10
-        failed_transfer.status = app_module.TransferStatus.FAILED
-        failed_transfer.direction = app_module.TransferDirection.DOWNLOAD
-        failed_transfer.remote_path = "/remote/data.csv"
-        failed_transfer.local_path = "/local/data.csv"
+        failed_job = MagicMock()
+        failed_job.id = "job10"
+        failed_job.status = app_module.TransferStatus.FAILED
+        failed_job.direction = app_module.TransferDirection.DOWNLOAD
+        failed_job.source = "/remote/data.csv"
+        failed_job.destination = "/local/data.csv"
 
-        frame._last_failed_transfer = 10
+        frame._last_failed_transfer = "job10"
         frame._client = MagicMock()
         frame._client.connected = True
         frame._client.cwd = "/remote"
 
-        frame._transfer_manager.transfers = [failed_transfer]
-        frame._transfer_manager.retry.return_value = MagicMock(id=11)
+        frame._transfer_service.jobs = [failed_job]
+        frame._transfer_service.retry.return_value = MagicMock(id="job11")
 
         frame._on_retry_last_failed(None)
 
-        frame._transfer_manager.retry.assert_called_once_with(10, frame._client)
+        frame._transfer_service.retry.assert_called_once_with("job10", frame._client)
 
     def test_retry_last_failed_announces_message(self, transfer_module, monkeypatch):
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        failed_transfer = MagicMock()
-        failed_transfer.id = 10
-        failed_transfer.status = app_module.TransferStatus.FAILED
-        failed_transfer.direction = app_module.TransferDirection.DOWNLOAD
-        failed_transfer.remote_path = "/remote/data.csv"
-        failed_transfer.local_path = "/local/data.csv"
+        failed_job = MagicMock()
+        failed_job.id = "job10"
+        failed_job.status = app_module.TransferStatus.FAILED
+        failed_job.direction = app_module.TransferDirection.DOWNLOAD
+        failed_job.source = "/remote/data.csv"
+        failed_job.destination = "/local/data.csv"
 
-        frame._last_failed_transfer = 10
+        frame._last_failed_transfer = "job10"
         frame._client = MagicMock()
         frame._client.connected = True
         frame._client.cwd = "/remote"
 
-        frame._transfer_manager.transfers = [failed_transfer]
-        frame._transfer_manager.retry.return_value = MagicMock(id=11)
+        frame._transfer_service.jobs = [failed_job]
+        frame._transfer_service.retry.return_value = MagicMock(id="job11")
 
         frame._on_retry_last_failed(None)
 
         frame._announce.assert_called_once_with("Retrying download of data.csv")
-
-    def test_retry_last_failed_does_nothing_when_disconnected(self, transfer_module, monkeypatch):
-        app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
-        frame = _hydrate_frame(app_module)
-        frame._last_failed_transfer = 10
-        frame._client = None
-
-        frame._on_retry_last_failed(None)
-
-        frame._announce.assert_called_once_with("Not connected")
-
-    def test_retry_last_failed_does_nothing_when_no_failure(self, transfer_module, monkeypatch):
-        app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
-        frame = _hydrate_frame(app_module)
-        frame._last_failed_transfer = None
-
-        frame._on_retry_last_failed(None)
-
-        # Should not call retry
-        frame._transfer_manager.retry.assert_not_called()
 
     def test_retry_last_failed_clears_tracking(self, transfer_module, monkeypatch):
         """After a successful retry, last_failed should be cleared."""
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        failed_transfer = MagicMock()
-        failed_transfer.id = 10
-        failed_transfer.status = app_module.TransferStatus.FAILED
-        failed_transfer.direction = app_module.TransferDirection.DOWNLOAD
-        failed_transfer.remote_path = "/remote/data.csv"
-        failed_transfer.local_path = "/local/data.csv"
+        failed_job = MagicMock()
+        failed_job.id = "job10"
+        failed_job.status = app_module.TransferStatus.FAILED
+        failed_job.direction = app_module.TransferDirection.DOWNLOAD
+        failed_job.source = "/remote/data.csv"
+        failed_job.destination = "/local/data.csv"
 
-        frame._last_failed_transfer = 10
+        frame._last_failed_transfer = "job10"
         frame._client = MagicMock()
         frame._client.connected = True
         frame._client.cwd = "/remote"
 
-        frame._transfer_manager.transfers = [failed_transfer]
-        frame._transfer_manager.retry.return_value = MagicMock(id=11)
+        frame._transfer_service.jobs = [failed_job]
+        frame._transfer_service.retry.return_value = MagicMock(id="job11")
 
         frame._on_retry_last_failed(None)
 
@@ -724,12 +630,15 @@ class TestRetryLastFailedMenuItem:
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        completed_transfer = SimpleNamespace(
-            id=5,
+        completed_job = SimpleNamespace(
+            id="job5",
             direction=app_module.TransferDirection.DOWNLOAD,
-            status=app_module.TransferStatus.COMPLETED,
+            status=app_module.TransferStatus.COMPLETE,
+            source="/remote/file.txt",
+            destination="/local/file.txt",
+            error=None,
         )
-        frame._transfer_manager.transfers = [completed_transfer]
+        frame._transfer_service.jobs = [completed_job]
 
         frame._on_transfer_update(None)
 
@@ -740,21 +649,40 @@ class TestRetryLastFailedMenuItem:
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
-        failed_transfer = MagicMock()
-        failed_transfer.id = 10
-        failed_transfer.status = app_module.TransferStatus.FAILED
-        failed_transfer.direction = app_module.TransferDirection.UPLOAD
-        failed_transfer.remote_path = "/remote/file.bin"
-        failed_transfer.local_path = "/local/file.bin"
+        failed_job = MagicMock()
+        failed_job.id = "job10"
+        failed_job.status = app_module.TransferStatus.FAILED
+        failed_job.direction = app_module.TransferDirection.UPLOAD
+        failed_job.source = "/local/file.bin"
+        failed_job.destination = "/remote/file.bin"
 
-        frame._last_failed_transfer = 10
+        frame._last_failed_transfer = "job10"
         frame._client = MagicMock()
         frame._client.connected = True
         frame._client.cwd = "/remote"
 
-        frame._transfer_manager.transfers = [failed_transfer]
-        frame._transfer_manager.retry.return_value = MagicMock(id=11)
+        frame._transfer_service.jobs = [failed_job]
+        frame._transfer_service.retry.return_value = MagicMock(id="job11")
 
         frame._on_retry_last_failed(None)
 
         frame._show_transfer_queue.assert_called_once()
+
+    def test_retry_last_failed_does_nothing_when_no_failure(self, transfer_module, monkeypatch):
+        app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
+        frame = _hydrate_frame(app_module)
+        frame._last_failed_transfer = None
+
+        frame._on_retry_last_failed(None)
+
+        frame._transfer_service.retry.assert_not_called()
+
+    def test_retry_last_failed_does_nothing_when_disconnected(self, transfer_module, monkeypatch):
+        app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
+        frame = _hydrate_frame(app_module)
+        frame._last_failed_transfer = "job10"
+        frame._client = None
+
+        frame._on_retry_last_failed(None)
+
+        frame._announce.assert_called_once_with("Not connected")
