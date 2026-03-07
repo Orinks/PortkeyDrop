@@ -331,8 +331,7 @@ class MainFrame(wx.Frame):
         self.file_list = self.remote_file_list
 
         # Activity log panel
-        self._log_box = wx.StaticBox(self, label="Activity Log")
-        self._log_sizer = wx.StaticBoxSizer(self._log_box, wx.VERTICAL)
+        self._log_sizer = wx.BoxSizer(wx.VERTICAL)
         self.activity_log = wx.TextCtrl(
             self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL
         )
@@ -752,14 +751,12 @@ class MainFrame(wx.Frame):
     def _on_toggle_activity_log(self, event: wx.CommandEvent) -> None:
         if self._activity_log_visible:
             self.GetSizer().Detach(self._log_sizer)
-            self._log_box.Hide()
             self.activity_log.Hide()
             self._activity_log_visible = False
             self._toggle_log_item.SetItemLabel("Show &Activity Log")
             self._announce("Activity log hidden")
         else:
             self.GetSizer().Add(self._log_sizer, 0, wx.EXPAND | wx.ALL, 5)
-            self._log_box.Show()
             self.activity_log.Show()
             self._activity_log_visible = True
             self._toggle_log_item.SetItemLabel("Hide &Activity Log")
