@@ -1507,9 +1507,7 @@ class MainFrame(wx.Frame):
             return
         new_job = self._transfer_service.retry(original.id, self._client)
         if new_job is not None:
-            filename = PurePosixPath(original.source).name or os.path.basename(
-                original.destination
-            )
+            filename = PurePosixPath(original.source).name or os.path.basename(original.destination)
             direction_label = original.direction.value
             msg = f"Retrying {direction_label} of {filename}"
             self._announce(msg)

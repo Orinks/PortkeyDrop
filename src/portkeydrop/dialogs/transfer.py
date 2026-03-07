@@ -239,7 +239,6 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                         announce("Cannot remove an active transfer. Cancel it first.")
                 self._refresh()
 
-
         def _refresh(self):
             jobs = self._service.jobs
             selected = self.transfer_list.GetFirstSelected()
