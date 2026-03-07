@@ -252,6 +252,8 @@ def _make_transfer_dialog_wx(fake_wx):
 
 class TestTransferDialogLogCallback:
     def test_on_cancel_calls_log_callback(self, transfer_module):
+        """Cancel logging is handled by the main window via _on_transfer_update,
+        not by the dialog's log_callback. Verify cancel is called and callback is NOT used."""
         module, fake_wx = transfer_module
         _make_transfer_dialog_wx(fake_wx)
 
@@ -277,10 +279,10 @@ class TestTransferDialogLogCallback:
 
         dialog._on_cancel(None)
 
-        callback.assert_called_once()
-        msg = callback.call_args.args[0]
-        assert "cancelled" in msg.lower()
-        assert "report.csv" in msg
+        # Cancel is delegated to the service
+        svc.cancel.assert_called_once_with("job1")
+        # log_callback is NOT called from _on_cancel — main window handles logging
+        callback.assert_not_called()
 
     def test_on_cancel_safe_when_log_callback_none(self, transfer_module):
         module, fake_wx = transfer_module

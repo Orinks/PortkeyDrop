@@ -7,8 +7,10 @@ a running transfer.  All transfer logic lives in
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Re-export service types so existing imports keep working
@@ -24,6 +26,37 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def save_queue(service: TransferService, config_dir: Path) -> None:
+    """Save pending and failed jobs to queue.json. Passwords are never persisted."""
+    persistable = [
+        j
+        for j in service.jobs
+        if j.status in (TransferStatus.PENDING, TransferStatus.FAILED, TransferStatus.RESTORED)
+    ]
+    queue_path = config_dir / "queue.json"
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        data = [j.to_dict() for j in persistable]
+        queue_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        logger.exception("Failed to save transfer queue to %s", queue_path)
+
+
+def load_queue(config_dir: Path) -> list[TransferJob]:
+    """Load transfer queue from queue.json. Returns empty list on error or missing file."""
+    queue_path = config_dir / "queue.json"
+    if not queue_path.exists():
+        return []
+    try:
+        data = json.loads(queue_path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        return [TransferJob.from_dict(entry) for entry in data if isinstance(entry, dict)]
+    except Exception:
+        logger.exception("Failed to load transfer queue from %s", queue_path)
+        return []
 
 
 def create_transfer_dialog(parent, transfer_service: TransferService, log_callback=None):
@@ -61,6 +94,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
 
             self.transfer_list = wx.ListCtrl(self, style=wx.LC_REPORT)
             self.transfer_list.SetName("Transfer Queue")
+            self.transfer_list.SetLabel("Transfer Queue")
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
@@ -70,10 +104,13 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
             self.cancel_btn = wx.Button(self, label="Cancel &Transfer")
             self.cancel_btn.SetName("Cancel Transfer")
+            self.remove_btn = wx.Button(self, label="&Remove")
+            self.remove_btn.SetName("Remove Transfer")
             self.bg_btn = wx.Button(self, label="Send to &Background")
             self.bg_btn.SetName("Send to Background")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
             btn_sizer.Add(self.cancel_btn, 0, wx.RIGHT, 8)
+            btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.bg_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.close_btn, 0)
             sizer.Add(btn_sizer, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
@@ -81,6 +118,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.SetSizer(sizer)
 
             self.cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
+            self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
             self.bg_btn.Bind(wx.EVT_BUTTON, self._on_send_to_background)
             self.close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
 
@@ -121,13 +159,6 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                 status_message = (
                     f"Cancelled transfer: {filename}" if filename else "Cancelled transfer."
                 )
-                if self.log_callback:
-                    direction = job.direction.value
-                    self.log_callback(
-                        f"{direction.capitalize()} cancelled: {filename}"
-                        if filename
-                        else f"{direction.capitalize()} cancelled"
-                    )
                 announce = getattr(parent, "_announce", None) if parent else None
                 if callable(announce):
                     announce(status_message)
@@ -140,6 +171,21 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                         if isinstance(cwd, str):
                             current_path = cwd
                     update_status(status_message, current_path)
+                self._refresh()
+
+        def _on_remove(self, event):
+            idx = self.transfer_list.GetFirstSelected()
+            if idx == wx.NOT_FOUND:
+                return
+            jobs = self._service.jobs
+            if 0 <= idx < len(jobs):
+                job = jobs[idx]
+                removed = self._service.remove_job(job.id)
+                if not removed:
+                    parent = self.GetParent()
+                    announce = getattr(parent, "_announce", None) if parent else None
+                    if callable(announce):
+                        announce("Cannot remove an active transfer. Cancel it first.")
                 self._refresh()
 
         def _get_selected_job_id(self):
