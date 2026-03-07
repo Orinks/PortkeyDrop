@@ -106,7 +106,13 @@ class MainFrame(wx.Frame):
         self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
         self.version = __version__
-        self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
+        # Prefer _build_meta (baked in by PyInstaller CI build), fall back to env var
+        try:
+            from portkeydrop._build_meta import BUILD_TAG as _baked_build_tag  # type: ignore[import]
+
+            self.build_tag = _baked_build_tag or os.environ.get("PORTKEYDROP_BUILD_TAG")
+        except ImportError:
+            self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
         self._transfer_service = TransferService(notify_window=self)
