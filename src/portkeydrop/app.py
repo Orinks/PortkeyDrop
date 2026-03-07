@@ -1045,6 +1045,9 @@ class MainFrame(wx.Frame):
             self._on_rename(None)
         elif key == ord("V") and event.ControlDown():
             self._paste_upload()
+        elif key == wx.WXK_TAB and not event.ShiftDown() and self._activity_log_visible:
+            self.activity_log.SetFocus()
+            self._announce("Activity Log pane")
         else:
             event.Skip()
 
@@ -1058,6 +1061,9 @@ class MainFrame(wx.Frame):
             self._on_rename(None)
         elif key == ord("V") and event.ControlDown():
             self._paste_local()
+        elif key == wx.WXK_TAB and event.ShiftDown() and self._activity_log_visible:
+            self.activity_log.SetFocus()
+            self._announce("Activity Log pane")
         else:
             event.Skip()
 
