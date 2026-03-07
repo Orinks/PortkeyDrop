@@ -324,7 +324,7 @@ class MainFrame(wx.Frame):
         # local_panel / remote_panel — required for MoveAfterInTabOrder.
         self.activity_log = wx.TextCtrl(
             pane_container,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
         )
         self.activity_log.SetCanFocus(True)
         self.activity_log.SetName("Activity Log")
