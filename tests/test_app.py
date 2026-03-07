@@ -118,6 +118,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
     frame.remote_path_bar = MagicMock(Bind=MagicMock())
+    frame.activity_log = MagicMock(Bind=MagicMock())
 
     with patch.object(app, "get_transfer_event_binder", return_value=object()):
         frame._bind_events()

@@ -129,6 +129,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.WXK_DELETE = 514
     fake_wx.WXK_F2 = 515
     fake_wx.WXK_F6 = 516
+    fake_wx.WXK_TAB = 9
     fake_wx.ACCEL_NORMAL = 1
     fake_wx.ACCEL_CTRL = 2
     fake_wx.ID_OK = 100

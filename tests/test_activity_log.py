@@ -565,3 +565,45 @@ class TestDirectPaneFocus:
 
         frame.activity_log.SetFocus.assert_not_called()
         frame._announce.assert_called_with("Activity log is hidden")
+
+
+class TestActivityLogTabNavigation:
+    """Tab/Shift+Tab should escape the activity log focus trap."""
+
+    @staticmethod
+    def _make_key_event(fake_wx, key_code, shift=False):
+        event = MagicMock()
+        event.GetKeyCode.return_value = key_code
+        event.ShiftDown.return_value = shift
+        return event
+
+    def test_tab_moves_focus_to_local_files(self, app_module):
+        app, fake_wx = app_module
+        frame = _make_frame_with_log(app_module)
+        event = self._make_key_event(fake_wx, fake_wx.WXK_TAB, shift=False)
+
+        frame._on_activity_log_key(event)
+
+        frame.local_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Local Files pane")
+
+    def test_shift_tab_moves_focus_to_remote_files(self, app_module):
+        app, fake_wx = app_module
+        frame = _make_frame_with_log(app_module)
+        event = self._make_key_event(fake_wx, fake_wx.WXK_TAB, shift=True)
+
+        frame._on_activity_log_key(event)
+
+        frame.remote_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Remote Files pane")
+
+    def test_other_keys_are_skipped(self, app_module):
+        app, fake_wx = app_module
+        frame = _make_frame_with_log(app_module)
+        event = self._make_key_event(fake_wx, ord("A"))
+
+        frame._on_activity_log_key(event)
+
+        frame.local_file_list.SetFocus.assert_not_called()
+        frame.remote_file_list.SetFocus.assert_not_called()
+        event.Skip.assert_called_once()

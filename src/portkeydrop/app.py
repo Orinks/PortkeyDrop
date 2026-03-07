@@ -446,6 +446,9 @@ class MainFrame(wx.Frame):
         self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
         self.local_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_local_context_menu)
 
+        # Activity log key navigation (prevent Tab focus trap)
+        self.activity_log.Bind(wx.EVT_KEY_DOWN, self._on_activity_log_key)
+
         # Path bar enter
         self.local_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_local_path_enter)
         self.remote_path_bar.Bind(wx.EVT_TEXT_ENTER, self._on_remote_path_enter)
@@ -1058,6 +1061,18 @@ class MainFrame(wx.Frame):
             self._on_rename(None)
         elif key == ord("V") and event.ControlDown():
             self._paste_local()
+        else:
+            event.Skip()
+
+    def _on_activity_log_key(self, event: wx.KeyEvent) -> None:
+        key = event.GetKeyCode()
+        if key == wx.WXK_TAB:
+            if event.ShiftDown():
+                self.remote_file_list.SetFocus()
+                self._announce("Remote Files pane")
+            else:
+                self.local_file_list.SetFocus()
+                self._announce("Local Files pane")
         else:
             event.Skip()
 
