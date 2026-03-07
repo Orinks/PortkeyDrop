@@ -94,6 +94,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
 
             self.transfer_list = wx.ListCtrl(self, style=wx.LC_REPORT)
             self.transfer_list.SetName("Transfer Queue")
+            self.transfer_list.SetLabel("Transfer Queue")
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
