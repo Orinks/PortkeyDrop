@@ -33,9 +33,10 @@ def _hydrate_frame(app_module):
     frame._show_transfer_queue = MagicMock()
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
-    frame._transfer_manager = MagicMock()
+    frame._transfer_service = MagicMock()
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     frame.activity_log = MagicMock()
+    frame._activity_log_visible = True
     return frame
 
 
@@ -62,15 +63,16 @@ class TestTransferLogEvents:
         app, _ = app_module
         frame = _hydrate_frame(app_module)
         frame._client = MagicMock(connected=True, cwd="/remote")
-        transfer = SimpleNamespace(
-            id=1,
+        job = SimpleNamespace(
+            id="j1",
             direction=app.TransferDirection.DOWNLOAD,
-            status=app.TransferStatus.COMPLETED,
-            local_path="/tmp/report.csv",
-            remote_path="/remote/report.csv",
-            error="",
+            status=app.TransferStatus.COMPLETE,
+            source="/remote/report.csv",
+            destination="/tmp/report.csv",
+            error=None,
+            progress=100,
         )
-        frame._transfer_manager.transfers = [transfer]
+        frame._transfer_service.jobs = [job]
         frame._transfer_state_by_id = {}
 
         frame._on_transfer_update(None)
@@ -83,15 +85,16 @@ class TestTransferLogEvents:
         app, _ = app_module
         frame = _hydrate_frame(app_module)
         frame._client = MagicMock(connected=True, cwd="/remote")
-        transfer = SimpleNamespace(
-            id=1,
+        job = SimpleNamespace(
+            id="j2",
             direction=app.TransferDirection.UPLOAD,
             status=app.TransferStatus.FAILED,
-            local_path="/tmp/data.zip",
-            remote_path="/remote/data.zip",
+            source="/tmp/data.zip",
+            destination="/remote/data.zip",
             error="Permission denied",
+            progress=0,
         )
-        frame._transfer_manager.transfers = [transfer]
+        frame._transfer_service.jobs = [job]
         frame._transfer_state_by_id = {}
 
         frame._on_transfer_update(None)
@@ -105,15 +108,16 @@ class TestTransferLogEvents:
         app, _ = app_module
         frame = _hydrate_frame(app_module)
         frame._client = MagicMock(connected=True, cwd="/remote")
-        transfer = SimpleNamespace(
-            id=1,
+        job = SimpleNamespace(
+            id="j3",
             direction=app.TransferDirection.DOWNLOAD,
             status=app.TransferStatus.CANCELLED,
-            local_path="/tmp/file.txt",
-            remote_path="/remote/file.txt",
-            error="",
+            source="/remote/file.txt",
+            destination="/tmp/file.txt",
+            error=None,
+            progress=0,
         )
-        frame._transfer_manager.transfers = [transfer]
+        frame._transfer_service.jobs = [job]
         frame._transfer_state_by_id = {}
 
         frame._on_transfer_update(None)
@@ -126,15 +130,16 @@ class TestTransferLogEvents:
         app, _ = app_module
         frame = _hydrate_frame(app_module)
         frame._client = MagicMock(connected=True, cwd="/remote")
-        transfer = SimpleNamespace(
-            id=1,
+        job = SimpleNamespace(
+            id="j4",
             direction=app.TransferDirection.UPLOAD,
             status=app.TransferStatus.IN_PROGRESS,
-            local_path="/tmp/file.txt",
-            remote_path="/remote/file.txt",
-            error="",
+            source="/tmp/file.txt",
+            destination="/remote/file.txt",
+            error=None,
+            progress=50,
         )
-        frame._transfer_manager.transfers = [transfer]
+        frame._transfer_service.jobs = [job]
         frame._transfer_state_by_id = {}
 
         frame._on_transfer_update(None)
@@ -252,19 +257,20 @@ class TestTransferDialogLogCallback:
 
         callback = MagicMock()
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = [
+        svc = MagicMock()
+        svc.jobs = [
             SimpleNamespace(
-                id=1,
-                remote_path="/remote/report.csv",
-                local_path="/tmp/report.csv",
+                id="job1",
+                source="/remote/report.csv",
+                destination="/tmp/report.csv",
                 direction=SimpleNamespace(value="download"),
-                progress_pct=0,
-                display_status="queued",
+                status=SimpleNamespace(value="pending"),
+                progress=0,
+                error=None,
             )
         ]
 
-        dialog = module.create_transfer_dialog(parent, manager, log_callback=callback)
+        dialog = module.create_transfer_dialog(parent, svc, log_callback=callback)
         dialog.GetParent = MagicMock(return_value=parent)
         dialog.transfer_list.GetFirstSelected.return_value = 0
         dialog._refresh = MagicMock()
@@ -281,19 +287,20 @@ class TestTransferDialogLogCallback:
         _make_transfer_dialog_wx(fake_wx)
 
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = [
+        svc = MagicMock()
+        svc.jobs = [
             SimpleNamespace(
-                id=1,
-                remote_path="/remote/report.csv",
-                local_path="/tmp/report.csv",
+                id="job1",
+                source="/remote/report.csv",
+                destination="/tmp/report.csv",
                 direction=SimpleNamespace(value="download"),
-                progress_pct=0,
-                display_status="queued",
+                status=SimpleNamespace(value="pending"),
+                progress=0,
+                error=None,
             )
         ]
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, svc)
         dialog.GetParent = MagicMock(return_value=parent)
         dialog.transfer_list.GetFirstSelected.return_value = 0
         dialog._refresh = MagicMock()
@@ -301,17 +308,17 @@ class TestTransferDialogLogCallback:
         # Should not raise
         dialog._on_cancel(None)
 
-        manager.cancel.assert_called_once_with(1)
+        svc.cancel.assert_called_once_with("job1")
 
     def test_log_callback_none_by_default(self, transfer_module):
         module, fake_wx = transfer_module
         _make_transfer_dialog_wx(fake_wx)
 
         parent = MagicMock()
-        manager = MagicMock()
-        manager.transfers = []
+        svc = MagicMock()
+        svc.jobs = []
 
-        dialog = module.create_transfer_dialog(parent, manager)
+        dialog = module.create_transfer_dialog(parent, svc)
         assert dialog.log_callback is None
 
 
@@ -365,7 +372,7 @@ class TestShowTransferQueue:
         app, _ = app_module
         frame = object.__new__(app.MainFrame)
         frame._announce = MagicMock()
-        frame._transfer_manager = MagicMock()
+        frame._transfer_service = MagicMock()
         frame.activity_log = MagicMock()
         frame.log_event = MagicMock()
         return frame, app

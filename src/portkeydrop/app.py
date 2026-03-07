@@ -1487,10 +1487,7 @@ class MainFrame(wx.Frame):
 
             self._transfer_state_by_id[job.id] = current_state
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
-            filename = (
-                os.path.basename(job.destination)
-                or PurePosixPath(job.source).name
-            )
+            filename = os.path.basename(job.destination) or PurePosixPath(job.source).name
 
             if job.status == TransferStatus.IN_PROGRESS:
                 latest_status_message = f"{direction_label} in progress..."
