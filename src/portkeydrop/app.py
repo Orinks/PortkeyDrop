@@ -320,35 +320,35 @@ class MainFrame(wx.Frame):
         self.remote_panel = remote_panel
         remote_panel.SetSizer(remote_sizer)
 
-        # Activity log lives inside pane_container so it is a sibling of
-        # local_panel / remote_panel — required for MoveAfterInTabOrder.
+        # --- Activity log pane (right column, sibling of local/remote) ---
+        activity_panel = wx.Panel(pane_container)
+        activity_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self._activity_log_label = wx.StaticText(activity_panel, label="Activity Log:")
+        activity_sizer.Add(self._activity_log_label, 0, wx.LEFT | wx.TOP, 4)
+
         self.activity_log = wx.TextCtrl(
-            pane_container,
-            style=wx.TE_MULTILINE | wx.TE_READONLY,
+            activity_panel,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2,
         )
-        self.activity_log.SetCanFocus(True)
-        self.activity_log.SetName("Activity Log")
         self.activity_log.SetMinSize((-1, 150))
+        activity_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 2)
+        activity_panel.SetSizer(activity_sizer)
+        self._activity_panel = activity_panel
         self._activity_log_visible = True
 
-        # Side-by-side layout with activity log below
+        # Three-column layout: local | remote | activity — natural tab order.
         h_sizer = wx.BoxSizer(wx.HORIZONTAL)
         h_sizer.Add(local_panel, 1, wx.EXPAND | wx.ALL, 2)
         h_sizer.Add(remote_panel, 1, wx.EXPAND | wx.ALL, 2)
+        h_sizer.Add(activity_panel, 1, wx.EXPAND | wx.ALL, 2)
 
-        v_sizer = wx.BoxSizer(wx.VERTICAL)
-        v_sizer.Add(h_sizer, 1, wx.EXPAND)
-        v_sizer.Add(self.activity_log, 0, wx.EXPAND | wx.ALL, 5)
-        pane_container.SetSizer(v_sizer)
+        pane_container.SetSizer(h_sizer)
 
         self._pane_container = pane_container
 
         # For backward compat: file_list points to remote
         self.file_list = self.remote_file_list
-
-        # Place activity log right after the remote panel in the tab chain
-        # (they are now siblings inside pane_container).
-        self.activity_log.MoveAfterInTabOrder(self.remote_panel)
 
         # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -758,20 +758,17 @@ class MainFrame(wx.Frame):
                 self._announce("Local Files pane")
 
     def _on_toggle_activity_log(self, event: wx.CommandEvent) -> None:
-        sizer = self._pane_container.GetSizer()
         if self._activity_log_visible:
-            sizer.Detach(self.activity_log)
-            self.activity_log.Hide()
+            self._activity_panel.Hide()
             self._activity_log_visible = False
             self._toggle_log_item.SetItemLabel("Show &Activity Log")
             self._announce("Activity log hidden")
         else:
-            sizer.Add(self.activity_log, 0, wx.EXPAND | wx.ALL, 5)
-            self.activity_log.Show()
+            self._activity_panel.Show()
             self._activity_log_visible = True
             self._toggle_log_item.SetItemLabel("Hide &Activity Log")
             self._announce("Activity log shown")
-        sizer.Layout()
+        self._pane_container.GetSizer().Layout()
         self.GetSizer().Layout()
 
     def _on_focus_local_pane(self, event: wx.CommandEvent) -> None:

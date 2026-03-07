@@ -338,6 +338,8 @@ class TestBuildDualPaneActivityLog:
         assert hasattr(frame, "activity_log")
         # A StaticText label should exist above the TextCtrl
         assert hasattr(frame, "_activity_log_label")
+        # A dedicated panel wraps both — third column in the h_sizer
+        assert hasattr(frame, "_activity_panel")
         frame.activity_log.SetMinSize.assert_called_once()
 
     def test_activity_log_label_created(self, app_module):
@@ -432,6 +434,7 @@ def _make_frame_with_log(app_module):
     frame.remote_file_list = MagicMock()
     frame.activity_log = MagicMock()
     frame._activity_log_label = MagicMock()
+    frame._activity_panel = MagicMock()
     frame._activity_log_visible = True
     frame._toggle_log_item = MagicMock()
     frame._pane_container = MagicMock()
@@ -510,8 +513,7 @@ class TestToggleActivityLog:
         frame._on_toggle_activity_log(None)
 
         assert frame._activity_log_visible is False
-        frame._activity_log_label.Hide.assert_called_once()
-        frame.activity_log.Hide.assert_called_once()
+        frame._activity_panel.Hide.assert_called_once()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Show &Activity Log")
         frame._announce.assert_called_with("Activity log hidden")
 
@@ -522,8 +524,7 @@ class TestToggleActivityLog:
         frame._on_toggle_activity_log(None)
 
         assert frame._activity_log_visible is True
-        frame._activity_log_label.Show.assert_called_once()
-        frame.activity_log.Show.assert_called_once()
+        frame._activity_panel.Show.assert_called_once()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Hide &Activity Log")
         frame._announce.assert_called_with("Activity log shown")
 
