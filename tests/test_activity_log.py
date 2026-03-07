@@ -46,9 +46,9 @@ class TestLogEvent:
 
         frame.log_event("Connected to example.com via sftp")
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
-        assert re.match(r"\[\d{2}:\d{2}:\d{2}\] Connected to example.com via sftp\n", entry)
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
+        assert re.match(r"\[\d{2}:\d{2}:\d{2}\] Connected to example.com via sftp$", entry)
 
     def test_calls_announce(self, app_module):
         frame = _hydrate_frame(app_module)
@@ -77,8 +77,8 @@ class TestTransferLogEvents:
 
         frame._on_transfer_update(None)
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Download complete: report.csv" in entry
 
     def test_log_event_on_transfer_error(self, app_module):
@@ -99,8 +99,8 @@ class TestTransferLogEvents:
 
         frame._on_transfer_update(None)
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Upload failed: data.zip" in entry
         assert "Permission denied" in entry
 
@@ -122,8 +122,8 @@ class TestTransferLogEvents:
 
         frame._on_transfer_update(None)
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Download cancelled: file.txt" in entry
 
     def test_no_log_event_on_in_progress(self, app_module):
@@ -144,7 +144,7 @@ class TestTransferLogEvents:
 
         frame._on_transfer_update(None)
 
-        frame.activity_log.AppendText.assert_not_called()
+        frame.activity_log.Append.assert_not_called()
 
 
 class TestConnectDisconnectLogEvents:
@@ -165,8 +165,8 @@ class TestConnectDisconnectLogEvents:
 
         frame._on_connect_success(client)
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Connected to example.com via sftp" in entry
 
     def test_connect_failure_logs_event(self, app_module):
@@ -175,8 +175,8 @@ class TestConnectDisconnectLogEvents:
 
         frame._on_connect_failure(Exception("timeout"))
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Connection failed" in entry
         assert "timeout" in entry
 
@@ -193,8 +193,8 @@ class TestConnectDisconnectLogEvents:
 
         frame._on_disconnect(None)
 
-        frame.activity_log.AppendText.assert_called_once()
-        entry = frame.activity_log.AppendText.call_args[0][0]
+        frame.activity_log.Append.assert_called_once()
+        entry = frame.activity_log.Append.call_args[0][0]
         assert "Disconnected from server" in entry
 
     def test_disconnect_no_log_when_not_connected(self, app_module):
@@ -210,7 +210,7 @@ class TestConnectDisconnectLogEvents:
 
         frame._on_disconnect(None)
 
-        frame.activity_log.AppendText.assert_not_called()
+        frame.activity_log.Append.assert_not_called()
 
 
 def _make_transfer_dialog_wx(fake_wx):
