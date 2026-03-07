@@ -316,7 +316,7 @@ class TestTransferDialogLogCallback:
 
 
 class TestBuildDualPaneActivityLog:
-    """Cover the activity log panel creation in _build_dual_pane (lines 324-337)."""
+    """Cover the activity log panel creation in _build_dual_pane."""
 
     def test_activity_log_widget_created(self, app_module):
         app, fake_wx = app_module
@@ -332,6 +332,16 @@ class TestBuildDualPaneActivityLog:
         # SetName should have been called on the widget
         frame.activity_log.SetName.assert_called_with("Activity Log")
         frame.activity_log.SetMinSize.assert_called_once()
+
+    def test_activity_log_visible_by_default(self, app_module):
+        app, fake_wx = app_module
+        frame = object.__new__(app.MainFrame)
+        frame._local_cwd = "/tmp"
+        frame._toolbar_panel = MagicMock()
+
+        frame._build_dual_pane()
+
+        assert frame._activity_log_visible is True
 
     def test_main_sizer_includes_log_panel(self, app_module):
         app, fake_wx = app_module
@@ -394,3 +404,120 @@ class TestShowTransferQueue:
 
         assert frame._transfer_dlg is mock_dialog
         mock_dialog.Show.assert_called_once()
+
+
+def _make_frame_with_log(app_module):
+    """Create a MainFrame with activity log toggle support."""
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._announce = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame.remote_file_list = MagicMock()
+    frame.activity_log = MagicMock()
+    frame._activity_log_visible = True
+    frame._log_box = MagicMock()
+    frame._log_sizer = MagicMock()
+    frame._toggle_log_item = MagicMock()
+    frame.GetSizer = MagicMock(return_value=MagicMock())
+    return frame
+
+
+class TestF6PaneCycling:
+    """F6 cycles focus: local -> remote -> activity log -> local (when visible)."""
+
+    def test_local_to_remote(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame.FindFocus = MagicMock(return_value=frame.local_file_list)
+
+        frame._on_switch_pane_focus(None)
+
+        frame.remote_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Remote Files pane")
+
+    def test_remote_to_activity_log(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame.FindFocus = MagicMock(return_value=frame.remote_file_list)
+
+        frame._on_switch_pane_focus(None)
+
+        frame.activity_log.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Activity Log pane")
+
+    def test_activity_log_to_local(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame.FindFocus = MagicMock(return_value=frame.activity_log)
+
+        frame._on_switch_pane_focus(None)
+
+        frame.local_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Local Files pane")
+
+    def test_local_to_remote_when_log_hidden(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame._activity_log_visible = False
+        frame.FindFocus = MagicMock(return_value=frame.local_file_list)
+
+        frame._on_switch_pane_focus(None)
+
+        frame.remote_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Remote Files pane")
+
+    def test_remote_to_local_when_log_hidden(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame._activity_log_visible = False
+        frame.FindFocus = MagicMock(return_value=frame.remote_file_list)
+
+        frame._on_switch_pane_focus(None)
+
+        frame.local_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Local Files pane")
+
+    def test_unknown_focus_to_local_when_log_hidden(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame._activity_log_visible = False
+        frame.FindFocus = MagicMock(return_value=MagicMock())
+
+        frame._on_switch_pane_focus(None)
+
+        frame.local_file_list.SetFocus.assert_called_once()
+        frame._announce.assert_called_with("Local Files pane")
+
+
+class TestToggleActivityLog:
+    """View > Hide/Show Activity Log toggles panel visibility."""
+
+    def test_hide_activity_log(self, app_module):
+        frame = _make_frame_with_log(app_module)
+
+        frame._on_toggle_activity_log(None)
+
+        assert frame._activity_log_visible is False
+        frame._log_box.Hide.assert_called_once()
+        frame.activity_log.Hide.assert_called_once()
+        frame.GetSizer().Detach.assert_called_once_with(frame._log_sizer)
+        frame.GetSizer().Layout.assert_called()
+        frame._toggle_log_item.SetItemLabel.assert_called_with("Show &Activity Log")
+        frame._announce.assert_called_with("Activity log hidden")
+
+    def test_show_activity_log(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        frame._activity_log_visible = False
+
+        frame._on_toggle_activity_log(None)
+
+        assert frame._activity_log_visible is True
+        frame._log_box.Show.assert_called_once()
+        frame.activity_log.Show.assert_called_once()
+        frame.GetSizer().Layout.assert_called()
+        frame._toggle_log_item.SetItemLabel.assert_called_with("Hide &Activity Log")
+        frame._announce.assert_called_with("Activity log shown")
+
+    def test_toggle_round_trip(self, app_module):
+        frame = _make_frame_with_log(app_module)
+        assert frame._activity_log_visible is True
+
+        frame._on_toggle_activity_log(None)
+        assert frame._activity_log_visible is False
+
+        frame._on_toggle_activity_log(None)
+        assert frame._activity_log_visible is True

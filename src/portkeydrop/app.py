@@ -87,6 +87,7 @@ ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
+ID_TOGGLE_ACTIVITY_LOG = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -161,6 +162,12 @@ class MainFrame(wx.Frame):
         view_menu.AppendSubMenu(sort_menu, "&Sort By")
         view_menu.AppendSeparator()
         view_menu.Append(ID_FILTER, "&Filter...\tCtrl+F", "Filter file list")
+        view_menu.AppendSeparator()
+        self._toggle_log_item = view_menu.Append(
+            ID_TOGGLE_ACTIVITY_LOG,
+            "Hide &Activity Log",
+            "Toggle activity log panel visibility",
+        )
         menubar.Append(view_menu, "&View")
 
         # Transfer menu
@@ -321,20 +328,21 @@ class MainFrame(wx.Frame):
         self.file_list = self.remote_file_list
 
         # Activity log panel
-        log_box = wx.StaticBox(self, label="Activity Log")
-        log_sizer = wx.StaticBoxSizer(log_box, wx.VERTICAL)
+        self._log_box = wx.StaticBox(self, label="Activity Log")
+        self._log_sizer = wx.StaticBoxSizer(self._log_box, wx.VERTICAL)
         self.activity_log = wx.TextCtrl(
             self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL
         )
         self.activity_log.SetName("Activity Log")
         self.activity_log.SetMinSize((-1, 150))
-        log_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 5)
+        self._log_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 5)
+        self._activity_log_visible = True
 
         # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         main_sizer.Add(self._toolbar_panel, 0, wx.EXPAND)
         main_sizer.Add(pane_container, 1, wx.EXPAND | wx.ALL, 5)
-        main_sizer.Add(log_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        main_sizer.Add(self._log_sizer, 0, wx.EXPAND | wx.ALL, 5)
         self.SetSizer(main_sizer)
 
     def _build_status_bar(self) -> None:
@@ -410,6 +418,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_import_connections, id=ID_IMPORT_CONNECTIONS)
         self.Bind(wx.EVT_MENU, self._on_switch_pane_focus, id=ID_SWITCH_PANE_FOCUS)
         self.Bind(wx.EVT_MENU, self._on_focus_address_bar, id=ID_FOCUS_ADDRESS_BAR)
+        self.Bind(wx.EVT_MENU, self._on_toggle_activity_log, id=ID_TOGGLE_ACTIVITY_LOG)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
@@ -706,12 +715,40 @@ class MainFrame(wx.Frame):
 
     def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
         focused = self.FindFocus()
-        if focused is self.local_file_list:
-            self.remote_file_list.SetFocus()
-            self._announce("Remote Files pane")
-            return
-        self.local_file_list.SetFocus()
-        self._announce("Local Files pane")
+        if self._activity_log_visible:
+            if focused is self.local_file_list:
+                self.remote_file_list.SetFocus()
+                self._announce("Remote Files pane")
+            elif focused is self.remote_file_list:
+                self.activity_log.SetFocus()
+                self._announce("Activity Log pane")
+            else:
+                self.local_file_list.SetFocus()
+                self._announce("Local Files pane")
+        else:
+            if focused is self.local_file_list:
+                self.remote_file_list.SetFocus()
+                self._announce("Remote Files pane")
+            else:
+                self.local_file_list.SetFocus()
+                self._announce("Local Files pane")
+
+    def _on_toggle_activity_log(self, event: wx.CommandEvent) -> None:
+        if self._activity_log_visible:
+            self.GetSizer().Detach(self._log_sizer)
+            self._log_box.Hide()
+            self.activity_log.Hide()
+            self._activity_log_visible = False
+            self._toggle_log_item.SetItemLabel("Show &Activity Log")
+            self._announce("Activity log hidden")
+        else:
+            self.GetSizer().Add(self._log_sizer, 0, wx.EXPAND | wx.ALL, 5)
+            self._log_box.Show()
+            self.activity_log.Show()
+            self._activity_log_visible = True
+            self._toggle_log_item.SetItemLabel("Hide &Activity Log")
+            self._announce("Activity log shown")
+        self.GetSizer().Layout()
 
     def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
         self.tb_host.SetFocus()

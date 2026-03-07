@@ -76,6 +76,7 @@ def _hydrate_frame(module):
     frame._transfer_service = MagicMock()
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     frame.activity_log = MagicMock()
+    frame._activity_log_visible = True
     return frame
 
 
@@ -144,7 +145,7 @@ def test_switch_pane_focus_local_to_remote_announces(app_module):
     frame._announce.assert_called_once_with("Remote Files pane")
 
 
-def test_switch_pane_focus_remote_to_local_announces(app_module):
+def test_switch_pane_focus_remote_to_activity_log_announces(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.local_file_list = MagicMock(SetFocus=MagicMock())
@@ -153,8 +154,8 @@ def test_switch_pane_focus_remote_to_local_announces(app_module):
 
     frame._on_switch_pane_focus(None)
 
-    frame.local_file_list.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Local Files pane")
+    frame.activity_log.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Activity Log pane")
 
 
 def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
