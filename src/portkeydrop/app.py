@@ -273,7 +273,7 @@ class MainFrame(wx.Frame):
         self.tb_protocol.Bind(wx.EVT_CHOICE, self._on_toolbar_protocol_change)
 
     def _build_dual_pane(self) -> None:
-        pane_container = wx.Panel(self)
+        pane_container = wx.Panel(self, style=wx.TAB_TRAVERSAL)
 
         # --- Local pane (left) ---
         local_panel = wx.Panel(pane_container)
@@ -340,6 +340,10 @@ class MainFrame(wx.Frame):
         self.activity_log.SetMinSize((-1, 150))
         self._log_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 5)
         self._activity_log_visible = True
+
+        # Place activity log right after the remote file list in the tab chain
+        # so Tab naturally reaches it from inside pane_container.
+        self.activity_log.MoveAfterInTabOrder(self.remote_file_list)
 
         # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -446,7 +450,7 @@ class MainFrame(wx.Frame):
         self.local_file_list.Bind(wx.EVT_KEY_DOWN, self._on_local_file_list_key)
         self.local_file_list.Bind(wx.EVT_CONTEXT_MENU, self._on_local_context_menu)
 
-        # Activity log key navigation (prevent Tab focus trap)
+        # Activity log Shift+Tab to go back to remote file list
         self.activity_log.Bind(wx.EVT_KEY_DOWN, self._on_activity_log_key)
 
         # Path bar enter
@@ -1046,9 +1050,6 @@ class MainFrame(wx.Frame):
             self._on_rename(None)
         elif key == ord("V") and event.ControlDown():
             self._paste_upload()
-        elif key == wx.WXK_TAB and not event.ShiftDown() and self._activity_log_visible:
-            self.activity_log.SetFocus()
-            self._announce("Activity Log pane")
         else:
             event.Skip()
 
@@ -1062,21 +1063,14 @@ class MainFrame(wx.Frame):
             self._on_rename(None)
         elif key == ord("V") and event.ControlDown():
             self._paste_local()
-        elif key == wx.WXK_TAB and event.ShiftDown() and self._activity_log_visible:
-            self.activity_log.SetFocus()
-            self._announce("Activity Log pane")
         else:
             event.Skip()
 
     def _on_activity_log_key(self, event: wx.KeyEvent) -> None:
         key = event.GetKeyCode()
-        if key == wx.WXK_TAB:
-            if event.ShiftDown():
-                self.remote_file_list.SetFocus()
-                self._announce("Remote Files pane")
-            else:
-                self.local_file_list.SetFocus()
-                self._announce("Local Files pane")
+        if key == wx.WXK_TAB and event.ShiftDown():
+            self.remote_file_list.SetFocus()
+            self._announce("Remote Files pane")
         else:
             event.Skip()
 

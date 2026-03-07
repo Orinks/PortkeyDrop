@@ -124,6 +124,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.TE_READONLY = 2048
     fake_wx.TE_RICH2 = 4096
     fake_wx.HSCROLL = 8192
+    fake_wx.TAB_TRAVERSAL = 0x0080
     fake_wx.TOP = 16384
     fake_wx.WXK_BACK = 513
     fake_wx.WXK_DELETE = 514
