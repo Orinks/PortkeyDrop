@@ -289,7 +289,9 @@ class MainFrame(wx.Frame):
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetName("Local")
+        self.local_file_list.SetName("Local Files")
+        if hasattr(local_label, "SetLabelFor"):
+            local_label.SetLabelFor(self.local_file_list)
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
@@ -310,7 +312,9 @@ class MainFrame(wx.Frame):
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetName("Remote")
+        self.remote_file_list.SetName("Remote Files")
+        if hasattr(remote_label, "SetLabelFor"):
+            remote_label.SetLabelFor(self.remote_file_list)
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
@@ -329,6 +333,8 @@ class MainFrame(wx.Frame):
 
         self.activity_log = wx.ListBox(activity_panel, style=wx.LB_SINGLE)
         self.activity_log.SetName("Activity Log")
+        if hasattr(self._activity_log_label, "SetLabelFor"):
+            self._activity_log_label.SetLabelFor(self.activity_log)
         self.activity_log.SetMinSize((-1, 150))
         activity_sizer.Add(self.activity_log, 1, wx.EXPAND | wx.ALL, 2)
         activity_panel.SetSizer(activity_sizer)
