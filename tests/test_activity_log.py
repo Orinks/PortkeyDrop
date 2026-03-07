@@ -432,8 +432,9 @@ def _make_frame_with_log(app_module):
     frame.remote_file_list = MagicMock()
     frame.activity_log = MagicMock()
     frame._activity_log_visible = True
-    frame._log_sizer = MagicMock()
     frame._toggle_log_item = MagicMock()
+    frame._pane_container = MagicMock()
+    frame._pane_container.GetSizer = MagicMock(return_value=MagicMock())
     frame.GetSizer = MagicMock(return_value=MagicMock())
     return frame
 
@@ -509,8 +510,8 @@ class TestToggleActivityLog:
 
         assert frame._activity_log_visible is False
         frame.activity_log.Hide.assert_called_once()
-        frame.GetSizer().Detach.assert_called_once_with(frame._log_sizer)
-        frame.GetSizer().Layout.assert_called()
+        frame._pane_container.GetSizer().Detach.assert_called_once_with(frame.activity_log)
+        frame._pane_container.GetSizer().Layout.assert_called()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Show &Activity Log")
         frame._announce.assert_called_with("Activity log hidden")
 
@@ -522,7 +523,7 @@ class TestToggleActivityLog:
 
         assert frame._activity_log_visible is True
         frame.activity_log.Show.assert_called_once()
-        frame.GetSizer().Layout.assert_called()
+        frame._pane_container.GetSizer().Layout.assert_called()
         frame._toggle_log_item.SetItemLabel.assert_called_with("Hide &Activity Log")
         frame._announce.assert_called_with("Activity log shown")
 
