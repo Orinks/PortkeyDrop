@@ -45,12 +45,18 @@ def save_queue(service: TransferService, config_dir: Path) -> None:
 
 
 def load_queue(config_dir: Path) -> list[TransferJob]:
-    """Load transfer queue from queue.json. Returns empty list on error or missing file."""
+    """Load transfer queue from queue.json and delete it. Returns empty list on error or missing file.
+
+    The file is deleted immediately after reading so that jobs cannot accumulate
+    across sessions. Jobs that are still pending at close time will be re-saved
+    by save_queue().
+    """
     queue_path = config_dir / "queue.json"
     if not queue_path.exists():
         return []
     try:
         data = json.loads(queue_path.read_text(encoding="utf-8"))
+        queue_path.unlink(missing_ok=True)
         if not isinstance(data, list):
             return []
         return [TransferJob.from_dict(entry) for entry in data if isinstance(entry, dict)]
