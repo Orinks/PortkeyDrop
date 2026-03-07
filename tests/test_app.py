@@ -133,7 +133,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
     assert (fake_wx.ACCEL_CTRL, ord("L"), app.ID_FOCUS_ADDRESS_BAR) in table_entries
 
 
-def test_switch_pane_focus_local_to_remote_announces(app_module):
+def test_switch_pane_focus_local_to_remote(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.local_file_list = MagicMock(SetFocus=MagicMock())
@@ -143,10 +143,10 @@ def test_switch_pane_focus_local_to_remote_announces(app_module):
     frame._on_switch_pane_focus(None)
 
     frame.remote_file_list.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Remote Files pane")
+    frame._announce.assert_not_called()
 
 
-def test_switch_pane_focus_remote_to_activity_log_announces(app_module):
+def test_switch_pane_focus_remote_to_activity_log(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.local_file_list = MagicMock(SetFocus=MagicMock())
@@ -156,7 +156,7 @@ def test_switch_pane_focus_remote_to_activity_log_announces(app_module):
     frame._on_switch_pane_focus(None)
 
     frame.activity_log.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Activity Log pane")
+    frame._announce.assert_not_called()
 
 
 def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
