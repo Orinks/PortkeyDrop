@@ -453,7 +453,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.remote_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Remote Files pane")
+        frame._announce.assert_not_called()
 
     def test_remote_to_activity_log(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -462,7 +462,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.activity_log.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Activity Log pane")
+        frame._announce.assert_not_called()
 
     def test_activity_log_to_local(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -471,7 +471,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.local_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Local Files pane")
+        frame._announce.assert_not_called()
 
     def test_local_to_remote_when_log_hidden(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -481,7 +481,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.remote_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Remote Files pane")
+        frame._announce.assert_not_called()
 
     def test_remote_to_local_when_log_hidden(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -491,7 +491,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.local_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Local Files pane")
+        frame._announce.assert_not_called()
 
     def test_unknown_focus_to_local_when_log_hidden(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -501,7 +501,7 @@ class TestF6PaneCycling:
         frame._on_switch_pane_focus(None)
 
         frame.local_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Local Files pane")
+        frame._announce.assert_not_called()
 
 
 class TestToggleActivityLog:
@@ -548,7 +548,7 @@ class TestDirectPaneFocus:
         frame._on_focus_local_pane(None)
 
         frame.local_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Local Files pane")
+        frame._announce.assert_not_called()
 
     def test_ctrl2_focuses_remote(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -556,7 +556,7 @@ class TestDirectPaneFocus:
         frame._on_focus_remote_pane(None)
 
         frame.remote_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Remote Files pane")
+        frame._announce.assert_not_called()
 
     def test_ctrl3_focuses_activity_log_when_visible(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -564,7 +564,7 @@ class TestDirectPaneFocus:
         frame._on_focus_activity_log_pane(None)
 
         frame.activity_log.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Activity Log pane")
+        frame._announce.assert_not_called()
 
     def test_ctrl3_announces_hidden_when_log_not_visible(self, app_module):
         frame = _make_frame_with_log(app_module)
@@ -574,45 +574,3 @@ class TestDirectPaneFocus:
 
         frame.activity_log.SetFocus.assert_not_called()
         frame._announce.assert_called_with("Activity log is hidden")
-
-
-class TestActivityLogTabNavigation:
-    """Shift+Tab should go back to remote file list; other keys pass through."""
-
-    @staticmethod
-    def _make_key_event(fake_wx, key_code, shift=False):
-        event = MagicMock()
-        event.GetKeyCode.return_value = key_code
-        event.ShiftDown.return_value = shift
-        return event
-
-    def test_tab_is_skipped(self, app_module):
-        app, fake_wx = app_module
-        frame = _make_frame_with_log(app_module)
-        event = self._make_key_event(fake_wx, fake_wx.WXK_TAB, shift=False)
-
-        frame._on_activity_log_key(event)
-
-        frame.local_file_list.SetFocus.assert_not_called()
-        event.Skip.assert_called_once()
-
-    def test_shift_tab_moves_focus_to_remote_files(self, app_module):
-        app, fake_wx = app_module
-        frame = _make_frame_with_log(app_module)
-        event = self._make_key_event(fake_wx, fake_wx.WXK_TAB, shift=True)
-
-        frame._on_activity_log_key(event)
-
-        frame.remote_file_list.SetFocus.assert_called_once()
-        frame._announce.assert_called_with("Remote Files pane")
-
-    def test_other_keys_are_skipped(self, app_module):
-        app, fake_wx = app_module
-        frame = _make_frame_with_log(app_module)
-        event = self._make_key_event(fake_wx, ord("A"))
-
-        frame._on_activity_log_key(event)
-
-        frame.local_file_list.SetFocus.assert_not_called()
-        frame.remote_file_list.SetFocus.assert_not_called()
-        event.Skip.assert_called_once()
