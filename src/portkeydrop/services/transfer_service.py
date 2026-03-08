@@ -88,15 +88,19 @@ class TransferJob:
 
 
 class TransferService:
-    """Owns the transfer queue and a single daemon worker thread."""
+    """Owns the transfer queue and a pool of daemon worker threads."""
 
-    def __init__(self, notify_window: Any | None = None) -> None:
+    def __init__(self, notify_window: Any | None = None, max_workers: int = 1) -> None:
         self._notify_window = notify_window
-        self._queue: queue.Queue[TransferJob] = queue.Queue()
+        self._queue: queue.Queue[TransferJob | None] = queue.Queue()
         self._jobs: list[TransferJob] = []
         self._lock = threading.Lock()
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
-        self._worker.start()
+        self._max_workers = max(1, max_workers)
+        self._workers: list[threading.Thread] = []
+        for _ in range(self._max_workers):
+            t = threading.Thread(target=self._worker_loop, daemon=True)
+            t.start()
+            self._workers.append(t)
 
     # ------------------------------------------------------------------
     # Public API
@@ -199,6 +203,27 @@ class TransferService:
                     break
         self._post_event()
 
+    def set_max_workers(self, n: int) -> None:
+        """Resize the worker pool to *n* threads.
+
+        Extra workers are drained via a ``None`` sentinel on the queue;
+        missing workers are spawned immediately.
+        """
+        n = max(1, n)
+        with self._lock:
+            # Prune threads that have already exited
+            self._workers = [t for t in self._workers if t.is_alive()]
+            current = len(self._workers)
+            if n > current:
+                for _ in range(n - current):
+                    t = threading.Thread(target=self._worker_loop, daemon=True)
+                    t.start()
+                    self._workers.append(t)
+            elif n < current:
+                for _ in range(current - n):
+                    self._queue.put(None)  # sentinel to stop one worker
+            self._max_workers = n
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -212,6 +237,8 @@ class TransferService:
     def _worker_loop(self) -> None:
         while True:
             job = self._queue.get()
+            if job is None:  # shutdown sentinel
+                break
             if job.cancel_event.is_set():
                 job.status = TransferStatus.CANCELLED
                 self._post_event()

@@ -35,7 +35,8 @@ def _build_frame(module, tmp_path):
         sort_by="name",
         sort_ascending=True,
     )
-    settings = SimpleNamespace(display=display)
+    transfer = SimpleNamespace(concurrent_transfers=2)
+    settings = SimpleNamespace(display=display, transfer=transfer)
     fake_manager = MagicMock(jobs=[])
     fake_site_manager = MagicMock()
 
@@ -85,7 +86,7 @@ def _hydrate_frame(module):
 def test_main_frame_init_sets_transfer_state(tmp_path, app_module):
     frame, _, transfer_service_cls = _build_frame(app_module, tmp_path)
     assert frame._transfer_state_by_id == {}
-    transfer_service_cls.assert_called_once_with(notify_window=frame)
+    transfer_service_cls.assert_called_once_with(notify_window=frame, max_workers=2)
 
 
 def test_bind_events_hooks_transfer_update(app_module):
@@ -1177,6 +1178,7 @@ def test_on_settings_reconfigures_update_menu_and_timer(app_module):
     frame._settings = SimpleNamespace(
         app=SimpleNamespace(update_channel="stable"),
         display=SimpleNamespace(show_hidden_files=True),
+        transfer=SimpleNamespace(concurrent_transfers=2),
     )
     frame._local_cwd = "/tmp"
     frame.remote_file_list = MagicMock()
@@ -1192,6 +1194,7 @@ def test_on_settings_reconfigures_update_menu_and_timer(app_module):
     updated_settings = SimpleNamespace(
         app=SimpleNamespace(update_channel="nightly"),
         display=SimpleNamespace(show_hidden_files=True),
+        transfer=SimpleNamespace(concurrent_transfers=4),
     )
     dialog = MagicMock(
         ShowModal=MagicMock(return_value=fake_wx.ID_OK),
@@ -1215,6 +1218,7 @@ def test_on_settings_passes_check_updates_callback(app_module):
     frame._settings = SimpleNamespace(
         app=SimpleNamespace(update_channel="stable"),
         display=SimpleNamespace(show_hidden_files=True),
+        transfer=SimpleNamespace(concurrent_transfers=2),
     )
     frame._local_cwd = "/tmp"
     frame.remote_file_list = MagicMock()
