@@ -77,6 +77,8 @@ def _hydrate_frame(module):
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     frame.activity_log = MagicMock()
     frame._activity_log_visible = True
+    frame._last_failed_transfer = None
+    frame._retry_last_failed_item = MagicMock()
     return frame
 
 

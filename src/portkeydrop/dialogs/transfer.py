@@ -102,6 +102,9 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             sizer.Add(self.transfer_list, 1, wx.EXPAND | wx.ALL, 8)
 
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+            self.retry_btn = wx.Button(self, label="&Retry Selected")
+            self.retry_btn.SetName("Retry Selected Transfer")
+            self.retry_btn.Enable(False)
             self.cancel_btn = wx.Button(self, label="Cancel &Transfer")
             self.cancel_btn.SetName("Cancel Transfer")
             self.remove_btn = wx.Button(self, label="&Remove")
@@ -109,6 +112,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.bg_btn = wx.Button(self, label="Send to &Background")
             self.bg_btn.SetName("Send to Background")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
+            btn_sizer.Add(self.retry_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.cancel_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.bg_btn, 0, wx.RIGHT, 8)
@@ -117,6 +121,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
 
             self.SetSizer(sizer)
 
+            self.retry_btn.Bind(wx.EVT_BUTTON, self._on_retry)
             self.cancel_btn.Bind(wx.EVT_BUTTON, self._on_cancel)
             self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
             self.bg_btn.Bind(wx.EVT_BUTTON, self._on_send_to_background)
@@ -144,6 +149,52 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.Hide()
 
         def _on_timer(self, event):
+            self._refresh()
+
+        def _get_selected_job_id(self):
+            """Return selected job id, if any."""
+            idx = self.transfer_list.GetFirstSelected()
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                return None
+            if idx == wx.NOT_FOUND:
+                return None
+            jobs = self._service.jobs
+            if 0 <= idx < len(jobs):
+                return jobs[idx].id
+            return None
+
+        def _on_retry(self, event):
+            idx = self.transfer_list.GetFirstSelected()
+            if idx == wx.NOT_FOUND:
+                return
+            jobs = self._service.jobs
+            if not (0 <= idx < len(jobs)):
+                return
+            job = jobs[idx]
+            if job.status != TransferStatus.FAILED:
+                return
+            parent = self.GetParent()
+            client = getattr(parent, "_client", None) if parent else None
+            if client is None or not bool(getattr(client, "connected", False)):
+                return
+            new_job = self._service.retry(job.id, client)
+            if new_job is not None:
+                filename = PurePosixPath(job.source).name or os.path.basename(job.destination)
+                direction_label = job.direction.value
+                status_message = f"Retrying {direction_label} of {filename}"
+                announce = getattr(parent, "_announce", None) if parent else None
+                if callable(announce):
+                    announce(status_message)
+                update_status = getattr(parent, "_update_status", None) if parent else None
+                if callable(update_status):
+                    current_path = ""
+                    if client is not None and bool(getattr(client, "connected", False)):
+                        cwd = getattr(client, "cwd", "")
+                        if isinstance(cwd, str):
+                            current_path = cwd
+                    update_status(status_message, current_path)
             self._refresh()
 
         def _on_cancel(self, event):
@@ -188,20 +239,6 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                         announce("Cannot remove an active transfer. Cancel it first.")
                 self._refresh()
 
-        def _get_selected_job_id(self):
-            """Return selected job id, if any."""
-            idx = self.transfer_list.GetFirstSelected()
-            try:
-                idx = int(idx)
-            except (TypeError, ValueError):
-                return None
-            if idx == wx.NOT_FOUND:
-                return None
-            jobs = self._service.jobs
-            if 0 <= idx < len(jobs):
-                return jobs[idx].id
-            return None
-
         def _refresh(self):
             jobs = self._service.jobs
             selected = self.transfer_list.GetFirstSelected()
@@ -241,5 +278,23 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                 self.transfer_list.Select(selected)
             if 0 <= focused < new_count:
                 self.transfer_list.Focus(focused)
+
+            # Enable retry button only when a failed transfer is selected
+            self._update_retry_btn_state()
+
+        def _update_retry_btn_state(self):
+            """Enable retry button only when a failed transfer is selected."""
+            idx = self.transfer_list.GetFirstSelected()
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                idx = -1
+            jobs = self._service.jobs
+            enable = False
+            if 0 <= idx < len(jobs):
+                status = getattr(jobs[idx], "status", None)
+                if status == TransferStatus.FAILED:
+                    enable = True
+            self.retry_btn.Enable(enable)
 
     return TransferDialog(parent, transfer_service, log_cb=log_callback)
