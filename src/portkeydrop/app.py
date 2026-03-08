@@ -244,38 +244,38 @@ class MainFrame(wx.Frame):
             if hasattr(lbl, "SetLabelFor"):
                 lbl.SetLabelFor(ctrl)
 
-        protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol")
+        protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol:")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
-        self.tb_protocol.SetName("Protocol")
+        self.tb_protocol.SetName("Protocol:")
         _bind_label(protocol_lbl, self.tb_protocol)
         sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        host_lbl = wx.StaticText(toolbar_panel, label="&Host")
+        host_lbl = wx.StaticText(toolbar_panel, label="&Host:")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
-        self.tb_host.SetName("Host")
+        self.tb_host.SetName("Host:")
         _bind_label(host_lbl, self.tb_host)
         sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        port_lbl = wx.StaticText(toolbar_panel, label="P&ort")
+        port_lbl = wx.StaticText(toolbar_panel, label="P&ort:")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
-        self.tb_port.SetName("Port")
+        self.tb_port.SetName("Port:")
         _bind_label(port_lbl, self.tb_port)
         sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        username_lbl = wx.StaticText(toolbar_panel, label="&Username")
+        username_lbl = wx.StaticText(toolbar_panel, label="&Username:")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
-        self.tb_username.SetName("Username")
+        self.tb_username.SetName("Username:")
         _bind_label(username_lbl, self.tb_username)
         sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
-        password_lbl = wx.StaticText(toolbar_panel, label="Pass&word")
+        password_lbl = wx.StaticText(toolbar_panel, label="Pass&word:")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
-        self.tb_password.SetName("Password")
+        self.tb_password.SetName("Password:")
         _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -297,7 +297,7 @@ class MainFrame(wx.Frame):
         local_panel = wx.Panel(pane_container)
         local_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        local_label = wx.StaticText(local_panel, label="Local Files")
+        local_label = wx.StaticText(local_panel, label="Local:")
         local_sizer.Add(local_label, 0, wx.LEFT | wx.TOP, 4)
 
         self.local_path_bar = wx.TextCtrl(
@@ -307,7 +307,7 @@ class MainFrame(wx.Frame):
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetLabel("Local Files")
+        self.local_file_list.SetLabel("Local:")
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
@@ -320,7 +320,7 @@ class MainFrame(wx.Frame):
         remote_panel = wx.Panel(pane_container)
         remote_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        remote_label = wx.StaticText(remote_panel, label="Remote Files")
+        remote_label = wx.StaticText(remote_panel, label="Remote:")
         remote_sizer.Add(remote_label, 0, wx.LEFT | wx.TOP, 4)
 
         self.remote_path_bar = wx.TextCtrl(remote_panel, value="/", style=wx.TE_PROCESS_ENTER)
@@ -328,7 +328,7 @@ class MainFrame(wx.Frame):
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetLabel("Remote Files")
+        self.remote_file_list.SetLabel("Remote:")
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
