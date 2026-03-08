@@ -24,7 +24,8 @@ def transfer_module(monkeypatch):
 class TestTransferManagerRetry:
     """Tests for TransferService.retry() method."""
 
-    def test_retry_failed_download_creates_new_item(self, transfer_module):
+    def test_retry_failed_download_resets_in_place(self, transfer_module):
+        """retry() resets the failed job in-place — same id, same list position."""
         module, _ = transfer_module
         svc = module.TransferService()
         item = module.TransferJob(
@@ -39,16 +40,20 @@ class TestTransferManagerRetry:
             svc._jobs.append(item)
 
         client = MagicMock()
-        new_job = svc.retry(item.id, client)
+        retried = svc.retry(item.id, client)
 
-        assert new_job is not None
-        assert new_job.id != item.id
-        assert new_job.direction == module.TransferDirection.DOWNLOAD
-        assert new_job.source == "/remote/file.txt"
-        assert new_job.destination == "/local/file.txt"
-        assert new_job.total_bytes == 1024
+        assert retried is not None
+        assert retried is item  # same object, not a clone
+        assert retried.id == item.id
+        assert retried.status == module.TransferStatus.PENDING
+        assert retried.error is None
+        assert retried.progress == 0
+        assert retried.transferred_bytes == 0
+        assert retried.direction == module.TransferDirection.DOWNLOAD
+        assert retried.source == "/remote/file.txt"
+        assert len(svc.jobs) == 1  # no duplicate added
 
-    def test_retry_failed_upload_creates_new_item(self, transfer_module):
+    def test_retry_failed_upload_resets_in_place(self, transfer_module):
         module, _ = transfer_module
         svc = module.TransferService()
         item = module.TransferJob(
@@ -63,13 +68,14 @@ class TestTransferManagerRetry:
             svc._jobs.append(item)
 
         client = MagicMock()
-        new_job = svc.retry(item.id, client)
+        retried = svc.retry(item.id, client)
 
-        assert new_job is not None
-        assert new_job.id != item.id
-        assert new_job.direction == module.TransferDirection.UPLOAD
-        assert new_job.source == "/local/file.txt"
-        assert new_job.destination == "/remote/file.txt"
+        assert retried is item
+        assert retried.status == module.TransferStatus.PENDING
+        assert retried.error is None
+        assert retried.direction == module.TransferDirection.UPLOAD
+        assert retried.source == "/local/file.txt"
+        assert len(svc.jobs) == 1
 
     def test_retry_non_failed_transfer_returns_none(self, transfer_module):
         module, _ = transfer_module
@@ -131,8 +137,8 @@ class TestTransferManagerRetry:
 
         assert result is None
 
-    def test_retry_preserves_original_transfer(self, transfer_module):
-        """Original failed job should remain in the list after retry."""
+    def test_retry_resets_job_in_place(self, transfer_module):
+        """Retry resets the existing job — no duplicate added to the list."""
         module, _ = transfer_module
         svc = module.TransferService()
         item = module.TransferJob(
@@ -150,12 +156,12 @@ class TestTransferManagerRetry:
         svc.retry(item.id, client)
 
         jobs = svc.jobs
-        assert len(jobs) == 2
-        original = next(j for j in jobs if j.id == item.id)
-        assert original.status == module.TransferStatus.FAILED
+        assert len(jobs) == 1
+        assert jobs[0].id == item.id
+        assert jobs[0].status == module.TransferStatus.PENDING
 
-    def test_retry_increments_id(self, transfer_module):
-        """Each retry should produce a unique new job ID."""
+    def test_retry_preserves_job_id(self, transfer_module):
+        """In-place retry keeps the same job ID (no clone)."""
         module, _ = transfer_module
         svc = module.TransferService()
         item = module.TransferJob(
@@ -164,17 +170,18 @@ class TestTransferManagerRetry:
             destination="/local/file.txt",
             status=module.TransferStatus.FAILED,
         )
+        original_id = item.id
         with svc._lock:
             svc._jobs.append(item)
 
         client = MagicMock()
-        new_job = svc.retry(item.id, client)
+        retried = svc.retry(item.id, client)
 
-        assert new_job is not None
-        assert new_job.id != item.id
+        assert retried is not None
+        assert retried.id == original_id
 
-    def test_retry_creates_fresh_transfer_item(self, transfer_module):
-        """Retried job should have reset progress fields."""
+    def test_retry_resets_progress_fields(self, transfer_module):
+        """Retried job has progress/error reset; source/dest/total preserved."""
         module, _ = transfer_module
         svc = module.TransferService()
         item = module.TransferJob(
@@ -190,16 +197,15 @@ class TestTransferManagerRetry:
             svc._jobs.append(item)
 
         client = MagicMock()
-        new_job = svc.retry(item.id, client)
+        retried = svc.retry(item.id, client)
 
-        assert new_job is not None
-        assert new_job.id != item.id
-        assert new_job.source == "/remote/file.txt"
-        assert new_job.destination == "/local/file.txt"
-        assert new_job.total_bytes == 1024
-        # Original item remains failed
-        assert item.status == module.TransferStatus.FAILED
-        assert item.error == "Network error"
+        assert retried is not None
+        assert retried.source == "/remote/file.txt"
+        assert retried.destination == "/local/file.txt"
+        assert retried.total_bytes == 1024
+        assert retried.transferred_bytes == 0
+        assert retried.error is None
+        assert retried.status == module.TransferStatus.PENDING
 
 
 # ---------------------------------------------------------------------------

@@ -170,32 +170,24 @@ class TransferService:
         return False
 
     def retry(self, job_id: str, client: TransferClient) -> TransferJob | None:
-        """Clone a failed job into a new pending job and re-enqueue it."""
-        original: TransferJob | None = None
+        """Reset a failed job in-place and re-enqueue it for execution.
+
+        The same job object is reused (same list position, same id) so the
+        queue dialog shows an update rather than a duplicate entry.
+        """
         with self._lock:
             for j in self._jobs:
                 if j.id == job_id and j.status == TransferStatus.FAILED:
-                    original = j
-                    break
-        if original is None:
-            return None
-
-        if original.direction == TransferDirection.DOWNLOAD:
-            return self.submit_download(
-                client,
-                original.source,
-                original.destination,
-                original.total_bytes,
-                recursive=original._recursive,
-            )
-        else:
-            return self.submit_upload(
-                client,
-                original.source,
-                original.destination,
-                original.total_bytes,
-                recursive=original._recursive,
-            )
+                    j.status = TransferStatus.PENDING
+                    j.error = None
+                    j.transferred_bytes = 0
+                    j.progress = 0
+                    j.cancel_event.clear()
+                    j._client = client
+                    self._queue.put(j)
+                    self._post_event()
+                    return j
+        return None
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
