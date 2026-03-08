@@ -90,7 +90,9 @@ class TestSubmitDownload:
     def test_enqueues_and_completes_download(self, tmp_path):
         dest = tmp_path / "file.bin"
         mock_client = MagicMock()
-        mock_client.download.side_effect = lambda src, fh, callback=None: fh.write(b"data")
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: fh.write(
+            b"data"
+        )
 
         svc = TransferService(notify_window=None)
         job = svc.submit_download(mock_client, "/remote/file.bin", str(dest), total_bytes=4)
@@ -105,7 +107,7 @@ class TestSubmitDownload:
         mock_client = MagicMock()
         progress_values = []
 
-        def fake_download(src, fh, callback=None):
+        def fake_download(src, fh, callback=None, offset=0):
             if callback:
                 callback(50, 100)
                 progress_values.append(("mid", fh))
@@ -174,7 +176,7 @@ class TestCancel:
         slow_client = MagicMock()
         barrier = threading.Event()
 
-        def slow_download(src, fh, callback=None):
+        def slow_download(src, fh, callback=None, offset=0):
             barrier.wait(timeout=5)
 
         slow_client.download.side_effect = slow_download
@@ -198,7 +200,7 @@ class TestCancel:
         mock_client = MagicMock()
         started = threading.Event()
 
-        def slow_download(src, fh, callback=None):
+        def slow_download(src, fh, callback=None, offset=0):
             started.set()
             if callback:
                 # Simulate slow transfer that checks cancellation
@@ -230,7 +232,7 @@ class TestCancel:
 class TestEventPosting:
     def test_post_event_called_on_status_change(self):
         mock_client = MagicMock()
-        mock_client.download.side_effect = lambda src, fh, callback=None: None
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: None
 
         notify = MagicMock()
         svc = TransferService(notify_window=notify)
@@ -244,7 +246,7 @@ class TestEventPosting:
 
     def test_no_crash_when_notify_window_is_none(self):
         mock_client = MagicMock()
-        mock_client.download.side_effect = lambda src, fh, callback=None: None
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: None
 
         svc = TransferService(notify_window=None)
         with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
@@ -268,7 +270,7 @@ class TestRecursiveDownload:
             RemoteFile(name="a.txt", path="/remote/dir/a.txt", size=10),
             RemoteFile(name="b.txt", path="/remote/dir/b.txt", size=20),
         ]
-        mock_client.download.side_effect = lambda src, fh, callback=None: None
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: None
 
         svc = TransferService(notify_window=None)
         with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
@@ -292,7 +294,7 @@ class TestRecursiveDownload:
         mock_client.stat.return_value = RemoteFile(
             name="link.txt", path="/remote/dir/link.txt", size=500
         )
-        mock_client.download.side_effect = lambda src, fh, callback=None: None
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: None
 
         svc = TransferService(notify_window=None)
         with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
@@ -381,7 +383,7 @@ class TestJobQueue:
         order = []
         mock_client = MagicMock()
 
-        def fake_download(src, fh, callback=None):
+        def fake_download(src, fh, callback=None, offset=0):
             order.append(PurePosixPath(src).name)
 
         mock_client.download.side_effect = fake_download
@@ -403,7 +405,7 @@ class TestJobQueue:
         svc = TransferService(notify_window=None)
         barrier = threading.Event()
         mock_client = MagicMock()
-        mock_client.download.side_effect = lambda src, fh, callback=None: barrier.wait(2)
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: barrier.wait(2)
 
         with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
             svc.submit_download(mock_client, "/r/a", "/tmp/a")
@@ -418,7 +420,7 @@ class TestJobQueue:
     def test_protocol_field_set_from_client(self):
         mock_client = MagicMock()
         mock_client._protocol_name = "sftp"
-        mock_client.download.side_effect = lambda src, fh, callback=None: None
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: None
 
         svc = TransferService(notify_window=None)
         with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):

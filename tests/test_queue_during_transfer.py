@@ -48,7 +48,7 @@ def _make_blocking_client(gate: threading.Event | None = None):
     """Return a mock TransferClient that blocks until *gate* is set."""
     client = MagicMock()
 
-    def _download(remote_path, fobj, callback=None):
+    def _download(remote_path, fobj, callback=None, offset=0):
         if gate:
             gate.wait(timeout=5)
         if callback:
@@ -88,7 +88,7 @@ class TestFIFOOrdering:
 
         client = MagicMock()
 
-        def _download(remote_path, fobj, callback=None):
+        def _download(remote_path, fobj, callback=None, offset=0):
             execution_order.append(int(remote_path.split("_")[1]))
             if callback:
                 callback(100, 100)
@@ -140,7 +140,7 @@ class TestFIFOOrdering:
 
         client = MagicMock()
 
-        def _download(remote_path, fobj, callback=None):
+        def _download(remote_path, fobj, callback=None, offset=0):
             nonlocal active_count_max
             with active_lock:
                 active[0] += 1
@@ -268,7 +268,7 @@ class TestCancelQueuedJob:
 
         client = MagicMock()
 
-        def _download(remote_path, fobj, callback=None):
+        def _download(remote_path, fobj, callback=None, offset=0):
             # Simulate ongoing transfer that responds to cancel via callback raising
             for i in range(100):
                 time.sleep(0.01)
@@ -527,7 +527,7 @@ class TestWorkerErrorHandling:
 
         client = MagicMock()
 
-        def _download(remote_path, fobj, callback=None):
+        def _download(remote_path, fobj, callback=None, offset=0):
             if "fail" in remote_path:
                 raise RuntimeError("Simulated failure")
             if callback:
@@ -551,9 +551,9 @@ class TestWorkerErrorHandling:
         download_calls = []
         original_download = client.download.side_effect
 
-        def _tracking_download(remote_path, fobj, callback=None):
+        def _tracking_download(remote_path, fobj, callback=None, offset=0):
             download_calls.append(remote_path)
-            return original_download(remote_path, fobj, callback)
+            return original_download(remote_path, fobj, callback, offset=offset)
 
         client.download.side_effect = _tracking_download
 

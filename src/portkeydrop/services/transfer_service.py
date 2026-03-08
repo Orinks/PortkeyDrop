@@ -56,6 +56,10 @@ class TransferJob:
     # Internal: client + recursive flag (not part of the public data model)
     _client: TransferClient | None = field(default=None, repr=False)
     _recursive: bool = field(default=False, repr=False)
+    # Snapshot of remote file mtime at download start — used to detect
+    # changes between a failed attempt and a resume so we can fall back
+    # to a full restart when the remote file has been modified.
+    _remote_mtime: float | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
         """Serialize to a dict for JSON persistence. Excludes client/event fields."""
@@ -180,8 +184,8 @@ class TransferService:
                 if j.id == job_id and j.status == TransferStatus.FAILED:
                     j.status = TransferStatus.PENDING
                     j.error = None
-                    j.transferred_bytes = 0
-                    j.progress = 0
+                    # Keep transferred_bytes so _run_download can attempt
+                    # a resume from offset instead of restarting.
                     j.cancel_event.clear()
                     j._client = client
                     self._queue.put(j)
@@ -244,18 +248,26 @@ class TransferService:
 
     def _run_download(self, job: TransferJob) -> None:
         assert job._client is not None
-        with open(job.destination, "wb") as f:
+        client = job._client
+
+        # Determine whether we can resume from a previous partial download.
+        offset = self._resolve_download_offset(job, client)
+
+        mode = "r+b" if offset > 0 else "wb"
+        with open(job.destination, mode) as f:
+            if offset > 0:
+                f.seek(offset)
 
             def _cb(transferred: int, total: int) -> None:
                 if job.cancel_event.is_set():
                     raise InterruptedError("Transfer cancelled")
-                job.transferred_bytes = transferred
+                job.transferred_bytes = offset + transferred
                 if total > 0:
                     job.total_bytes = total
                 self._update_progress(job)
                 self._post_event()
 
-            job._client.download(job.source, f, callback=_cb)
+            client.download(job.source, f, callback=_cb, offset=offset)
 
     def _run_upload(self, job: TransferJob) -> None:
         assert job._client is not None
@@ -346,6 +358,97 @@ class TransferService:
                     self._post_event()
 
                 client.upload(f, remote_file, callback=_cb)
+
+    # --- resume helpers ---
+
+    def _resolve_download_offset(self, job: TransferJob, client: TransferClient) -> int:
+        """Return the byte offset to resume from, or 0 for a full restart.
+
+        Resuming is only attempted when:
+        1. The job has recorded transferred_bytes > 0 from a previous attempt.
+        2. The partial local file exists and its size matches transferred_bytes.
+        3. The remote file size and mtime match the snapshot taken at the
+           start of the original transfer — if either changed the file was
+           modified on the server and we must restart to avoid corruption.
+        """
+        if job.transferred_bytes <= 0:
+            # First attempt or nothing was transferred — snapshot remote
+            # metadata for future resume checks and start from 0.
+            self._snapshot_remote_metadata(job, client)
+            return 0
+
+        # Check local partial file
+        try:
+            local_size = os.path.getsize(job.destination)
+        except OSError:
+            logger.info("Resume: partial file missing, restarting %s", job.id)
+            job.transferred_bytes = 0
+            job.progress = 0
+            self._snapshot_remote_metadata(job, client)
+            return 0
+
+        if local_size != job.transferred_bytes:
+            logger.info(
+                "Resume: local size %d != transferred_bytes %d, restarting %s",
+                local_size,
+                job.transferred_bytes,
+                job.id,
+            )
+            job.transferred_bytes = 0
+            job.progress = 0
+            self._snapshot_remote_metadata(job, client)
+            return 0
+
+        # Verify remote file has not changed
+        try:
+            remote_info = client.stat(job.source)
+        except Exception:
+            logger.info("Resume: cannot stat remote file, restarting %s", job.id)
+            job.transferred_bytes = 0
+            job.progress = 0
+            return 0
+
+        remote_size = remote_info.size
+        remote_mtime = remote_info.modified.timestamp() if remote_info.modified else None
+
+        if job.total_bytes > 0 and remote_size != job.total_bytes:
+            logger.info(
+                "Resume: remote size changed (%d -> %d), restarting %s",
+                job.total_bytes,
+                remote_size,
+                job.id,
+            )
+            job.transferred_bytes = 0
+            job.progress = 0
+            job._remote_mtime = remote_mtime
+            return 0
+
+        if (
+            job._remote_mtime is not None
+            and remote_mtime is not None
+            and remote_mtime != job._remote_mtime
+        ):
+            logger.info("Resume: remote mtime changed, restarting %s", job.id)
+            job.transferred_bytes = 0
+            job.progress = 0
+            job._remote_mtime = remote_mtime
+            return 0
+
+        # All checks passed — resume from offset
+        logger.info("Resume: resuming %s from byte %d", job.id, job.transferred_bytes)
+        return job.transferred_bytes
+
+    @staticmethod
+    def _snapshot_remote_metadata(job: TransferJob, client: TransferClient) -> None:
+        """Record remote file size/mtime on the job for later resume validation."""
+        try:
+            info = client.stat(job.source)
+            if info.modified:
+                job._remote_mtime = info.modified.timestamp()
+            if info.size > 0 and job.total_bytes == 0:
+                job.total_bytes = info.size
+        except Exception:
+            pass
 
     # --- helpers ---
 
