@@ -219,7 +219,6 @@ def test_paste_upload_shows_queue(tmp_path, app_module):
     frame._paste_upload()
 
     frame._transfer_service.submit_upload.assert_called_once()
-    frame._update_status.assert_called()
     frame._show_transfer_queue.assert_called_once()
 
 
@@ -441,6 +440,28 @@ def test_on_transfer_update_reports_latest_status(app_module):
     frame._on_transfer_update(None)
 
     frame._update_status.assert_called_once_with("Download complete.", "/remote")
+
+
+def test_on_transfer_update_pending_job_shows_queued_status(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame.activity_log = MagicMock()
+    pending_job = SimpleNamespace(
+        id="ccc",
+        direction=app.TransferDirection.DOWNLOAD,
+        status=app.TransferStatus.PENDING,
+        source="/remote/queued.txt",
+        destination="/local/queued.txt",
+        error=None,
+        progress=0,
+    )
+    frame._transfer_service.jobs = [pending_job]
+    frame._transfer_state_by_id = {}
+
+    frame._on_transfer_update(None)
+
+    frame._update_status.assert_called_once_with("Download queued.", "/remote")
 
 
 def test_on_transfer_update_refreshes_local_files_after_download_complete(app_module):

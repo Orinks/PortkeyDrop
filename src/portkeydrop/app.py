@@ -1302,9 +1302,8 @@ class MainFrame(wx.Frame):
                 self._transfer_service.submit_upload(self._client, str(p), remote_path, total)
             count += 1
         if count:
-            self._announce(f"Uploading {count} item{'s' if count != 1 else ''} from clipboard")
-            self._update_status(
-                f"Uploading {count} item{'s' if count != 1 else ''}...", self._client.cwd
+            self._announce(
+                f"Added {count} item{'s' if count != 1 else ''} to transfer queue from clipboard"
             )
             self._show_transfer_queue()
 
@@ -1534,7 +1533,9 @@ class MainFrame(wx.Frame):
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
             filename = os.path.basename(job.destination) or PurePosixPath(job.source).name
 
-            if job.status == TransferStatus.IN_PROGRESS:
+            if job.status == TransferStatus.PENDING:
+                latest_status_message = f"{direction_label} queued."
+            elif job.status == TransferStatus.IN_PROGRESS:
                 latest_status_message = f"{direction_label} in progress..."
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
