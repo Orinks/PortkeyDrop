@@ -662,11 +662,11 @@ def test_build_toolbar_adds_mnemonics_and_label_associations(app_module):
         app.MainFrame._build_toolbar(frame)
 
     assert [label.label for label in created_labels[:5]] == [
-        "&Protocol",
-        "&Host",
-        "P&ort",
-        "&Username",
-        "Pass&word",
+        "&Protocol:",
+        "&Host:",
+        "P&ort:",
+        "&Username:",
+        "Pass&word:",
     ]
     assert created_labels[0]._label_for is frame.tb_protocol
     assert created_labels[1]._label_for is frame.tb_host
