@@ -25,7 +25,7 @@ class TestCallbackTotalBytesGuard:
     def test_download_callback_preserves_total_bytes_when_zero_reported(self):
         mock_client = MagicMock()
 
-        def fake_download(remote_path, local_file, callback=None):
+        def fake_download(remote_path, local_file, callback=None, offset=0):
             if callback:
                 callback(500, 1000)
                 callback(600, 0)
@@ -65,7 +65,7 @@ class TestCallbackTotalBytesGuard:
     def test_download_callback_updates_total_bytes_when_positive(self):
         mock_client = MagicMock()
 
-        def fake_download(remote_path, local_file, callback=None):
+        def fake_download(remote_path, local_file, callback=None, offset=0):
             if callback:
                 callback(100, 2000)
 
@@ -94,7 +94,7 @@ class TestRecursiveDownloadRestat:
             name="symlink.txt", path="/remote/dir/symlink.txt", size=750
         )
 
-        def fake_download(remote_path, local_file, callback=None):
+        def fake_download(remote_path, local_file, callback=None, offset=0):
             if callback:
                 size = 500 if "normal" in remote_path else 750
                 callback(size, size)
@@ -121,7 +121,7 @@ class TestRecursiveDownloadRestat:
             RemoteFile(name="file2.txt", path="/remote/dir/file2.txt", size=200),
         ]
 
-        def fake_download(remote_path, local_file, callback=None):
+        def fake_download(remote_path, local_file, callback=None, offset=0):
             if callback:
                 size = 100 if "file1" in remote_path else 200
                 callback(size, size)
@@ -148,7 +148,7 @@ class TestRecursiveDownloadRestat:
         ]
         mock_client.stat.side_effect = OSError("No such file")
 
-        def fake_download(remote_path, local_file, callback=None):
+        def fake_download(remote_path, local_file, callback=None, offset=0):
             if callback:
                 callback(0, 0)
 
