@@ -179,9 +179,7 @@ def find_asset(assets: list[ReleaseAsset], kind: str) -> ReleaseAsset | None:
     return None
 
 
-def render_asset_links(
-    assets: list[ReleaseAsset], *, exclude_urls: set[str] | None = None
-) -> str:
+def render_asset_links(assets: list[ReleaseAsset], *, exclude_urls: set[str] | None = None) -> str:
     if not assets:
         return ""
 
@@ -293,7 +291,9 @@ def ordered_unique_assets(
     return unique_assets
 
 
-def render_download_actions(assets: list[ReleaseAsset], *, primary: ReleaseAsset | None = None) -> list[str]:
+def render_download_actions(
+    assets: list[ReleaseAsset], *, primary: ReleaseAsset | None = None
+) -> list[str]:
     return [
         f'<a href="{html.escape(asset.url, quote=True)}">Download {html.escape(asset.label)}</a>'
         for asset in ordered_unique_assets(assets, primary=primary)
@@ -335,16 +335,16 @@ def render_release_section(context: dict[str, Any]) -> str:
     primary = stable.primary_asset
     stable_buttons = []
     for i, asset in enumerate(ordered_unique_assets(stable.assets, primary=primary)):
-        button_class = '' if i == 0 else ' is-style-outline'
+        button_class = "" if i == 0 else " is-style-outline"
         stable_buttons.append(
             f'<div class="wp-block-button{button_class}">'
             f'<a class="wp-block-button__link wp-element-button" href="{html.escape(asset.url, quote=True)}">Download {html.escape(asset.label)}</a>'
-            '</div>'
+            "</div>"
         )
     stable_buttons.append(
         '<div class="wp-block-button is-style-outline">'
         f'<a class="wp-block-button__link wp-element-button" href="{html.escape(stable.html_url, quote=True)}">View release notes</a>'
-        '</div>'
+        "</div>"
     )
     return f"""
 {START_MARKER}
@@ -360,7 +360,7 @@ def render_release_section(context: dict[str, Any]) -> str:
   <div class="wp-block-group portkeydrop-release-stable">
     <h3>Stable ({html.escape(stable.tag_name.lstrip("v"))})</h3>
     <div class="wp-block-buttons">
-      {''.join(stable_buttons)}
+      {"".join(stable_buttons)}
     </div>
     <ul>
       <li><strong>Version:</strong> {html.escape(stable.tag_name.lstrip("v"))}</li>
