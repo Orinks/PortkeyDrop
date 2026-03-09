@@ -172,6 +172,13 @@ def build_release_context(
     }
 
 
+def find_asset(assets: list[ReleaseAsset], kind: str) -> ReleaseAsset | None:
+    for asset in assets:
+        if asset.kind == kind:
+            return asset
+    return None
+
+
 def render_asset_links(
     assets: list[ReleaseAsset], *, exclude_urls: set[str] | None = None
 ) -> str:
@@ -328,16 +335,16 @@ def render_release_section(context: dict[str, Any]) -> str:
     primary = stable.primary_asset
     stable_buttons = []
     for i, asset in enumerate(ordered_unique_assets(stable.assets, primary=primary)):
-        button_class = "" if i == 0 else " is-style-outline"
+        button_class = '' if i == 0 else ' is-style-outline'
         stable_buttons.append(
             f'<div class="wp-block-button{button_class}">'
             f'<a class="wp-block-button__link wp-element-button" href="{html.escape(asset.url, quote=True)}">Download {html.escape(asset.label)}</a>'
-            "</div>"
+            '</div>'
         )
     stable_buttons.append(
         '<div class="wp-block-button is-style-outline">'
         f'<a class="wp-block-button__link wp-element-button" href="{html.escape(stable.html_url, quote=True)}">View release notes</a>'
-        "</div>"
+        '</div>'
     )
     return f"""
 {START_MARKER}

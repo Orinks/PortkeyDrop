@@ -109,13 +109,13 @@ def test_replace_managed_section_appends_when_markers_missing():
 def test_build_release_context_includes_five_nightlies():
     module = load_module()
     stable_release = {
-        "tag_name": "v0.1.1",
+        "tag_name": "v0.4.3",
         "published_at": "2026-02-11T00:00:00Z",
         "html_url": "https://example.com/stable",
         "body": "## Stable changes\n\n- Added a thing",
         "assets": [
             {
-                "name": "PortkeyDrop-0.1.1-windows-setup.exe",
+                "name": "PortkeyDrop-0.4.3-windows-setup.exe",
                 "browser_download_url": "https://example.com/stable.exe",
                 "download_count": 12,
             }
@@ -143,7 +143,7 @@ def test_build_release_context_includes_five_nightlies():
 
     context = module.build_release_context(stable_release, nightlies)
 
-    assert context["stable"].tag_name == "v0.1.1"
+    assert context["stable"].tag_name == "v0.4.3"
     assert context["stable"].body == "## Stable changes\n\n- Added a thing"
     assert len(context["nightlies"]) == 5
     assert context["nightlies"][0].tag_name == "nightly-20260301"
@@ -193,18 +193,18 @@ def test_render_nightly_notes_summary_limits_list_items():
 def test_render_release_section_contains_stable_and_nightlies():
     module = load_module()
     stable_release = {
-        "tag_name": "v0.1.1",
+        "tag_name": "v0.4.3",
         "published_at": "2026-02-11T00:00:00Z",
         "html_url": "https://example.com/stable",
         "body": "## Highlights\n\n- Stable change one\n- Stable change two",
         "assets": [
             {
-                "name": "PortkeyDrop-0.1.1-windows-setup.exe",
+                "name": "PortkeyDrop-0.4.3-windows-setup.exe",
                 "browser_download_url": "https://example.com/stable.exe",
                 "download_count": 12,
             },
             {
-                "name": "PortkeyDrop-0.1.1-windows-portable.zip",
+                "name": "PortkeyDrop-0.4.3-windows-portable.zip",
                 "browser_download_url": "https://example.com/stable-portable.zip",
                 "download_count": 7,
             },
@@ -237,7 +237,7 @@ def test_render_release_section_contains_stable_and_nightlies():
         module.build_release_context(stable_release, nightlies)
     )
 
-    assert "Stable (0.1.1)" in html_block
+    assert "Stable (0.4.3)" in html_block
     assert "Latest Nightly Builds" in html_block
     assert "nightly-20260309" in html_block
     assert "What&apos;s new" in html_block
