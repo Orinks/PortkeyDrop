@@ -234,6 +234,9 @@ jobs:
     needs: release
     if: ${{ needs.release.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) }}
     uses: ./.github/workflows/push-releases.yml
+    with:
+      wp_page_id: ${{ vars.WP_PAGE_ID }}
     secrets:
-      WP_PUSH_TOKEN: ${{ secrets.WP_PUSH_TOKEN }}
+      WP_APPLICATION_PASSWORD: ${{ secrets.WP_APPLICATION_PASSWORD }}
       WP_SITE_URL: ${{ secrets.WP_SITE_URL }}
+      WP_USERNAME: ${{ secrets.WP_USERNAME }}
