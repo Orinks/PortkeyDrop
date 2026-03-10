@@ -69,10 +69,20 @@ class TestTransferJob:
 
 
 class TestTransferServiceInit:
-    def test_starts_daemon_worker_thread(self):
+    def test_starts_daemon_worker_threads(self):
         svc = TransferService(notify_window=None)
-        assert svc._worker.is_alive()
-        assert svc._worker.daemon is True
+        assert len(svc._workers) == 1
+        assert all(t.is_alive() for t in svc._workers)
+        assert all(t.daemon for t in svc._workers)
+
+    def test_starts_multiple_workers(self):
+        svc = TransferService(notify_window=None, max_workers=3)
+        assert len(svc._workers) == 3
+        assert all(t.is_alive() for t in svc._workers)
+
+    def test_max_workers_clamped_to_one(self):
+        svc = TransferService(notify_window=None, max_workers=0)
+        assert len(svc._workers) == 1
 
     def test_jobs_returns_snapshot(self):
         svc = TransferService(notify_window=None)
@@ -446,3 +456,61 @@ class TestEnums:
         assert TransferStatus.COMPLETE.value == "complete"
         assert TransferStatus.FAILED.value == "failed"
         assert TransferStatus.CANCELLED.value == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Concurrent worker pool
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentWorkers:
+    def test_jobs_run_concurrently_with_multiple_workers(self):
+        """Two slow jobs should overlap when max_workers >= 2."""
+        barrier = threading.Barrier(2, timeout=5)
+        completed_order: list[str] = []
+        lock = threading.Lock()
+
+        mock_client = MagicMock()
+
+        def slow_download(src, fh, callback=None, offset=0):
+            name = PurePosixPath(src).name
+            barrier.wait()  # both workers must reach here before either proceeds
+            with lock:
+                completed_order.append(name)
+
+        mock_client.download.side_effect = slow_download
+
+        svc = TransferService(notify_window=None, max_workers=2)
+        with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
+            j1 = svc.submit_download(mock_client, "/r/a.txt", "/tmp/a.txt")
+            j2 = svc.submit_download(mock_client, "/r/b.txt", "/tmp/b.txt")
+            _wait_for_terminal(j1)
+            _wait_for_terminal(j2)
+
+        assert j1.status == TransferStatus.COMPLETE
+        assert j2.status == TransferStatus.COMPLETE
+        assert len(completed_order) == 2
+
+    def test_set_max_workers_increases_pool(self):
+        svc = TransferService(notify_window=None, max_workers=1)
+        assert len([t for t in svc._workers if t.is_alive()]) == 1
+
+        svc.set_max_workers(3)
+        time.sleep(0.1)
+        alive = [t for t in svc._workers if t.is_alive()]
+        assert len(alive) == 3
+
+    def test_set_max_workers_decreases_pool(self):
+        svc = TransferService(notify_window=None, max_workers=3)
+        assert len(svc._workers) == 3
+
+        svc.set_max_workers(1)
+        # Give sentinels time to be consumed
+        time.sleep(0.5)
+        alive = [t for t in svc._workers if t.is_alive()]
+        assert len(alive) == 1
+
+    def test_set_max_workers_clamps_to_one(self):
+        svc = TransferService(notify_window=None, max_workers=2)
+        svc.set_max_workers(0)
+        assert svc._max_workers == 1
