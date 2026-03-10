@@ -186,6 +186,8 @@ class TransferService:
                     j.error = None
                     # Keep transferred_bytes so _run_download can attempt
                     # a resume from offset instead of restarting.
+                    # Reset progress display so the UI shows 0% immediately.
+                    j.progress = 0
                     j.cancel_event.clear()
                     j._client = client
                     self._queue.put(j)
