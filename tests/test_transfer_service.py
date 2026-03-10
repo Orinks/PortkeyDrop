@@ -472,7 +472,7 @@ class TestConcurrentWorkers:
 
         mock_client = MagicMock()
 
-        def slow_download(src, fh, callback=None):
+        def slow_download(src, fh, callback=None, offset=0):
             name = PurePosixPath(src).name
             barrier.wait()  # both workers must reach here before either proceeds
             with lock:
