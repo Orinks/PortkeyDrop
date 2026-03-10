@@ -72,13 +72,13 @@ class TestTransferServiceInit:
     def test_starts_daemon_worker_threads(self):
         svc = TransferService(notify_window=None)
         assert len(svc._workers) == 1
-        assert all(t.is_alive() for t in svc._workers)
-        assert all(t.daemon for t in svc._workers)
+        assert all(worker.thread.is_alive() for worker in svc._workers)
+        assert all(worker.thread.daemon for worker in svc._workers)
 
     def test_starts_multiple_workers(self):
         svc = TransferService(notify_window=None, max_workers=3)
         assert len(svc._workers) == 3
-        assert all(t.is_alive() for t in svc._workers)
+        assert all(worker.thread.is_alive() for worker in svc._workers)
 
     def test_max_workers_clamped_to_one(self):
         svc = TransferService(notify_window=None, max_workers=0)
@@ -493,11 +493,11 @@ class TestConcurrentWorkers:
 
     def test_set_max_workers_increases_pool(self):
         svc = TransferService(notify_window=None, max_workers=1)
-        assert len([t for t in svc._workers if t.is_alive()]) == 1
+        assert len([worker for worker in svc._workers if worker.thread.is_alive()]) == 1
 
         svc.set_max_workers(3)
         time.sleep(0.1)
-        alive = [t for t in svc._workers if t.is_alive()]
+        alive = [worker for worker in svc._workers if worker.thread.is_alive()]
         assert len(alive) == 3
 
     def test_set_max_workers_decreases_pool(self):
@@ -505,12 +505,45 @@ class TestConcurrentWorkers:
         assert len(svc._workers) == 3
 
         svc.set_max_workers(1)
-        # Give sentinels time to be consumed
-        time.sleep(0.5)
-        alive = [t for t in svc._workers if t.is_alive()]
+        time.sleep(0.2)
+        alive = [worker for worker in svc._workers if worker.thread.is_alive()]
         assert len(alive) == 1
 
     def test_set_max_workers_clamps_to_one(self):
         svc = TransferService(notify_window=None, max_workers=2)
         svc.set_max_workers(0)
         assert svc._max_workers == 1
+
+    def test_set_max_workers_replaces_pool_while_jobs_are_active(self):
+        started = threading.Event()
+        release = threading.Event()
+        completed: list[str] = []
+        completion_lock = threading.Lock()
+        mock_client = MagicMock()
+
+        def slow_download(src, fh, callback=None, offset=0):
+            started.set()
+            release.wait(timeout=5)
+            with completion_lock:
+                completed.append(PurePosixPath(src).name)
+
+        mock_client.download.side_effect = slow_download
+
+        svc = TransferService(notify_window=None, max_workers=1)
+        with patch("builtins.open", return_value=MagicMock(spec=io.BufferedWriter)):
+            j1 = svc.submit_download(mock_client, "/r/a.txt", "/tmp/a.txt")
+            started.wait(timeout=5)
+
+            old_workers = svc._workers.copy()
+            svc.set_max_workers(2)
+            j2 = svc.submit_download(mock_client, "/r/b.txt", "/tmp/b.txt")
+            release.set()
+
+            _wait_for_terminal(j1)
+            _wait_for_terminal(j2)
+
+        assert j1.status == TransferStatus.COMPLETE
+        assert j2.status == TransferStatus.COMPLETE
+        assert len([worker for worker in svc._workers if worker.thread.is_alive()]) == 2
+        assert all(worker.stop_event.is_set() for worker in old_workers)
+        assert sorted(completed) == ["a.txt", "b.txt"]
