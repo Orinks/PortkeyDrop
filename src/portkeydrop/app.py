@@ -118,7 +118,10 @@ class MainFrame(wx.Frame):
             self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
-        self._transfer_service = TransferService(notify_window=self)
+        self._transfer_service = TransferService(
+            notify_window=self,
+            max_workers=self._settings.transfer.concurrent_transfers,
+        )
         self._transfer_state_by_id: dict[str, str] = {}
         self._last_failed_transfer: str | None = None
         self._announcer = ScreenReaderAnnouncer()
@@ -1574,6 +1577,9 @@ class MainFrame(wx.Frame):
             self._settings = dlg.get_settings()
             update_last_local_folder(self._settings, self._local_cwd)
             save_settings(self._settings)
+            self._transfer_service.set_max_workers(
+                self._settings.transfer.concurrent_transfers,
+            )
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
             self._populate_file_list(

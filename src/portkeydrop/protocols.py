@@ -142,9 +142,19 @@ class TransferClient(ABC):
 
     @abstractmethod
     def download(
-        self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
+        self,
+        remote_path: str,
+        local_file: BinaryIO,
+        callback: ProgressCallback | None = None,
+        offset: int = 0,
     ) -> None:
-        """Download a remote file to a local file object."""
+        """Download a remote file to a local file object.
+
+        When *offset* > 0 the implementation should skip the first *offset*
+        bytes of the remote file and begin writing from that point.  Progress
+        values passed to *callback* are relative to the resumed transfer
+        (i.e. they start at 0, not *offset*).
+        """
 
     @abstractmethod
     def upload(
@@ -276,7 +286,11 @@ class FTPClient(TransferClient):
         return self._cwd
 
     def download(
-        self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
+        self,
+        remote_path: str,
+        local_file: BinaryIO,
+        callback: ProgressCallback | None = None,
+        offset: int = 0,
     ) -> None:
         ftp = self._ensure_connected()
         total = ftp.size(remote_path) or 0
@@ -290,7 +304,7 @@ class FTPClient(TransferClient):
             if callback:
                 callback(transferred, total)
 
-        ftp.retrbinary(f"RETR {remote_path}", write_block, block_size)
+        ftp.retrbinary(f"RETR {remote_path}", write_block, block_size, rest=offset or None)
 
     def upload(
         self, local_file: BinaryIO, remote_path: str, callback: ProgressCallback | None = None
@@ -1344,7 +1358,11 @@ class SFTPClient(TransferClient):
     # ------------------------------------------------------------------
 
     def download(
-        self, remote_path: str, local_file: BinaryIO, callback: ProgressCallback | None = None
+        self,
+        remote_path: str,
+        local_file: BinaryIO,
+        callback: ProgressCallback | None = None,
+        offset: int = 0,
     ) -> None:
         sftp = self._ensure_connected()
         local_path = getattr(local_file, "name", None)
@@ -1355,7 +1373,25 @@ class SFTPClient(TransferClient):
         except Exception:
             resolved = remote_path
 
-        if isinstance(local_path, str) and os.path.isabs(local_path):
+        if offset > 0:
+            # Resume: always use the stream path so we can seek past the
+            # already-transferred bytes.
+            async def _download():
+                async with sftp.open(resolved, "rb") as rf:
+                    total = (await sftp.stat(resolved)).size or 0
+                    await rf.seek(offset)
+                    transferred = 0
+                    while True:
+                        chunk = await rf.read(8192)
+                        if not chunk:
+                            break
+                        local_file.write(chunk)
+                        transferred += len(chunk)
+                        if callback:
+                            callback(transferred, total)
+
+            self._run(_download())
+        elif isinstance(local_path, str) and os.path.isabs(local_path):
             # asyncssh native get() — pipelined reads with progress reporting
             local_file.close()
 

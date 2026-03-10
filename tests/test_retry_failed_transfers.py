@@ -47,8 +47,6 @@ class TestTransferManagerRetry:
         assert retried.id == item.id
         assert retried.status == module.TransferStatus.PENDING
         assert retried.error is None
-        assert retried.progress == 0
-        assert retried.transferred_bytes == 0
         assert retried.direction == module.TransferDirection.DOWNLOAD
         assert retried.source == "/remote/file.txt"
         assert len(svc.jobs) == 1  # no duplicate added
@@ -203,7 +201,8 @@ class TestTransferManagerRetry:
         assert retried.source == "/remote/file.txt"
         assert retried.destination == "/local/file.txt"
         assert retried.total_bytes == 1024
-        assert retried.transferred_bytes == 0
+        # transferred_bytes is preserved so _run_download can attempt resume
+        assert retried.transferred_bytes == 500
         assert retried.error is None
         assert retried.status == module.TransferStatus.PENDING
 

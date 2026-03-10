@@ -181,6 +181,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                 return
             new_job = self._service.retry(job.id, client)
             if new_job is not None:
+                wx.CallAfter(self._refresh)
                 filename = PurePosixPath(job.source).name or os.path.basename(job.destination)
                 direction_label = job.direction.value
                 status_message = f"Retrying {direction_label} of {filename}"
