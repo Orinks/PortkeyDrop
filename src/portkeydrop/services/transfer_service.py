@@ -91,20 +91,25 @@ class TransferJob:
         )
 
 
+@dataclass
+class _Worker:
+    """Tracks a worker thread and its stop signal for pool replacement."""
+
+    thread: threading.Thread
+    stop_event: threading.Event
+
+
 class TransferService:
     """Owns the transfer queue and a pool of daemon worker threads."""
 
     def __init__(self, notify_window: Any | None = None, max_workers: int = 1) -> None:
         self._notify_window = notify_window
-        self._queue: queue.Queue[TransferJob | None] = queue.Queue()
+        self._queue: queue.Queue[TransferJob] = queue.Queue()
         self._jobs: list[TransferJob] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._max_workers = max(1, max_workers)
-        self._workers: list[threading.Thread] = []
-        for _ in range(self._max_workers):
-            t = threading.Thread(target=self._worker_loop, daemon=True)
-            t.start()
-            self._workers.append(t)
+        self._workers: list[_Worker] = []
+        self._replace_worker_pool(self._max_workers)
 
     # ------------------------------------------------------------------
     # Public API
@@ -212,23 +217,13 @@ class TransferService:
     def set_max_workers(self, n: int) -> None:
         """Resize the worker pool to *n* threads.
 
-        Extra workers are drained via a ``None`` sentinel on the queue;
-        missing workers are spawned immediately.
+        Existing workers finish at most their current job before exiting;
+        replacement workers start immediately against the same shared queue.
         """
         n = max(1, n)
         with self._lock:
-            # Prune threads that have already exited
-            self._workers = [t for t in self._workers if t.is_alive()]
-            current = len(self._workers)
-            if n > current:
-                for _ in range(n - current):
-                    t = threading.Thread(target=self._worker_loop, daemon=True)
-                    t.start()
-                    self._workers.append(t)
-            elif n < current:
-                for _ in range(current - n):
-                    self._queue.put(None)  # sentinel to stop one worker
             self._max_workers = n
+        self._replace_worker_pool(n)
 
     # ------------------------------------------------------------------
     # Internal
@@ -240,17 +235,49 @@ class TransferService:
         self._queue.put(job)
         self._post_event()
 
-    def _worker_loop(self) -> None:
+    def _replace_worker_pool(self, size: int) -> None:
+        with self._lock:
+            old_workers = self._workers
+            self._workers = []
+            for _worker in old_workers:
+                _worker.stop_event.set()
+            for _ in range(size):
+                stop_event = threading.Event()
+                thread = threading.Thread(
+                    target=self._worker_loop,
+                    args=(stop_event,),
+                    daemon=True,
+                )
+                thread.start()
+                self._workers.append(_Worker(thread=thread, stop_event=stop_event))
+            self._workers = [worker for worker in self._workers if worker.thread.is_alive()]
+
+        for worker in old_workers:
+            worker.thread.join(timeout=1)
+
+        with self._lock:
+            self._workers = [worker for worker in self._workers if worker.thread.is_alive()]
+
+    def _worker_loop(self, stop_event: threading.Event) -> None:
         while True:
-            job = self._queue.get()
-            if job is None:  # shutdown sentinel
-                break
+            if stop_event.is_set():
+                return
+            try:
+                job = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if stop_event.is_set():
+                self._queue.put(job)
+                return
+
             if job.cancel_event.is_set():
-                job.status = TransferStatus.CANCELLED
+                with self._lock:
+                    job.status = TransferStatus.CANCELLED
                 self._post_event()
                 continue
             try:
-                job.status = TransferStatus.IN_PROGRESS
+                with self._lock:
+                    job.status = TransferStatus.IN_PROGRESS
                 self._post_event()
                 if job.direction == TransferDirection.DOWNLOAD:
                     if job._recursive:
@@ -262,15 +289,19 @@ class TransferService:
                         self._run_recursive_upload(job)
                     else:
                         self._run_upload(job)
-                if job.status == TransferStatus.IN_PROGRESS:
-                    job.status = TransferStatus.COMPLETE
+                with self._lock:
+                    if job.status == TransferStatus.IN_PROGRESS:
+                        job.status = TransferStatus.COMPLETE
             except InterruptedError:
-                job.status = TransferStatus.CANCELLED
+                with self._lock:
+                    job.status = TransferStatus.CANCELLED
             except Exception as exc:
-                job.status = TransferStatus.FAILED
-                job.error = str(exc)
+                with self._lock:
+                    job.status = TransferStatus.FAILED
+                    job.error = str(exc)
                 logger.exception("Transfer failed: %s", job.id)
-            self._update_progress(job)
+            with self._lock:
+                self._update_progress(job)
             self._post_event()
 
     # --- single-file transfers ---
@@ -290,10 +321,11 @@ class TransferService:
             def _cb(transferred: int, total: int) -> None:
                 if job.cancel_event.is_set():
                     raise InterruptedError("Transfer cancelled")
-                job.transferred_bytes = offset + transferred
-                if total > 0:
-                    job.total_bytes = total
-                self._update_progress(job)
+                with self._lock:
+                    job.transferred_bytes = offset + transferred
+                    if total > 0:
+                        job.total_bytes = total
+                    self._update_progress(job)
                 self._post_event()
 
             client.download(job.source, f, callback=_cb, offset=offset)
@@ -305,10 +337,11 @@ class TransferService:
             def _cb(transferred: int, total: int) -> None:
                 if job.cancel_event.is_set():
                     raise InterruptedError("Transfer cancelled")
-                job.transferred_bytes = transferred
-                if total > 0:
-                    job.total_bytes = total
-                self._update_progress(job)
+                with self._lock:
+                    job.transferred_bytes = transferred
+                    if total > 0:
+                        job.total_bytes = total
+                    self._update_progress(job)
                 self._post_event()
 
             job._client.upload(f, job.destination, callback=_cb)
@@ -329,9 +362,10 @@ class TransferService:
                         file_queue[i] = (remote_file, local_file, real_size)
                 except Exception:
                     pass
-        job.total_bytes = sum(s for _, _, s in file_queue)
-        job.transferred_bytes = 0
-        self._update_progress(job)
+        with self._lock:
+            job.total_bytes = sum(s for _, _, s in file_queue)
+            job.transferred_bytes = 0
+            self._update_progress(job)
         self._post_event()
 
         for remote_file, local_file, _size in file_queue:
@@ -344,8 +378,9 @@ class TransferService:
                 def _cb(transferred: int, total: int, _base=base) -> None:
                     if job.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
-                    job.transferred_bytes = _base + transferred
-                    self._update_progress(job)
+                    with self._lock:
+                        job.transferred_bytes = _base + transferred
+                        self._update_progress(job)
                     self._post_event()
 
                 client.download(remote_file, f, callback=_cb)
@@ -355,9 +390,10 @@ class TransferService:
         client = job._client
         file_queue: list[tuple[str, str, int]] = []
         self._collect_local_files(job.source, job.destination, file_queue)
-        job.total_bytes = sum(s for _, _, s in file_queue)
-        job.transferred_bytes = 0
-        self._update_progress(job)
+        with self._lock:
+            job.total_bytes = sum(s for _, _, s in file_queue)
+            job.transferred_bytes = 0
+            self._update_progress(job)
         self._post_event()
 
         # Create directories
@@ -382,8 +418,9 @@ class TransferService:
                 def _cb(transferred: int, total: int, _base=base) -> None:
                     if job.cancel_event.is_set():
                         raise InterruptedError("Transfer cancelled")
-                    job.transferred_bytes = _base + transferred
-                    self._update_progress(job)
+                    with self._lock:
+                        job.transferred_bytes = _base + transferred
+                        self._update_progress(job)
                     self._post_event()
 
                 client.upload(f, remote_file, callback=_cb)
@@ -411,8 +448,9 @@ class TransferService:
             local_size = os.path.getsize(job.destination)
         except OSError:
             logger.info("Resume: partial file missing, restarting %s", job.id)
-            job.transferred_bytes = 0
-            job.progress = 0
+            with self._lock:
+                job.transferred_bytes = 0
+                job.progress = 0
             self._snapshot_remote_metadata(job, client)
             return 0
 
@@ -423,8 +461,9 @@ class TransferService:
                 job.transferred_bytes,
                 job.id,
             )
-            job.transferred_bytes = 0
-            job.progress = 0
+            with self._lock:
+                job.transferred_bytes = 0
+                job.progress = 0
             self._snapshot_remote_metadata(job, client)
             return 0
 
@@ -433,8 +472,9 @@ class TransferService:
             remote_info = client.stat(job.source)
         except Exception:
             logger.info("Resume: cannot stat remote file, restarting %s", job.id)
-            job.transferred_bytes = 0
-            job.progress = 0
+            with self._lock:
+                job.transferred_bytes = 0
+                job.progress = 0
             return 0
 
         remote_size = remote_info.size
@@ -447,9 +487,10 @@ class TransferService:
                 remote_size,
                 job.id,
             )
-            job.transferred_bytes = 0
-            job.progress = 0
-            job._remote_mtime = remote_mtime
+            with self._lock:
+                job.transferred_bytes = 0
+                job.progress = 0
+                job._remote_mtime = remote_mtime
             return 0
 
         if (
@@ -458,24 +499,25 @@ class TransferService:
             and remote_mtime != job._remote_mtime
         ):
             logger.info("Resume: remote mtime changed, restarting %s", job.id)
-            job.transferred_bytes = 0
-            job.progress = 0
-            job._remote_mtime = remote_mtime
+            with self._lock:
+                job.transferred_bytes = 0
+                job.progress = 0
+                job._remote_mtime = remote_mtime
             return 0
 
         # All checks passed — resume from offset
         logger.info("Resume: resuming %s from byte %d", job.id, job.transferred_bytes)
         return job.transferred_bytes
 
-    @staticmethod
-    def _snapshot_remote_metadata(job: TransferJob, client: TransferClient) -> None:
+    def _snapshot_remote_metadata(self, job: TransferJob, client: TransferClient) -> None:
         """Record remote file size/mtime on the job for later resume validation."""
         try:
             info = client.stat(job.source)
-            if info.modified:
-                job._remote_mtime = info.modified.timestamp()
-            if info.size > 0 and job.total_bytes == 0:
-                job.total_bytes = info.size
+            with self._lock:
+                if info.modified:
+                    job._remote_mtime = info.modified.timestamp()
+                if info.size > 0 and job.total_bytes == 0:
+                    job.total_bytes = info.size
         except Exception:
             pass
 

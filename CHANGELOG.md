@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## [0.2.0] - 2026-03-10
+
+### Added
+- Activity log console panel with Prism screen reader announcements, F6 pane cycling, Ctrl+1/2/3 shortcuts, and Tab navigation (#94)
+- Decoupled transfer logic from dialog — transfers now run in the background (#95)
+- One-click retry for failed transfers (#101)
+- Persist transfer queue across app sessions — restored jobs survive crashes and restarts (#100)
+- Queue additional files during an active transfer (#103)
+- Resume interrupted downloads from byte offset instead of restarting (#109)
+- Concurrent transfers setting wired into worker pool — honors max parallel transfers from settings (#110)
+- Dedicated Updates tab in settings (#90)
+
+### Fixed
+- Reset progress display to 0% immediately on retry
+- Announce transfer cancellation immediately with clear messaging (#86, #92)
+- Add cancel/close button to Site Manager dialog (#80)
+- Add colons to file list and toolbar field labels for screen reader clarity (#108)
+- Associate StaticText labels with file lists via SetLabelFor
+- Use SetLabel() for ListCtrl and name= for ListBox accessible names
+- Resolve Tab focus trap in activity log panel
+- Switch activity log to TextCtrl with HSCROLL for reliable NVDA reading (#104)
+- Read version and build info from _build_meta when available (#105)
+
+
 
 ---
 
