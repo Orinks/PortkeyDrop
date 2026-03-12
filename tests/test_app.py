@@ -1550,6 +1550,8 @@ def test_download_and_apply_update_success_with_progress_and_apply(
     monkeypatch.setattr(fake_wx, "YES", 101, raising=False)
     monkeypatch.setattr(fake_wx, "ICON_QUESTION", 106, raising=False)
     monkeypatch.setattr(fake_wx, "MessageBox", MagicMock(return_value=fake_wx.YES), raising=False)
+    monkeypatch.setattr(fake_wx, "GetTopLevelWindows", lambda: [], raising=False)
+    monkeypatch.setattr(fake_wx, "SafeYield", lambda: None, raising=False)
     monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
     monkeypatch.setattr(app.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(app, "is_portable_mode", lambda: False)

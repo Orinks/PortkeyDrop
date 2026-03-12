@@ -1849,6 +1849,12 @@ class MainFrame(wx.Frame):
                         self,
                     )
                     if result_code == wx.YES:
+                        for win in wx.GetTopLevelWindows():
+                            try:
+                                win.Destroy()
+                            except Exception:
+                                pass
+                        wx.SafeYield()
                         apply_update(update_path, portable=is_portable_mode())
 
                 wx.CallAfter(confirm_apply)
