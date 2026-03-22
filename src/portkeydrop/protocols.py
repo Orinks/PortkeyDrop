@@ -1428,6 +1428,8 @@ class SFTPClient(TransferClient):
         sftp = self._ensure_connected()
         local_path = getattr(local_file, "name", None)
 
+        remote_parent = str(PurePosixPath(remote_path).parent)
+
         if isinstance(local_path, str) and os.path.isabs(local_path):
             # asyncssh native put() — pipelined writes with progress reporting
             total = os.path.getsize(local_path)
@@ -1440,7 +1442,14 @@ class SFTPClient(TransferClient):
                     def handler(srcpath, dstpath, copied, total_bytes):
                         callback(copied, total_bytes)
 
-                await sftp.put(local_path, remote_path, progress_handler=handler)
+                try:
+                    await sftp.put(local_path, remote_path, progress_handler=handler)
+                except FileNotFoundError:
+                    logger.debug(
+                        "Remote parent %r does not exist; creating with makedirs", remote_parent
+                    )
+                    await sftp.makedirs(remote_parent, exist_ok=True)
+                    await sftp.put(local_path, remote_path, progress_handler=handler)
 
             self._run(_upload())
         else:
@@ -1450,16 +1459,27 @@ class SFTPClient(TransferClient):
             local_file.seek(0)
 
             async def _upload():
-                async with sftp.open(remote_path, "wb") as wf:
-                    transferred = 0
-                    while True:
-                        chunk = local_file.read(8192)
-                        if not chunk:
-                            break
-                        await wf.write(chunk)
-                        transferred += len(chunk)
-                        if callback:
-                            callback(transferred, total)
+                async def _write():
+                    async with sftp.open(remote_path, "wb") as wf:
+                        transferred = 0
+                        while True:
+                            chunk = local_file.read(8192)
+                            if not chunk:
+                                break
+                            await wf.write(chunk)
+                            transferred += len(chunk)
+                            if callback:
+                                callback(transferred, total)
+
+                try:
+                    await _write()
+                except FileNotFoundError:
+                    logger.debug(
+                        "Remote parent %r does not exist; creating with makedirs", remote_parent
+                    )
+                    await sftp.makedirs(remote_parent, exist_ok=True)
+                    local_file.seek(0)
+                    await _write()
 
             self._run(_upload())
 
@@ -1505,7 +1525,11 @@ class SFTPClient(TransferClient):
         sftp = self._ensure_connected()
         self._run(sftp.mkdir(path))
         attrs = self._run(sftp.stat(path))
-        if not attrs.permissions or not stat.S_ISDIR(attrs.permissions):
+        mode = attrs.permissions
+        is_dir = bool(mode and stat.S_ISDIR(mode))
+        if not is_dir and getattr(attrs, "type", None) == _SFTP_TYPE_DIRECTORY:
+            is_dir = True
+        if not is_dir:
             raise RuntimeError(f"Remote mkdir verification failed for {path}.")
 
     def rename(self, old_path: str, new_path: str) -> None:
