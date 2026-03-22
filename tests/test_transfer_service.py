@@ -334,6 +334,44 @@ class TestRecursiveUpload:
         assert job.status == TransferStatus.COMPLETE
         assert mock_client.upload.call_count == 2
 
+    def test_recursive_upload_creates_top_level_destination_dir(self, tmp_path):
+        """The top-level destination folder must be created before uploading files into it."""
+        src_dir = tmp_path / "my_folder"
+        src_dir.mkdir()
+        (src_dir / "file.txt").write_text("hello")
+
+        mkdir_calls: list[str] = []
+        mock_client = MagicMock()
+        mock_client.upload.side_effect = lambda fh, dest, callback=None: None
+        mock_client.mkdir.side_effect = lambda d: mkdir_calls.append(d)
+
+        svc = TransferService(notify_window=None)
+        job = svc.submit_upload(mock_client, str(src_dir), "/remote/my_folder", recursive=True)
+        _wait_for_terminal(job)
+
+        assert job.status == TransferStatus.COMPLETE
+        assert "/remote/my_folder" in mkdir_calls
+
+    def test_recursive_upload_creates_nested_dirs_in_order(self, tmp_path):
+        """Nested subdirectories are created in sorted (parent-before-child) order."""
+        src_dir = tmp_path / "tree"
+        src_dir.mkdir()
+        sub = src_dir / "sub"
+        sub.mkdir()
+        (sub / "file.txt").write_text("data")
+
+        mkdir_calls: list[str] = []
+        mock_client = MagicMock()
+        mock_client.upload.side_effect = lambda fh, dest, callback=None: None
+        mock_client.mkdir.side_effect = lambda d: mkdir_calls.append(d)
+
+        svc = TransferService(notify_window=None)
+        job = svc.submit_upload(mock_client, str(src_dir), "/remote/tree", recursive=True)
+        _wait_for_terminal(job)
+
+        assert job.status == TransferStatus.COMPLETE
+        assert mkdir_calls.index("/remote/tree") < mkdir_calls.index("/remote/tree/sub")
+
     def test_recursive_upload_cancel_mid_transfer(self, tmp_path):
         src_dir = tmp_path / "cancel_dir"
         src_dir.mkdir()

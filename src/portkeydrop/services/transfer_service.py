@@ -396,8 +396,8 @@ class TransferService:
             self._update_progress(job)
         self._post_event()
 
-        # Create directories
-        dirs_to_create: set[str] = set()
+        # Create directories — including the top-level destination folder itself
+        dirs_to_create: set[str] = {job.destination}
         for _, remote_file, _ in file_queue:
             remote_parent = os.path.dirname(remote_file).replace("\\", "/")
             while remote_parent and remote_parent != job.destination:
