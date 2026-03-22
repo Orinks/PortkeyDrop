@@ -804,9 +804,15 @@ class MainFrame(wx.Frame):
             self.tb_host.SetFocus()
             self._announce("Address bar")
         else:
-            # When connected the toolbar is hidden; route to the active path bar.
-            self.remote_path_bar.SetFocus()  # pragma: no cover
-            self._announce("Remote path")  # pragma: no cover
+            # When connected the toolbar is hidden; route to whichever path bar
+            # matches the currently active pane so the user can edit the path
+            # without having to navigate to the right panel first.
+            if self._is_local_focused():
+                self.local_path_bar.SetFocus()
+                self._announce("Local path")
+            else:
+                self.remote_path_bar.SetFocus()
+                self._announce("Remote path")
 
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
