@@ -69,10 +69,9 @@ class _Button(_Window):
         super().__init__(parent)
         self.label = label
         self.id = id
-        self._is_default = False
 
     def SetDefault(self) -> None:
-        self._is_default = True
+        pass
 
 
 class _TextCtrl(_Window):
@@ -175,15 +174,16 @@ class TestHostKeyDialogInit:
         dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
         assert dlg.title == "Unknown Host Key"
 
-    def test_reject_button_exists(self, monkeypatch):
-        # Reject button should be present as the third button.
+    def test_initial_focus_is_reject_button(self, monkeypatch):
+        # Reject is the safest default: screen readers should announce it
+        # immediately so the user can confirm the rejection with Enter.
         dlg_cls = _load_host_key_dialog(monkeypatch)
         dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
         pane = dlg._pane
         btn_pane = next(c for c in pane.children if isinstance(c, _SizedPanel))
         buttons = [c for c in btn_pane.children if isinstance(c, _Button)]
-        labels = [b.label for b in buttons]
-        assert "&Reject" in labels
+        reject_btn = buttons[2]  # third button: Accept Permanently, Accept Once, Reject
+        assert reject_btn._focused is True
 
     def test_escape_rejects_dialog(self, monkeypatch):
         from types import SimpleNamespace
