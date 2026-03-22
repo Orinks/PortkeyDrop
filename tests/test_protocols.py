@@ -1614,6 +1614,77 @@ class TestSFTPClient:
             client.upload(io.BytesIO(b"data"), "/remote.txt")
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_upload_bytesio_creates_remote_dir_on_file_not_found(self, mock_connect):
+        """BytesIO upload retries after makedirs when parent directory is missing."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        calls: list[str] = []
+
+        mock_write_file = AsyncMock()
+        mock_open_cm = MagicMock()
+        mock_open_cm.__aenter__ = AsyncMock(return_value=mock_write_file)
+        mock_open_cm.__aexit__ = AsyncMock(return_value=False)
+
+        def fake_open(path, mode):
+            calls.append("open")
+            if len(calls) == 1:
+                raise FileNotFoundError("No such file or directory")
+            return mock_open_cm
+
+        mock_sftp.open = fake_open
+
+        stat_attrs = MagicMock()
+        stat_attrs.size = 4
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        client.upload(io.BytesIO(b"data"), "/new/dir/remote.txt")
+
+        mock_sftp.makedirs.assert_awaited_once_with("/new/dir", exist_ok=True)
+        assert calls.count("open") == 2
+
+    @patch("os.path.getsize", return_value=4)
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_upload_native_creates_remote_dir_on_file_not_found(self, mock_connect, _mock_getsize):
+        """Native put() upload retries after makedirs when parent directory is missing."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        put_calls: list[int] = []
+
+        async def fake_put(localpath, remotepath, *, progress_handler=None, **kwargs):
+            put_calls.append(1)
+            if len(put_calls) == 1:
+                raise FileNotFoundError("No such file or directory")
+
+        mock_sftp.put = AsyncMock(side_effect=fake_put)
+
+        stat_attrs = MagicMock()
+        stat_attrs.size = 4
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        mock_file = MagicMock()
+        mock_file.name = "/tmp/upload.bin"
+        mock_file.close = MagicMock()
+
+        client.upload(mock_file, "/new/dir/remote.bin")
+
+        mock_sftp.makedirs.assert_awaited_once_with("/new/dir", exist_ok=True)
+        assert len(put_calls) == 2
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_mkdir_raises_when_created_path_is_not_directory(self, mock_connect):
         mock_conn = AsyncMock()
         mock_sftp = AsyncMock()
@@ -1631,6 +1702,27 @@ class TestSFTPClient:
 
         with pytest.raises(RuntimeError, match="verification failed"):
             client.mkdir("/not-a-dir")
+
+    @patch("asyncssh.connect", new_callable=AsyncMock)
+    def test_mkdir_succeeds_when_type_indicates_directory_without_permissions(self, mock_connect):
+        """mkdir verification accepts SFTP v4+ servers that return type=dir but no permissions."""
+        mock_conn = AsyncMock()
+        mock_sftp = AsyncMock()
+        mock_sftp.realpath.return_value = "/"
+        mock_conn.start_sftp_client.return_value = mock_sftp
+        mock_connect.return_value = mock_conn
+
+        stat_attrs = MagicMock()
+        stat_attrs.permissions = None
+        stat_attrs.type = 2  # _SFTP_TYPE_DIRECTORY
+        mock_sftp.stat.return_value = stat_attrs
+
+        client = SFTPClient(ConnectionInfo(protocol=Protocol.SFTP, host="example.com"))
+        client.connect()
+
+        # Should not raise
+        client.mkdir("/new-dir")
+        mock_sftp.mkdir.assert_awaited_once_with("/new-dir")
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_delete_raises_when_remote_stat_succeeds(self, mock_connect):
