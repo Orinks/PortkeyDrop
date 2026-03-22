@@ -116,6 +116,9 @@ class _Button(_Window):
         super().__init__(parent)
         self.label = label
 
+    def SetDefault(self) -> None:
+        pass
+
 
 class _BoxSizer:
     def __init__(self, orient=0):

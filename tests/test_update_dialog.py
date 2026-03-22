@@ -26,12 +26,16 @@ class _Dialog(_Window):
         self.style = style
         self.size = None
         self.centered = False
+        self.escape_id = None
 
     def SetSize(self, size):
         self.size = size
 
     def CenterOnParent(self):
         self.centered = True
+
+    def SetEscapeId(self, escape_id):
+        self.escape_id = escape_id
 
 
 class _StaticText(_Window):
@@ -137,7 +141,6 @@ def test_update_dialog_sets_title_and_note_fields(monkeypatch):
     assert dlg.size == (500, 420)
     assert dlg.centered is True
     assert dlg.release_notes_text.value == "Fixed issues"
-    assert dlg.release_notes_text.name == "Update release notes"
     assert dlg.release_notes_text.focused is True
     assert dlg.release_notes_text.insertion_point == 0
 

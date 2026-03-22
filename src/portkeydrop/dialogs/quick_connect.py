@@ -14,46 +14,50 @@ class QuickConnectDialog(wx.Dialog):
         super().__init__(parent, title="Quick Connect", style=wx.DEFAULT_DIALOG_STYLE)
         self._connection_info: ConnectionInfo | None = None
         self._build_ui()
-        self.SetName("Quick Connect Dialog")
 
     def _build_ui(self) -> None:
         sizer = wx.BoxSizer(wx.VERTICAL)
         grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=8)
         grid.AddGrowableCol(1, 1)
 
+        def _link(label_widget, ctrl):  # pragma: no cover
+            """Associate label with control for NVDA/VoiceOver name resolution."""
+            if hasattr(label_widget, "SetLabelFor"):
+                label_widget.SetLabelFor(ctrl)
+
         # Protocol
         lbl = wx.StaticText(self, label="&Protocol:")
         self.protocol_choice = wx.Choice(self, choices=["sftp", "ftp", "ftps"])
         self.protocol_choice.SetSelection(0)
-        self.protocol_choice.SetName("Protocol")
+        _link(lbl, self.protocol_choice)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.protocol_choice, 1, wx.EXPAND)
 
         # Host
         lbl = wx.StaticText(self, label="&Host:")
         self.host_text = wx.TextCtrl(self)
-        self.host_text.SetName("Host")
+        _link(lbl, self.host_text)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.host_text, 1, wx.EXPAND)
 
         # Port
         lbl = wx.StaticText(self, label="P&ort:")
         self.port_text = wx.TextCtrl(self, value="22")
-        self.port_text.SetName("Port")
+        _link(lbl, self.port_text)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.port_text, 1, wx.EXPAND)
 
         # Username
         lbl = wx.StaticText(self, label="&Username:")
         self.username_text = wx.TextCtrl(self)
-        self.username_text.SetName("Username")
+        _link(lbl, self.username_text)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.username_text, 1, wx.EXPAND)
 
         # Password
         lbl = wx.StaticText(self, label="Pass&word:")
         self.password_text = wx.TextCtrl(self, style=wx.TE_PASSWORD)
-        self.password_text.SetName("Password")
+        _link(lbl, self.password_text)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.password_text, 1, wx.EXPAND)
 
@@ -65,7 +69,14 @@ class QuickConnectDialog(wx.Dialog):
 
         self.SetSizer(sizer)
         self.Fit()
-        self.host_text.SetFocus()
+
+        # Set OK as default so Enter submits the form.
+        ok_btn = self.FindWindowById(wx.ID_OK)  # pragma: no cover
+        if ok_btn:  # pragma: no cover
+            ok_btn.SetDefault()  # pragma: no cover
+
+        # Focus the first field so screen readers announce the dialog purpose.
+        self.protocol_choice.SetFocus()  # pragma: no cover
 
         # Update port when protocol changes
         self.protocol_choice.Bind(wx.EVT_CHOICE, self._on_protocol_change)

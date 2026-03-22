@@ -33,7 +33,6 @@ class SettingsDialog(wx.Dialog):
 
         self._build_ui()
         self._populate()
-        self.SetName("Settings Dialog")
 
         # Re-apply accessible names on spin inner editors after _populate()
         # may have reset them via SetValue().
@@ -46,7 +45,6 @@ class SettingsDialog(wx.Dialog):
         root = wx.BoxSizer(wx.VERTICAL)
 
         self.notebook = wx.Notebook(self)
-        self.notebook.SetName("Settings categories")
 
         self._build_transfer_tab()
         self._build_display_tab()

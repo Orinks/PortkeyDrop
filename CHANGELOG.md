@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+### Fixed
+- Set initial keyboard focus on Reject button in HostKeyDialog for immediate screen reader announcement
+- Set Reject as default button in HostKeyDialog so Enter key safely rejects unknown host keys
+- Set initial focus on first field in QuickConnectDialog and SiteManagerDialog for screen reader discoverability
+- Associate StaticText labels with controls via SetLabelFor in QuickConnectDialog and ImportConnectionsDialog
+- Set OK as default button in QuickConnectDialog so Enter submits the form
+- Set default button per wizard step in ImportConnectionsDialog
+- Set initial focus in MigrationDialog checkboxes for screen reader announcement
+- Focus remote path bar when toolbar is hidden in main app window
+
 ## [0.2.0] - 2026-03-10
 
 ### Added
