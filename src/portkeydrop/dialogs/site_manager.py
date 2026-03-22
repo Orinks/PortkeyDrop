@@ -256,8 +256,15 @@ class SiteManagerDialog(wx.Dialog):
             return
         if not self._update_site_from_form(self._selected_site):
             return
+        saved_id = self._selected_site.id
         self._site_manager.update(self._selected_site)
         self._refresh_site_list()
+        # Re-select the saved site so the list selection is not lost when the
+        # name changes (which would shift its position in the rebuilt list).
+        for i in range(self.site_list.GetCount()):
+            if self.site_list.GetClientData(i) == saved_id:
+                self.site_list.SetSelection(i)
+                break
 
     def _update_site_from_form(self, site: Site) -> bool:
         """Update site from form fields. Returns False if validation fails."""
