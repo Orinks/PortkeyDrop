@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
 - Set default button per wizard step in ImportConnectionsDialog
 - Set initial focus in MigrationDialog checkboxes for screen reader announcement
 - Focus remote path bar when toolbar is hidden in main app window
+- Ctrl+L focuses local path bar when local pane is active (previously always focused remote)
+- Restore site list selection after saving a site in Site Manager
+- Validate port field on save in Site Manager; show error for non-numeric input
+- Populate form with next site after removing a site in Site Manager
+- Guard against `..` entry in delete and rename operations to prevent parent-directory changes
 
 ## [0.2.0] - 2026-03-10
 

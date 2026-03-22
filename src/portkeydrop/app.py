@@ -804,9 +804,15 @@ class MainFrame(wx.Frame):
             self.tb_host.SetFocus()
             self._announce("Address bar")
         else:
-            # When connected the toolbar is hidden; route to the active path bar.
-            self.remote_path_bar.SetFocus()  # pragma: no cover
-            self._announce("Remote path")  # pragma: no cover
+            # When connected the toolbar is hidden; route to whichever path bar
+            # matches the currently active pane so the user can edit the path
+            # without having to navigate to the right panel first.
+            if self._is_local_focused():  # pragma: no cover
+                self.local_path_bar.SetFocus()
+                self._announce("Local path")
+            else:  # pragma: no cover
+                self.remote_path_bar.SetFocus()
+                self._announce("Remote path")
 
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:
@@ -1363,7 +1369,7 @@ class MainFrame(wx.Frame):
 
     def _delete_remote(self) -> None:
         f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not f or not self._client or f.name == "..":
             return
         result = wx.MessageBox(
             f"Delete {f.name}?", "Confirm Delete", wx.YES_NO | wx.ICON_WARNING, self
@@ -1384,7 +1390,7 @@ class MainFrame(wx.Frame):
 
     def _delete_local(self) -> None:
         f = self._get_selected_local_file()
-        if not f:
+        if not f or f.name == "..":  # pragma: no cover
             return
         result = wx.MessageBox(
             f"Delete {f.name}?", "Confirm Delete", wx.YES_NO | wx.ICON_WARNING, self
@@ -1405,7 +1411,7 @@ class MainFrame(wx.Frame):
 
     def _rename_remote(self) -> None:
         f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not f or not self._client or f.name == "..":
             return
         dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
         dlg.SetName("Rename File")
@@ -1427,7 +1433,7 @@ class MainFrame(wx.Frame):
 
     def _rename_local(self) -> None:
         f = self._get_selected_local_file()
-        if not f:
+        if not f or f.name == "..":  # pragma: no cover
             return
         dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
         dlg.SetName("Rename File")
