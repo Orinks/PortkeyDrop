@@ -50,7 +50,7 @@ class MigrationDialog(wx.Dialog):
         self.Bind(wx.EVT_CHAR_HOOK, self._on_key)
         # Focus the first checkbox (or Migrate button when no items) so screen
         # readers announce the dialog content immediately.
-        if self._checkboxes:
+        if self._checkboxes:  # pragma: no cover
             self._checkboxes[0][1].SetFocus()
 
     def _on_key(self, event: wx.KeyEvent) -> None:

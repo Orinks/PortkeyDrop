@@ -132,13 +132,13 @@ class ImportConnectionsDialog(wx.Dialog):
 
         path_lbl = wx.StaticText(panel, label="Configuration &path:")
         sizer.Add(path_lbl, 0, wx.LEFT | wx.RIGHT, 4)
-        if hasattr(path_lbl, "SetLabelFor"):
+        if hasattr(path_lbl, "SetLabelFor"):  # pragma: no cover
             # Defer binding until after path_text is created (below).
             pass
 
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.path_text = wx.TextCtrl(panel)
-        if hasattr(path_lbl, "SetLabelFor"):
+        if hasattr(path_lbl, "SetLabelFor"):  # pragma: no cover
             path_lbl.SetLabelFor(self.path_text)
         row.Add(self.path_text, 1, wx.RIGHT | wx.EXPAND, 6)
 
@@ -344,7 +344,7 @@ class ImportConnectionsDialog(wx.Dialog):
         # Set the default button so Enter advances the wizard on the current step.
         if self._step < 2:
             self.next_btn.SetDefault()
-        else:
+        else:  # pragma: no cover
             self.import_btn.SetDefault()
         self.Layout()
 

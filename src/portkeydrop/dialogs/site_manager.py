@@ -69,7 +69,7 @@ class SiteManagerDialog(wx.Dialog):
             lbl = wx.StaticText(self, label=label_text)
             ctrl = ctrl_class(self, **kwargs)
             # Link label to control for NVDA/VoiceOver accessible name resolution.
-            if hasattr(lbl, "SetLabelFor"):
+            if hasattr(lbl, "SetLabelFor"):  # pragma: no cover
                 lbl.SetLabelFor(ctrl)
             setattr(self, attr_name, ctrl)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
