@@ -192,6 +192,7 @@ class SiteManagerDialog(wx.Dialog):
                 new_idx = min(idx, count - 1) if idx != wx.NOT_FOUND else 0
                 self.site_list.SetSelection(new_idx)
                 self._selected_site = self._site_manager.sites[new_idx]
+                self._populate_form(self._selected_site)
             wx.CallAfter(self.site_list.SetFocus)
 
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:

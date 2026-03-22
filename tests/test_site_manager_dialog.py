@@ -424,7 +424,14 @@ class TestRemoveFocusManagement:
         dlg._selected_site = None
         dlg._connect_requested = False
         dlg.site_list = _ListBox()
+        dlg.name_text = _TextCtrl()
+        dlg.protocol_choice = _Choice(choices=["sftp", "ftp", "ftps"])
+        dlg.host_text = _TextCtrl()
+        dlg.port_text = _TextCtrl()
+        dlg.username_text = _TextCtrl()
         dlg.password_text = _TextCtrl()
+        dlg.key_path_text = _TextCtrl()
+        dlg.initial_dir_text = _TextCtrl()
         dlg.show_password_btn = _Button()
         dlg.Layout = MagicMock()
 
@@ -500,3 +507,17 @@ class TestRemoveFocusManagement:
 
         # Logical selection should track the newly selected row ("C").
         assert dlg._selected_site is dlg._site_manager.sites[1]
+
+    def test_remove_populates_form_with_next_site(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, sites = self._make_dialog_with_sites(mod, fake_wx, ["Alpha", "Beta", "Gamma"])
+        sites[2].host = "gamma.example.com"
+
+        # Select "Beta" (index 1)
+        dlg.site_list.SetSelection(1)
+        dlg._selected_site = sites[1]
+
+        mod.SiteManagerDialog._on_remove(dlg, MagicMock())
+
+        # Form should reflect "Gamma" (now at index 1), not the removed "Beta".
+        assert dlg.host_text._value == "gamma.example.com"
