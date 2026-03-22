@@ -23,6 +23,10 @@ class SiteManagerDialog(wx.Dialog):
         self._password_visible = False
         self._build_ui()
         self._refresh_site_list()
+        # Select first site and populate form if any exist.
+        if self.site_list.GetCount() > 0:
+            self.site_list.SetSelection(0)
+            self._on_site_selected(None)
         # Move focus to the site list so screen readers announce the dialog
         # content immediately on open.
         wx.CallAfter(self.site_list.SetFocus)
@@ -96,8 +100,6 @@ class SiteManagerDialog(wx.Dialog):
 
         action_sizer = wx.BoxSizer(wx.HORIZONTAL)
         save_btn = wx.Button(self, label="&Save")
-        # Save is the primary action when editing a site's form fields.
-        save_btn.SetDefault()
         self.close_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Close")
         action_sizer.Add(save_btn, 0, wx.RIGHT, 4)
         action_sizer.Add(self.close_btn, 0)
@@ -110,8 +112,13 @@ class SiteManagerDialog(wx.Dialog):
         # Set default protocol selection
         self.protocol_choice.SetSelection(0)
 
+        # Connect is the primary action — Enter on the list triggers connect.
+        self.connect_btn.SetDefault()
+
         # Events
         self.site_list.Bind(wx.EVT_LISTBOX, self._on_site_selected)
+        self.site_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._on_connect(e))
+        self.site_list.Bind(wx.EVT_CHAR_HOOK, self._on_list_key)
         self.add_btn.Bind(wx.EVT_BUTTON, self._on_add)
         self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
         self.connect_btn.Bind(wx.EVT_BUTTON, self._on_connect)
@@ -260,6 +267,13 @@ class SiteManagerDialog(wx.Dialog):
         site.password = self.password_text.GetValue()
         site.key_path = self.key_path_text.GetValue().strip()
         site.initial_dir = self.initial_dir_text.GetValue().strip() or "/"
+
+    def _on_list_key(self, event: wx.KeyEvent) -> None:
+        """Connect on Enter, let other keys pass through."""
+        if event.GetKeyCode() == wx.WXK_RETURN and self._selected_site:
+            self._on_connect(event)
+        else:
+            event.Skip()
 
     def _on_connect(self, event: wx.CommandEvent) -> None:
         if self._selected_site:

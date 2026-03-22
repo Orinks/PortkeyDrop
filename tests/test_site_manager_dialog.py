@@ -251,7 +251,9 @@ def _make_fake_wx():
     wx.WXK_ESCAPE = 27
     wx.EVT_BUTTON = object()
     wx.EVT_LISTBOX = object()
+    wx.EVT_LISTBOX_DCLICK = object()
     wx.EVT_CHAR_HOOK = object()
+    wx.WXK_RETURN = 13
     wx.MessageBox = MagicMock(return_value=wx.OK)
     wx.CallAfter = lambda fn, *a, **kw: fn(*a, **kw)
     return wx
