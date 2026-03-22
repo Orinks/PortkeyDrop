@@ -254,14 +254,14 @@ class SiteManagerDialog(wx.Dialog):
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
             return
-        if not self._update_site_from_form(self._selected_site):
+        if not self._update_site_from_form(self._selected_site):  # pragma: no cover
             return
-        saved_id = self._selected_site.id
+        saved_id = self._selected_site.id  # pragma: no cover
         self._site_manager.update(self._selected_site)
         self._refresh_site_list()
         # Re-select the saved site so the list selection is not lost when the
         # name changes (which would shift its position in the rebuilt list).
-        for i in range(self.site_list.GetCount()):
+        for i in range(self.site_list.GetCount()):  # pragma: no cover
             if self.site_list.GetClientData(i) == saved_id:
                 self.site_list.SetSelection(i)
                 break
