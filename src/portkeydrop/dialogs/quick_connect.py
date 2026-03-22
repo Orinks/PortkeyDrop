@@ -20,7 +20,7 @@ class QuickConnectDialog(wx.Dialog):
         grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=8)
         grid.AddGrowableCol(1, 1)
 
-        def _link(label_widget, ctrl):  # pragma: no cover
+        def _link(label_widget, ctrl):
             """Associate label with control for NVDA/VoiceOver name resolution."""
             if hasattr(label_widget, "SetLabelFor"):
                 label_widget.SetLabelFor(ctrl)
@@ -72,11 +72,11 @@ class QuickConnectDialog(wx.Dialog):
 
         # Set OK as default so Enter submits the form.
         ok_btn = self.FindWindowById(wx.ID_OK)
-        if ok_btn:  # pragma: no cover
+        if ok_btn:
             ok_btn.SetDefault()
 
         # Focus the first field so screen readers announce the dialog purpose.
-        self.protocol_choice.SetFocus()  # pragma: no cover
+        self.protocol_choice.SetFocus()
 
         # Update port when protocol changes
         self.protocol_choice.Bind(wx.EVT_CHOICE, self._on_protocol_change)

@@ -803,7 +803,7 @@ class MainFrame(wx.Frame):
         if self._toolbar_panel.IsShown():
             self.tb_host.SetFocus()
             self._announce("Address bar")
-        else:  # pragma: no cover
+        else:
             # When connected the toolbar is hidden; route to the active path bar.
             self.remote_path_bar.SetFocus()
             self._announce("Remote path")
