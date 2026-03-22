@@ -1363,7 +1363,7 @@ class MainFrame(wx.Frame):
 
     def _delete_remote(self) -> None:
         f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not f or not self._client or f.name == "..":
             return
         result = wx.MessageBox(
             f"Delete {f.name}?", "Confirm Delete", wx.YES_NO | wx.ICON_WARNING, self
@@ -1384,7 +1384,7 @@ class MainFrame(wx.Frame):
 
     def _delete_local(self) -> None:
         f = self._get_selected_local_file()
-        if not f:
+        if not f or f.name == "..":
             return
         result = wx.MessageBox(
             f"Delete {f.name}?", "Confirm Delete", wx.YES_NO | wx.ICON_WARNING, self
@@ -1405,7 +1405,7 @@ class MainFrame(wx.Frame):
 
     def _rename_remote(self) -> None:
         f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not f or not self._client or f.name == "..":
             return
         dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
         dlg.SetName("Rename File")
@@ -1427,7 +1427,7 @@ class MainFrame(wx.Frame):
 
     def _rename_local(self) -> None:
         f = self._get_selected_local_file()
-        if not f:
+        if not f or f.name == "..":
             return
         dlg = wx.TextEntryDialog(self, "New name:", "Rename", f.name)
         dlg.SetName("Rename File")
