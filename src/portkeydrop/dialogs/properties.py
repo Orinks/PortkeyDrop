@@ -14,7 +14,6 @@ class PropertiesDialog(wx.Dialog):
         super().__init__(parent, title="File Properties", style=wx.DEFAULT_DIALOG_STYLE)
         self._file = remote_file
         self._build_ui()
-        self.SetName("File Properties Dialog")
 
     def _build_ui(self) -> None:
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -35,7 +34,10 @@ class PropertiesDialog(wx.Dialog):
         for label_text, value in fields:
             lbl = wx.StaticText(self, label=label_text)
             val = wx.TextCtrl(self, value=value, style=wx.TE_READONLY)
-            val.SetName(label_text.rstrip(":"))
+            # Associate the label with its control so NVDA/VoiceOver can resolve
+            # the accessible name even when multiple rows share the same parent.
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(val)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             grid.Add(val, 1, wx.EXPAND)
             if self._first_value_ctrl is None:

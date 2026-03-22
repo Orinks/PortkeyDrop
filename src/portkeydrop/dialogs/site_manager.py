@@ -23,7 +23,9 @@ class SiteManagerDialog(wx.Dialog):
         self._password_visible = False
         self._build_ui()
         self._refresh_site_list()
-        self.SetName("Site Manager Dialog")
+        # Move focus to the site list so screen readers announce the dialog
+        # content immediately on open.
+        wx.CallAfter(self.site_list.SetFocus)
 
     def _build_ui(self) -> None:
         main_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -34,7 +36,6 @@ class SiteManagerDialog(wx.Dialog):
         left_sizer.Add(lbl, 0, wx.ALL, 4)
 
         self.site_list = wx.ListBox(self)
-        self.site_list.SetName("Saved Sites")
         left_sizer.Add(self.site_list, 1, wx.EXPAND | wx.ALL, 4)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -67,8 +68,9 @@ class SiteManagerDialog(wx.Dialog):
         for label_text, attr_name, ctrl_class, kwargs in fields:
             lbl = wx.StaticText(self, label=label_text)
             ctrl = ctrl_class(self, **kwargs)
-            ctrl_name = label_text.replace("&", "").rstrip(":")
-            ctrl.SetName(ctrl_name)
+            # Link label to control for NVDA/VoiceOver accessible name resolution.
+            if hasattr(lbl, "SetLabelFor"):
+                lbl.SetLabelFor(ctrl)
             setattr(self, attr_name, ctrl)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             if attr_name == "password_text":
@@ -82,7 +84,8 @@ class SiteManagerDialog(wx.Dialog):
             elif attr_name == "key_path_text":
                 row = wx.BoxSizer(wx.HORIZONTAL)
                 row.Add(ctrl, 1, wx.EXPAND)
-                browse_btn = wx.Button(self, label="&Browse...")
+                # Descriptive label so screen readers announce the specific purpose.
+                browse_btn = wx.Button(self, label="&Browse for key file...")
                 browse_btn.Bind(wx.EVT_BUTTON, self._on_browse_key)
                 row.Add(browse_btn, 0, wx.LEFT, 4)
                 grid.Add(row, 1, wx.EXPAND)
@@ -93,6 +96,8 @@ class SiteManagerDialog(wx.Dialog):
 
         action_sizer = wx.BoxSizer(wx.HORIZONTAL)
         save_btn = wx.Button(self, label="&Save")
+        # Save is the primary action when editing a site's form fields.
+        save_btn.SetDefault()
         self.close_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Close")
         action_sizer.Add(save_btn, 0, wx.RIGHT, 4)
         action_sizer.Add(self.close_btn, 0)
@@ -180,11 +185,7 @@ class SiteManagerDialog(wx.Dialog):
                 new_idx = min(idx, count - 1) if idx != wx.NOT_FOUND else 0
                 self.site_list.SetSelection(new_idx)
                 self._selected_site = self._site_manager.sites[new_idx]
-            focus_list = getattr(wx, "CallAfter", None)
-            if callable(focus_list):
-                focus_list(self.site_list.SetFocus)
-            else:
-                self.site_list.SetFocus()
+            wx.CallAfter(self.site_list.SetFocus)
 
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:
         """Toggle password field between masked and plain text."""

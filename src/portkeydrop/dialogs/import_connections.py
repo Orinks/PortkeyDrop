@@ -130,8 +130,16 @@ class ImportConnectionsDialog(wx.Dialog):
         )
         sizer.Add(description, 0, wx.EXPAND | wx.ALL, 4)
 
+        path_lbl = wx.StaticText(panel, label="Configuration &path:")
+        sizer.Add(path_lbl, 0, wx.LEFT | wx.RIGHT, 4)
+        if hasattr(path_lbl, "SetLabelFor"):
+            # Defer binding until after path_text is created (below).
+            pass
+
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.path_text = wx.TextCtrl(panel)
+        if hasattr(path_lbl, "SetLabelFor"):
+            path_lbl.SetLabelFor(self.path_text)
         row.Add(self.path_text, 1, wx.RIGHT | wx.EXPAND, 6)
 
         self.autodetect_btn = wx.Button(panel, label="&Auto-Detect")
@@ -333,6 +341,11 @@ class ImportConnectionsDialog(wx.Dialog):
         self.back_btn.Enable(self._step > 0)
         self.next_btn.Show(self._step < 2)
         self.import_btn.Show(self._step == 2)
+        # Set the default button so Enter advances the wizard on the current step.
+        if self._step < 2:
+            self.next_btn.SetDefault()
+        else:
+            self.import_btn.SetDefault()
         self.Layout()
 
         # Move focus to the first meaningful control on each page so screen

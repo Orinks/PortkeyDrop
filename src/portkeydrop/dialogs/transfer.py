@@ -78,7 +78,8 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.log_callback = log_cb
             self._build_ui()
             self._refresh()
-            self.SetName("Transfer Queue Dialog")
+            # Set initial focus to the list so screen readers announce the queue.
+            self.transfer_list.SetFocus()
 
             # Auto-refresh timer (every 1 second)
             self._timer = wx.Timer(self)
@@ -92,9 +93,10 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
         def _build_ui(self):
             sizer = wx.BoxSizer(wx.VERTICAL)
 
+            # StaticText label immediately before the list so NVDA resolves
+            # "Transfer Queue" as the accessible name via HWND sibling order.
+            wx.StaticText(self, label="Transfer Queue:")
             self.transfer_list = wx.ListCtrl(self, style=wx.LC_REPORT)
-            self.transfer_list.SetName("Transfer Queue")
-            self.transfer_list.SetLabel("Transfer Queue")
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
@@ -102,16 +104,15 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             sizer.Add(self.transfer_list, 1, wx.EXPAND | wx.ALL, 8)
 
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-            self.retry_btn = wx.Button(self, label="&Retry Selected")
-            self.retry_btn.SetName("Retry Selected Transfer")
+            # Full label gives screen reader users context without needing to read
+            # surrounding UI ("Retry Selected Transfer" vs the ambiguous "Retry").
+            self.retry_btn = wx.Button(self, label="&Retry Selected Transfer")
             self.retry_btn.Enable(False)
             self.cancel_btn = wx.Button(self, label="Cancel &Transfer")
-            self.cancel_btn.SetName("Cancel Transfer")
-            self.remove_btn = wx.Button(self, label="&Remove")
-            self.remove_btn.SetName("Remove Transfer")
+            self.remove_btn = wx.Button(self, label="&Remove Transfer")
             self.bg_btn = wx.Button(self, label="Send to &Background")
-            self.bg_btn.SetName("Send to Background")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
+            self.close_btn.SetDefault()
             btn_sizer.Add(self.retry_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.cancel_btn, 0, wx.RIGHT, 8)
             btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 8)
@@ -146,7 +147,12 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
 
         def _on_send_to_background(self, event):
             """Hide the dialog; transfer continues in background."""
+            parent = self.GetParent()
             self.Hide()
+            # Return keyboard focus to the main window so the screen reader
+            # user does not lose their place after the dialog disappears.
+            if parent:
+                parent.SetFocus()
 
         def _on_timer(self, event):
             self._refresh()

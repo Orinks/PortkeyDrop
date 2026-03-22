@@ -80,6 +80,7 @@ def _hydrate_frame(module):
     frame._activity_log_visible = True
     frame._last_failed_transfer = None
     frame._retry_last_failed_item = MagicMock()
+    frame._toolbar_panel = MagicMock()
     return frame
 
 

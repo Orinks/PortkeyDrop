@@ -39,6 +39,7 @@ class MigrationDialog(wx.Dialog):
 
         buttons = wx.StdDialogButtonSizer()
         migrate_button = wx.Button(self, wx.ID_OK, "Migrate selected")
+        migrate_button.SetDefault()
         skip_button = wx.Button(self, wx.ID_CANCEL, "Skip")
         buttons.AddButton(migrate_button)
         buttons.AddButton(skip_button)
@@ -46,6 +47,17 @@ class MigrationDialog(wx.Dialog):
         root.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
 
         self.SetSizerAndFit(root)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_key)
+        # Focus the first checkbox (or Migrate button when no items) so screen
+        # readers announce the dialog content immediately.
+        if self._checkboxes:
+            self._checkboxes[0][1].SetFocus()
+
+    def _on_key(self, event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self.EndModal(wx.ID_CANCEL)
+        else:
+            event.Skip()
 
     def get_selected_filenames(self) -> list[str]:
         """Return selected candidate filenames."""

@@ -70,6 +70,9 @@ class _Button(_Window):
         self.label = label
         self.id = id
 
+    def SetDefault(self) -> None:
+        pass
+
 
 class _TextCtrl(_Window):
     def __init__(self, parent=None, value: str = "", style: int = 0, size=None, **_kw):
@@ -164,16 +167,23 @@ class TestHostKeyDialogInit:
         text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
         assert "de:ad:be:ef" in text.value
 
-    def test_dialog_sets_accessible_name(self, monkeypatch):
+    def test_dialog_title_is_accessible_name(self, monkeypatch):
+        # The dialog title (passed to super().__init__) is the accessible name
+        # for screen readers. SetName() on a dialog is not AT-readable.
         dlg_cls = _load_host_key_dialog(monkeypatch)
         dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
-        assert dlg.name == "Unknown Host Key"
+        assert dlg.title == "Unknown Host Key"
 
-    def test_initial_focus_is_security_text(self, monkeypatch):
+    def test_initial_focus_is_reject_button(self, monkeypatch):
+        # Reject is the safest default: screen readers should announce it
+        # immediately so the user can confirm the rejection with Enter.
         dlg_cls = _load_host_key_dialog(monkeypatch)
         dlg = dlg_cls(None, "host.test", "ssh-ed25519", "de:ad:be:ef")
-        text = next(c for c in dlg._pane.children if isinstance(c, _TextCtrl))
-        assert text._focused is True
+        pane = dlg._pane
+        btn_pane = next(c for c in pane.children if isinstance(c, _SizedPanel))
+        buttons = [c for c in btn_pane.children if isinstance(c, _Button)]
+        reject_btn = buttons[2]  # third button: Accept Permanently, Accept Once, Reject
+        assert reject_btn._focused is True
 
     def test_escape_rejects_dialog(self, monkeypatch):
         from types import SimpleNamespace

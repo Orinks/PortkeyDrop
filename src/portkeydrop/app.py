@@ -101,7 +101,6 @@ class MainFrame(wx.Frame):
 
     def __init__(self) -> None:
         super().__init__(None, title="Portkey Drop", size=(1000, 600))
-        self.SetName("Portkey Drop Main Window")
 
         self._client = None
         self._remote_home = "/"
@@ -239,7 +238,6 @@ class MainFrame(wx.Frame):
 
     def _build_toolbar(self) -> None:
         toolbar_panel = wx.Panel(self)
-        toolbar_panel.SetName("Quick Connect Toolbar")
         sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         def _bind_label(lbl: wx.StaticText, ctrl: wx.Window) -> None:
@@ -250,41 +248,35 @@ class MainFrame(wx.Frame):
         protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol:")
         self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
         self.tb_protocol.SetSelection(0)
-        self.tb_protocol.SetName("Protocol:")
         _bind_label(protocol_lbl, self.tb_protocol)
         sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         host_lbl = wx.StaticText(toolbar_panel, label="&Host:")
         self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
-        self.tb_host.SetName("Host:")
         _bind_label(host_lbl, self.tb_host)
         sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         port_lbl = wx.StaticText(toolbar_panel, label="P&ort:")
         self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
-        self.tb_port.SetName("Port:")
         _bind_label(port_lbl, self.tb_port)
         sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         username_lbl = wx.StaticText(toolbar_panel, label="&Username:")
         self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
-        self.tb_username.SetName("Username:")
         _bind_label(username_lbl, self.tb_username)
         sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         password_lbl = wx.StaticText(toolbar_panel, label="Pass&word:")
         self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
-        self.tb_password.SetName("Password:")
         _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
-        self.tb_connect_btn.SetName("Connect")
         sizer.Add(self.tb_connect_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
 
         toolbar_panel.SetSizer(sizer)
@@ -309,8 +301,12 @@ class MainFrame(wx.Frame):
         self.local_path_bar.SetName("Local Path")
         local_sizer.Add(self.local_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
+        # StaticText immediately before the list so NVDA associates "Local files"
+        # as the accessible name via HWND sibling order.
+        local_list_label = wx.StaticText(local_panel, label="Local files:")
+        local_sizer.Add(local_list_label, 0, wx.LEFT, 4)
+
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.local_file_list.SetLabel("Local:")
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
@@ -330,8 +326,12 @@ class MainFrame(wx.Frame):
         self.remote_path_bar.SetName("Remote Path")
         remote_sizer.Add(self.remote_path_bar, 0, wx.EXPAND | wx.ALL, 2)
 
+        # StaticText immediately before the list so NVDA associates "Remote files"
+        # as the accessible name via HWND sibling order.
+        remote_list_label = wx.StaticText(remote_panel, label="Remote files:")
+        remote_sizer.Add(remote_list_label, 0, wx.LEFT, 4)
+
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.remote_file_list.SetLabel("Remote:")
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
@@ -350,7 +350,6 @@ class MainFrame(wx.Frame):
 
         self.activity_log = wx.TextCtrl(
             activity_panel,
-            name="Activity Log",
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL,
         )
         self.activity_log.SetMinSize((-1, 150))
@@ -801,8 +800,13 @@ class MainFrame(wx.Frame):
             self._announce("Activity log is hidden")
 
     def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
-        self.tb_host.SetFocus()
-        self._announce("Address bar")
+        if self._toolbar_panel.IsShown():
+            self.tb_host.SetFocus()
+            self._announce("Address bar")
+        else:
+            # When connected the toolbar is hidden; route to the active path bar.
+            self.remote_path_bar.SetFocus()
+            self._announce("Remote path")
 
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:

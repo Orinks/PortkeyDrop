@@ -53,7 +53,6 @@ class UpdateAvailableDialog(wx.Dialog):
             value=notes,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.HSCROLL,
         )
-        self.release_notes_text.SetName("Update release notes")
         root.Add(self.release_notes_text, 1, wx.ALL | wx.EXPAND, 10)
 
         buttons = wx.StdDialogButtonSizer()
@@ -66,5 +65,7 @@ class UpdateAvailableDialog(wx.Dialog):
         root.Add(buttons, 0, wx.ALL | wx.EXPAND, 10)
 
         self.SetSizer(root)
+        # Guarantee Escape closes this dialog regardless of platform/wx build.
+        self.SetEscapeId(wx.ID_CANCEL)
         self.release_notes_text.SetFocus()
         self.release_notes_text.SetInsertionPoint(0)

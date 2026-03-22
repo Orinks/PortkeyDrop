@@ -138,6 +138,9 @@ class _Button(_Window):
     def SetName(self, v):
         self._name = v
 
+    def SetDefault(self):
+        pass
+
     def GetId(self):
         return self._id
 

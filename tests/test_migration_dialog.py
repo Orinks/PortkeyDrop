@@ -20,6 +20,9 @@ class _FakeCheckBox:
     def GetValue(self) -> bool:
         return self._value
 
+    def SetFocus(self) -> None:
+        pass
+
 
 class _FakeButtonSizer:
     def AddButton(self, _button) -> None:
@@ -34,6 +37,12 @@ class _FakeDialog:
         pass
 
     def SetSizerAndFit(self, _sizer) -> None:
+        pass
+
+    def Bind(self, *_args, **_kwargs) -> None:
+        pass
+
+    def EndModal(self, _result: int) -> None:
         pass
 
 
@@ -51,6 +60,7 @@ def migration_dialog_module(monkeypatch):
     fake_wx.BOTTOM = 0
     fake_wx.ALIGN_RIGHT = 0
     fake_wx.ID_CANCEL = 0
+    fake_wx.WXK_ESCAPE = 27
     module = importlib.reload(module)
     return module
 

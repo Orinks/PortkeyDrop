@@ -60,6 +60,10 @@ class _StaticText(_Window):
     def __init__(self, parent=None, label="", **_kw):
         super().__init__(parent)
         self.label = label
+        self._label_for = None
+
+    def SetLabelFor(self, ctrl):
+        self._label_for = ctrl
 
 
 class _TextCtrl(_Window):
@@ -121,7 +125,6 @@ def test_initial_focus_set_on_first_value_control(monkeypatch):
 
     assert dlg._first_value_ctrl is not None
     assert dlg._first_value_ctrl._focused is True
-    assert dlg._first_value_ctrl.GetName() == "Name"
 
 
 def test_first_value_ctrl_contains_file_name(monkeypatch):

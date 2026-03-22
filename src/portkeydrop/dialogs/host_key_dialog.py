@@ -19,7 +19,6 @@ class HostKeyDialog(sc.SizedDialog):
             title="Unknown Host Key",
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
-        self.SetName("Unknown Host Key")
         pane = self.GetContentsPane()
         pane.SetSizerType("vertical")
 
@@ -31,7 +30,6 @@ class HostKeyDialog(sc.SizedDialog):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(450, 90),
         )
-        self.security_details.SetName("Host key details")
         wx.StaticText(pane, label="Do you want to connect?")
 
         btn_pane = sc.SizedPanel(pane)
@@ -40,6 +38,9 @@ class HostKeyDialog(sc.SizedDialog):
         accept_perm_btn = wx.Button(btn_pane, label="&Accept Permanently")
         accept_once_btn = wx.Button(btn_pane, label="Accept &Once")
         reject_btn = wx.Button(btn_pane, id=wx.ID_NO, label="&Reject")
+        # Reject is the safest default: Enter key triggers rejection without
+        # requiring the user to navigate to the button.
+        reject_btn.SetDefault()
 
         accept_perm_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(self.ACCEPT_PERMANENT))
         accept_once_btn.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(self.ACCEPT_ONCE))
@@ -48,7 +49,9 @@ class HostKeyDialog(sc.SizedDialog):
 
         self.Fit()
         self.SetMinSize((400, 200))
-        self.security_details.SetFocus()
+        # Focus the reject button so screen readers immediately announce the
+        # security decision required, rather than landing on read-only detail text.
+        reject_btn.SetFocus()
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
