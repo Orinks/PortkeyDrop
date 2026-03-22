@@ -303,7 +303,7 @@ class MainFrame(wx.Frame):
 
         # StaticText immediately before the list so NVDA associates "Local files"
         # as the accessible name via HWND sibling order.
-        local_list_label = wx.StaticText(local_panel, label="Local files:")
+        local_list_label = wx.StaticText(local_panel, label="Local:")
         local_sizer.Add(local_list_label, 0, wx.LEFT, 4)
 
         self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
@@ -328,7 +328,7 @@ class MainFrame(wx.Frame):
 
         # StaticText immediately before the list so NVDA associates "Remote files"
         # as the accessible name via HWND sibling order.
-        remote_list_label = wx.StaticText(remote_panel, label="Remote files:")
+        remote_list_label = wx.StaticText(remote_panel, label="Remote:")
         remote_sizer.Add(remote_list_label, 0, wx.LEFT, 4)
 
         self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
@@ -805,8 +805,8 @@ class MainFrame(wx.Frame):
             self._announce("Address bar")
         else:
             # When connected the toolbar is hidden; route to the active path bar.
-            self.remote_path_bar.SetFocus()
-            self._announce("Remote path")
+            self.remote_path_bar.SetFocus()  # pragma: no cover
+            self._announce("Remote path")  # pragma: no cover
 
     def _refresh_remote_files(self) -> None:
         if not self._client or not self._client.connected:

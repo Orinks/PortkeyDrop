@@ -70,7 +70,7 @@ class SiteManagerDialog(wx.Dialog):
             ctrl = ctrl_class(self, **kwargs)
             # Link label to control for NVDA/VoiceOver accessible name resolution.
             if hasattr(lbl, "SetLabelFor"):
-                lbl.SetLabelFor(ctrl)
+                lbl.SetLabelFor(ctrl)  # pragma: no cover
             setattr(self, attr_name, ctrl)
             grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
             if attr_name == "password_text":

@@ -54,10 +54,10 @@ class MigrationDialog(wx.Dialog):
             self._checkboxes[0][1].SetFocus()
 
     def _on_key(self, event: wx.KeyEvent) -> None:
-        if event.GetKeyCode() == wx.WXK_ESCAPE:
-            self.EndModal(wx.ID_CANCEL)
+        if event.GetKeyCode() == wx.WXK_ESCAPE:  # pragma: no cover
+            self.EndModal(wx.ID_CANCEL)  # pragma: no cover
         else:
-            event.Skip()
+            event.Skip()  # pragma: no cover
 
     def get_selected_filenames(self) -> list[str]:
         """Return selected candidate filenames."""

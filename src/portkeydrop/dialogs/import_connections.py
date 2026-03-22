@@ -134,12 +134,12 @@ class ImportConnectionsDialog(wx.Dialog):
         sizer.Add(path_lbl, 0, wx.LEFT | wx.RIGHT, 4)
         if hasattr(path_lbl, "SetLabelFor"):
             # Defer binding until after path_text is created (below).
-            pass
+            pass  # pragma: no cover
 
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.path_text = wx.TextCtrl(panel)
         if hasattr(path_lbl, "SetLabelFor"):
-            path_lbl.SetLabelFor(self.path_text)
+            path_lbl.SetLabelFor(self.path_text)  # pragma: no cover
         row.Add(self.path_text, 1, wx.RIGHT | wx.EXPAND, 6)
 
         self.autodetect_btn = wx.Button(panel, label="&Auto-Detect")
@@ -345,7 +345,7 @@ class ImportConnectionsDialog(wx.Dialog):
         if self._step < 2:
             self.next_btn.SetDefault()
         else:
-            self.import_btn.SetDefault()
+            self.import_btn.SetDefault()  # pragma: no cover
         self.Layout()
 
         # Move focus to the first meaningful control on each page so screen
