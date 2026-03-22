@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+### Fixed
+- Remove SetName() misuse throughout all dialogs — SetName() is for internal widget lookup, not screen reader labels
+- Add StaticText labels before Local and Remote file lists for correct NVDA announcement
+- Add StaticText label before transfer queue list and import connections path field
+- Wire SetLabelFor() in properties, quick_connect, and site_manager for explicit label association
+- Fix initial focus in host_key_dialog, migration_dialog, quick_connect, site_manager, transfer, update_dialog
+- Set default buttons in host_key_dialog, import_connections, migration_dialog, quick_connect, site_manager, transfer
+- Add Escape key handlers in host_key_dialog, migration_dialog, site_manager, update_dialog
+- Make button labels more descriptive: Browse, Retry, Remove in site_manager and transfer dialogs
+- Fix Ctrl+L focus behavior in main window to target correct path bar
 ## [0.2.0] - 2026-03-10
 
 ### Added
