@@ -231,6 +231,8 @@ def _make_fake_wx():
     wx.OK = 5100
     wx.ID_OK = 5100
     wx.CANCEL = 5101
+    wx.ICON_ERROR = 0x10000
+    wx.ICON_INFORMATION = 0x20000
     wx.ALIGN_CENTER_VERTICAL = 1
     wx.ALIGN_RIGHT = 2
     wx.LEFT = 4
@@ -521,3 +523,60 @@ class TestRemoveFocusManagement:
 
         # Form should reflect "Gamma" (now at index 1), not the removed "Beta".
         assert dlg.host_text._value == "gamma.example.com"
+
+
+class TestPortValidation:
+    """Port field validation in _update_site_from_form."""
+
+    def _make_form_dialog(self, mod, fake_wx):
+        from portkeydrop.sites import Site
+
+        site = Site(name="Test")
+        site_manager = MagicMock()
+
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg._site_manager = site_manager
+        dlg._selected_site = site
+        dlg.name_text = _TextCtrl()
+        dlg.name_text.SetValue("Test")
+        dlg.protocol_choice = _Choice(choices=["sftp", "ftp", "ftps"])
+        dlg.host_text = _TextCtrl()
+        dlg.port_text = _TextCtrl()
+        dlg.username_text = _TextCtrl()
+        dlg.password_text = _TextCtrl()
+        dlg.key_path_text = _TextCtrl()
+        dlg.initial_dir_text = _TextCtrl()
+        dlg.initial_dir_text.SetValue("/home")
+        return dlg, site
+
+    def test_valid_port_accepted(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, site = self._make_form_dialog(mod, fake_wx)
+        dlg.port_text.SetValue("2222")
+
+        result = mod.SiteManagerDialog._update_site_from_form(dlg, site)
+
+        assert result is True
+        assert site.port == 2222
+
+    def test_empty_port_defaults_to_zero(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, site = self._make_form_dialog(mod, fake_wx)
+        dlg.port_text.SetValue("")
+
+        result = mod.SiteManagerDialog._update_site_from_form(dlg, site)
+
+        assert result is True
+        assert site.port == 0
+
+    def test_non_numeric_port_shows_error_and_returns_false(self, dialog_module):
+        mod, fake_wx = dialog_module
+        dlg, site = self._make_form_dialog(mod, fake_wx)
+        dlg.port_text.SetValue("abc")
+        dlg.port_text.SetFocus = MagicMock()
+
+        result = mod.SiteManagerDialog._update_site_from_form(dlg, site)
+
+        assert result is False
+        fake_wx.MessageBox.assert_called()
+        dlg.port_text.SetFocus.assert_called_once()

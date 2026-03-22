@@ -254,20 +254,36 @@ class SiteManagerDialog(wx.Dialog):
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
             return
-        self._update_site_from_form(self._selected_site)
+        if not self._update_site_from_form(self._selected_site):
+            return
         self._site_manager.update(self._selected_site)
         self._refresh_site_list()
 
-    def _update_site_from_form(self, site: Site) -> None:
+    def _update_site_from_form(self, site: Site) -> bool:
+        """Update site from form fields. Returns False if validation fails."""
         site.name = self.name_text.GetValue().strip()
         site.protocol = self.protocol_choice.GetStringSelection()
         site.host = self.host_text.GetValue().strip()
         port_str = self.port_text.GetValue().strip()
-        site.port = int(port_str) if port_str else 0
+        if port_str:
+            try:
+                site.port = int(port_str)
+            except ValueError:
+                wx.MessageBox(
+                    f"Invalid port number: {port_str!r}. Please enter a number.",
+                    "Invalid Port",
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                self.port_text.SetFocus()
+                return False
+        else:
+            site.port = 0
         site.username = self.username_text.GetValue().strip()
         site.password = self.password_text.GetValue()
         site.key_path = self.key_path_text.GetValue().strip()
         site.initial_dir = self.initial_dir_text.GetValue().strip() or "/"
+        return True
 
     def _on_list_key(self, event: wx.KeyEvent) -> None:
         """Connect on Enter, let other keys pass through."""
