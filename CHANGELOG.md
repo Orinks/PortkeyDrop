@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-03-23
 
 ### Fixed
 - Set initial keyboard focus on Reject button in HostKeyDialog for immediate screen reader announcement
