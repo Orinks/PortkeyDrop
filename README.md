@@ -1,6 +1,6 @@
 # Portkey Drop
 
-A keyboard-driven file transfer client supporting FTP, SFTP, FTPS, SCP, and WebDAV. Dual-pane interface with full keyboard navigation and screen reader compatibility (NVDA, JAWS).
+A keyboard-driven file transfer client supporting SFTP, FTP, and FTPS. Dual-pane interface with full keyboard navigation and screen reader compatibility (NVDA, JAWS).
 
 ## Layout
 
@@ -32,9 +32,14 @@ Each pane is a labeled standard list control, so screen readers announce "Local 
 
 ## Protocols
 
+Implemented:
+
 - **SFTP** (default) — SSH-based, most secure
 - **FTP** — Legacy support
 - **FTPS** — FTP over SSL/TLS
+
+Planned:
+
 - **SCP** — Fast SSH transfers (planned)
 - **WebDAV** — HTTP-based, cloud service compatible (planned)
 
