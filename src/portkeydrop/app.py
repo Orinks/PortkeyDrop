@@ -509,8 +509,8 @@ class MainFrame(wx.Frame):
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
-            host_key_policy=self._host_key_policy(),
         )
+        self._apply_connection_defaults(info)
         self._do_connect(info)
 
     def _on_quick_connect(self, event: wx.CommandEvent) -> None:
@@ -518,6 +518,7 @@ class MainFrame(wx.Frame):
         info = None
         if dlg.ShowModal() == wx.ID_OK:
             info = dlg.get_connection_info()
+            self._apply_connection_defaults(info)
         dlg.Destroy()
         if info:
             self._do_connect(info)
@@ -528,7 +529,7 @@ class MainFrame(wx.Frame):
         info = None
         if result == wx.ID_OK and dlg.connect_requested and dlg.selected_site:
             info = dlg.selected_site.to_connection_info()
-            info.host_key_policy = self._host_key_policy()
+            self._apply_connection_defaults(info)
         dlg.Destroy()
         if info:
             self._do_connect(info)
@@ -639,6 +640,13 @@ class MainFrame(wx.Frame):
         }
         setting = getattr(self._settings.connection, "verify_host_keys", "ask")
         return mapping.get(setting, HostKeyPolicy.PROMPT)
+
+    def _apply_connection_defaults(self, info: ConnectionInfo) -> None:
+        """Apply app-level connection defaults to a connection request."""
+        defaults = getattr(self._settings, "connection", None)
+        info.timeout = max(1, int(getattr(defaults, "timeout", info.timeout)))
+        info.passive_mode = bool(getattr(defaults, "passive_mode", info.passive_mode))
+        info.host_key_policy = self._host_key_policy()
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
