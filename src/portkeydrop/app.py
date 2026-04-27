@@ -27,7 +27,7 @@ from portkeydrop.dialogs.transfer import (
     load_queue,
     save_queue,
 )
-from portkeydrop.services.transfer_service import TransferService
+from portkeydrop.services.transfer_service import TransferService, format_transfer_detail
 from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
@@ -122,6 +122,7 @@ class MainFrame(wx.Frame):
             max_workers=self._settings.transfer.concurrent_transfers,
         )
         self._transfer_state_by_id: dict[str, str] = {}
+        self._transfer_progress_by_id: dict[str, int] = {}
         self._last_failed_transfer: str | None = None
         self._announcer = ScreenReaderAnnouncer()
         self._restore_transfer_queue()
@@ -1539,19 +1540,29 @@ class MainFrame(wx.Frame):
         for job in self._transfer_service.jobs:
             current_state = job.status.value
             previous_state = self._transfer_state_by_id.get(job.id)
-            if current_state == previous_state:
+            state_changed = current_state != previous_state
+            if not state_changed and job.status != TransferStatus.IN_PROGRESS:
                 continue
 
-            self._transfer_state_by_id[job.id] = current_state
+            if state_changed:
+                self._transfer_state_by_id[job.id] = current_state
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
             filename = os.path.basename(job.destination) or PurePosixPath(job.source).name
 
             if job.status == TransferStatus.PENDING:
                 latest_status_message = f"{direction_label} queued."
             elif job.status == TransferStatus.IN_PROGRESS:
-                latest_status_message = f"{direction_label} in progress..."
+                progress_message = self._format_transfer_progress_message(
+                    job, direction_label, filename
+                )
+                latest_status_message = (
+                    f"{direction_label} in progress..." if state_changed else progress_message
+                )
+                if self._should_announce_transfer_progress(job):
+                    self._announce(progress_message)
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
+                self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} complete: {filename}")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
@@ -1559,6 +1570,7 @@ class MainFrame(wx.Frame):
                     refresh_remote_files = True
             elif job.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
+                self._clear_transfer_progress(job.id)
                 error_msg = job.error or "Unknown error"
                 self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
                 self._announce(f"{direction_label} failed.")
@@ -1566,6 +1578,7 @@ class MainFrame(wx.Frame):
                 self._retry_last_failed_item.Enable(True)
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+                self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} cancelled: {filename}")
 
         if refresh_local_files:
@@ -1576,6 +1589,33 @@ class MainFrame(wx.Frame):
         if latest_status_message:
             current_path = self._client.cwd if self._client and self._client.connected else ""
             self._update_status(latest_status_message, current_path)
+
+    def _format_transfer_progress_message(self, job, direction_label: str, filename: str) -> str:
+        return f"{direction_label} {filename} {job.progress}%, {format_transfer_detail(job)}"
+
+    def _should_announce_transfer_progress(self, job) -> bool:
+        settings = getattr(self, "_settings", None)
+        display_settings = getattr(settings, "display", None)
+        interval = max(1, int(getattr(display_settings, "progress_interval", 25)))
+        if job.progress <= 0:
+            return False
+        bucket = min(100, (int(job.progress) // interval) * interval)
+        if bucket <= 0:
+            return False
+        progress_by_id = getattr(self, "_transfer_progress_by_id", None)
+        if progress_by_id is None:
+            progress_by_id = {}
+            self._transfer_progress_by_id = progress_by_id
+        previous_bucket = progress_by_id.get(job.id, 0)
+        if bucket <= previous_bucket:
+            return False
+        progress_by_id[job.id] = bucket
+        return True
+
+    def _clear_transfer_progress(self, job_id: str) -> None:
+        progress_by_id = getattr(self, "_transfer_progress_by_id", None)
+        if progress_by_id is not None:
+            progress_by_id.pop(job_id, None)
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
         dlg = SettingsDialog(
