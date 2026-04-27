@@ -84,6 +84,9 @@ def _hydrate_frame(module):
     frame._last_failed_transfer = None
     frame._retry_last_failed_item = MagicMock()
     frame._toolbar_panel = MagicMock()
+    frame._settings = SimpleNamespace(
+        connection=SimpleNamespace(timeout=45, passive_mode=False, verify_host_keys="never")
+    )
     return frame
 
 
@@ -441,6 +444,62 @@ def test_import_connections_skips_duplicates(app_module):
     message = fake_wx.MessageBox.call_args.args[0]
     assert "Imported 0 connections" in message
     assert "Skipped 1 duplicate" in message
+
+
+def test_apply_connection_defaults_sets_timeout_passive_and_host_key_policy(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    info = app.ConnectionInfo(protocol=app.Protocol.SFTP, host="example.com")
+
+    frame._apply_connection_defaults(info)
+
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_quick_connect_applies_connection_defaults(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    info = app.ConnectionInfo(protocol=app.Protocol.FTP, host="example.com", username="alice")
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_connection_info=MagicMock(return_value=info),
+        Destroy=MagicMock(),
+    )
+
+    with patch.object(app, "QuickConnectDialog", return_value=dialog):
+        frame._on_quick_connect(None)
+
+    frame._do_connect.assert_called_once_with(info)
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_site_manager_connect_applies_connection_defaults(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    site = MagicMock()
+    info = app.ConnectionInfo(protocol=app.Protocol.FTPS, host="example.com", username="alice")
+    site.to_connection_info.return_value = info
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        connect_requested=True,
+        selected_site=site,
+        Destroy=MagicMock(),
+    )
+    frame._site_manager = MagicMock()
+
+    with patch.object(app, "SiteManagerDialog", return_value=dialog):
+        frame._on_site_manager(None)
+
+    frame._do_connect.assert_called_once_with(info)
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
 
 
 def test_on_transfer_update_reports_latest_status(app_module):
