@@ -1253,14 +1253,30 @@ class MainFrame(wx.Frame):
         if not f or not self._client:
             return
         local_path = os.path.join(self._local_cwd, f.name)
+        planned_path = self._resolve_local_transfer_conflict(local_path, f.name, "download")
+        if planned_path is None:
+            return
+        overwrite_existing = planned_path == local_path and os.path.exists(local_path)
         if f.is_dir:
             if f.name == "..":
                 return
-            self._transfer_service.submit_download(self._client, f.path, local_path, recursive=True)
-            self._announce(f"Downloading folder {f.name} to {self._local_cwd}")
+            self._transfer_service.submit_download(
+                self._client,
+                f.path,
+                planned_path,
+                recursive=True,
+                overwrite_existing=overwrite_existing,
+            )
+            self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
         else:
-            self._transfer_service.submit_download(self._client, f.path, local_path, f.size)
-            self._announce(f"Downloading {f.name} to {self._local_cwd}")
+            self._transfer_service.submit_download(
+                self._client,
+                f.path,
+                planned_path,
+                f.size,
+                overwrite_existing=overwrite_existing,
+            )
+            self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
         self._show_transfer_queue()
 
     def _on_upload(self, event) -> None:
@@ -1272,20 +1288,123 @@ class MainFrame(wx.Frame):
         local_path = f.path
         filename = f.name
         remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+        planned_remote_path = self._resolve_remote_transfer_conflict(
+            remote_path, filename, "upload"
+        )
+        if planned_remote_path is None:
+            return
+        overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
+            remote_path
+        )
         if f.is_dir:
             if f.name == "..":
                 return
             self._transfer_service.submit_upload(
-                self._client, local_path, remote_path, recursive=True
+                self._client,
+                local_path,
+                planned_remote_path,
+                recursive=True,
+                overwrite_existing=overwrite_existing,
             )
             self._announce(f"Uploading folder {filename}")
             self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
-            self._transfer_service.submit_upload(self._client, local_path, remote_path, total)
+            self._transfer_service.submit_upload(
+                self._client,
+                local_path,
+                planned_remote_path,
+                total,
+                overwrite_existing=overwrite_existing,
+            )
             self._announce(f"Uploading {filename}")
             self._update_status(f"Uploading {filename}...", self._client.cwd)
         self._show_transfer_queue()
+
+    def _transfer_overwrite_mode(self) -> str:
+        transfer_settings = getattr(getattr(self, "_settings", None), "transfer", None)
+        mode = getattr(transfer_settings, "overwrite_mode", "ask")
+        return mode if mode in {"ask", "overwrite", "skip", "rename"} else "ask"
+
+    def _resolve_local_transfer_conflict(
+        self, local_path: str, filename: str, action: str
+    ) -> str | None:
+        if not os.path.exists(local_path):
+            return local_path
+        mode = self._transfer_overwrite_mode()
+        if mode == "overwrite":
+            return local_path
+        if mode == "skip":
+            self._announce(f"Skipped {action}; {filename} already exists")
+            return None
+        if mode == "rename":
+            return self._unique_local_path(local_path)
+        if self._confirm_overwrite(filename, action):
+            return local_path
+        self._announce(f"Skipped {action}; {filename} already exists")
+        return None
+
+    def _resolve_remote_transfer_conflict(
+        self, remote_path: str, filename: str, action: str
+    ) -> str | None:
+        if not self._remote_path_exists(remote_path):
+            return remote_path
+        mode = self._transfer_overwrite_mode()
+        if mode == "overwrite":
+            return remote_path
+        if mode == "skip":
+            self._announce(f"Skipped {action}; {filename} already exists")
+            return None
+        if mode == "rename":
+            return self._unique_remote_path(remote_path)
+        if self._confirm_overwrite(filename, action):
+            return remote_path
+        self._announce(f"Skipped {action}; {filename} already exists")
+        return None
+
+    def _confirm_overwrite(self, filename: str, action: str) -> bool:
+        result = wx.MessageBox(
+            f"{filename} already exists. Overwrite it?",
+            f"Confirm {action.title()} Overwrite",
+            wx.YES_NO | wx.ICON_WARNING,
+            self,
+        )
+        return result == wx.YES
+
+    @staticmethod
+    def _unique_local_path(path: str) -> str:
+        if not os.path.exists(path):
+            return path
+        directory, filename = os.path.split(path)
+        stem, ext = os.path.splitext(filename)
+        counter = 1
+        while True:
+            candidate = os.path.join(directory, f"{stem} ({counter}){ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            counter += 1
+
+    def _unique_remote_path(self, path: str) -> str:
+        if not self._remote_path_exists(path):
+            return path
+        parent, _, filename = path.rpartition("/")
+        stem, ext = os.path.splitext(filename)
+        counter = 1
+        while True:
+            candidate_name = f"{stem} ({counter}){ext}"
+            candidate = f"{parent}/{candidate_name}" if parent else candidate_name
+            if not self._remote_path_exists(candidate):
+                return candidate
+            counter += 1
+
+    def _remote_path_exists(self, path: str) -> bool:
+        if not self._client:
+            return False
+        try:
+            self._client.stat(path)
+            return True
+        except Exception:
+            return False
 
     def _get_clipboard_files(self) -> list[str]:
         """Get file paths from the system clipboard."""
@@ -1315,13 +1434,31 @@ class MainFrame(wx.Frame):
                 continue
             filename = p.name
             remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+            planned_remote_path = self._resolve_remote_transfer_conflict(
+                remote_path, filename, "upload"
+            )
+            if planned_remote_path is None:
+                continue
+            overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
+                remote_path
+            )
             if p.is_dir():
                 self._transfer_service.submit_upload(
-                    self._client, str(p), remote_path, recursive=True
+                    self._client,
+                    str(p),
+                    planned_remote_path,
+                    recursive=True,
+                    overwrite_existing=overwrite_existing,
                 )
             else:
                 total = os.path.getsize(str(p))
-                self._transfer_service.submit_upload(self._client, str(p), remote_path, total)
+                self._transfer_service.submit_upload(
+                    self._client,
+                    str(p),
+                    planned_remote_path,
+                    total,
+                    overwrite_existing=overwrite_existing,
+                )
             count += 1
         if count:
             self._announce(

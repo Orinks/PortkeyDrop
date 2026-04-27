@@ -30,6 +30,7 @@ class TestTransferJobToDict:
             protocol="sftp",
             total_bytes=1024,
             transferred_bytes=512,
+            overwrite_existing=True,
             status=TransferStatus.PENDING,
             error=None,
         )
@@ -42,6 +43,7 @@ class TestTransferJobToDict:
             "protocol": "sftp",
             "total_bytes": 1024,
             "transferred_bytes": 512,
+            "overwrite_existing": True,
             "status": "pending",
             "error": "",
         }
@@ -87,6 +89,7 @@ class TestTransferJobFromDict:
             "protocol": "sftp",
             "total_bytes": 2048,
             "transferred_bytes": 0,
+            "overwrite_existing": True,
             "status": "pending",
             "error": "",
         }
@@ -98,6 +101,7 @@ class TestTransferJobFromDict:
         assert job.protocol == "sftp"
         assert job.total_bytes == 2048
         assert job.transferred_bytes == 0
+        assert job.overwrite_existing is True
         assert job.status == TransferStatus.RESTORED
         assert job.error is None
 
