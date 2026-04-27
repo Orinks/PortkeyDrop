@@ -1,7 +1,7 @@
 [project]
 name = "portkeydrop"
 version = "0.3.0"
-description = "A keyboard-driven file transfer client for FTP, SFTP, FTPS, SCP, and WebDAV"
+description = "A keyboard-driven file transfer client for SFTP, FTP, and FTPS"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "asyncssh>=2.14",
