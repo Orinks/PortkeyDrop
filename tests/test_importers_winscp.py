@@ -168,7 +168,7 @@ def test_detect_ini_path_appdata(monkeypatch):
     monkeypatch.setenv("APPDATA", "/fake/appdata")
     from portkeydrop.importers.winscp import detect_ini_path
 
-    assert str(detect_ini_path()) == "/fake/appdata/WinSCP.ini"
+    assert detect_ini_path() == Path("/fake/appdata") / "WinSCP.ini"
 
 
 def test_detect_ini_path_no_appdata(monkeypatch):

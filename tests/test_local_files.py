@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -94,8 +95,9 @@ class TestParentLocal:
         assert result == tmp_path.resolve()
 
     def test_parent_of_root(self):
-        result = parent_local("/")
-        assert str(result) == "/"
+        root = Path(Path.cwd().anchor)
+        result = parent_local(root)
+        assert result == root
 
 
 class TestDeleteLocal:
