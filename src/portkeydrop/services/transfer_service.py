@@ -91,6 +91,31 @@ class TransferJob:
         )
 
 
+def format_bytes(byte_count: int) -> str:
+    """Return a compact human-readable byte count for transfer progress."""
+    size = max(0, int(byte_count))
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size)
+    for unit in units:
+        if unit == "B":
+            if value < 1024:
+                return f"{int(value)} B"
+        elif value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} PB"
+
+
+def format_transfer_detail(job: TransferJob) -> str:
+    """Return byte-level progress text for queue rows and speech output."""
+    transferred_bytes = int(getattr(job, "transferred_bytes", 0) or 0)
+    total_bytes = int(getattr(job, "total_bytes", 0) or 0)
+    transferred = format_bytes(transferred_bytes)
+    if total_bytes > 0:
+        return f"{transferred} of {format_bytes(total_bytes)}"
+    return f"{transferred} transferred"
+
+
 @dataclass
 class _Worker:
     """Tracks a worker thread and its stop signal for pool replacement."""

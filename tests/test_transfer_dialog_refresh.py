@@ -54,7 +54,15 @@ def transfer_module(monkeypatch):
     return module, fake_wx
 
 
-def _make_job(transfer_id, path, direction="download", progress=0, status="pending"):
+def _make_job(
+    transfer_id,
+    path,
+    direction="download",
+    progress=0,
+    status="pending",
+    transferred_bytes=0,
+    total_bytes=0,
+):
     from portkeydrop.services.transfer_service import TransferDirection, TransferStatus
 
     return SimpleNamespace(
@@ -63,6 +71,8 @@ def _make_job(transfer_id, path, direction="download", progress=0, status="pendi
         destination="/tmp/" + path.rsplit("/", 1)[-1],
         direction=TransferDirection.UPLOAD if direction == "upload" else TransferDirection.DOWNLOAD,
         progress=progress,
+        transferred_bytes=transferred_bytes,
+        total_bytes=total_bytes,
         status=TransferStatus(status),
     )
 
@@ -108,8 +118,30 @@ def test_refresh_adds_new_transfers_when_row_missing(transfer_module):
     dialog._refresh()
 
     transfer_list.InsertItem.assert_has_calls([call(0, "a.txt"), call(1, "b.txt")])
-    assert transfer_list.SetItem.call_count == 6
+    assert transfer_list.SetItem.call_count == 8
     transfer_list.DeleteAllItems.assert_not_called()
+
+
+def test_refresh_shows_transferred_bytes_as_progress_detail(transfer_module):
+    module, fake_wx = transfer_module
+    dialog, transfer_list, service = _build_dialog(module, fake_wx)
+    service.jobs = [
+        _make_job(
+            "j3",
+            "/tmp/archive.zip",
+            "download",
+            progress=50,
+            status="in_progress",
+            transferred_bytes=1024,
+            total_bytes=2048,
+        ),
+    ]
+    transfer_list.GetItemCount.return_value = 0
+
+    dialog._refresh()
+
+    transfer_list.SetItem.assert_any_call(0, 3, "1.0 KB of 2.0 KB")
+    transfer_list.SetItem.assert_any_call(0, 4, "50%")
 
 
 def test_refresh_updates_only_changed_existing_cells(transfer_module):
@@ -122,7 +154,7 @@ def test_refresh_updates_only_changed_existing_cells(transfer_module):
     dialog._refresh()
 
     transfer_list.InsertItem.assert_not_called()
-    assert transfer_list.SetItem.call_count == 4
+    assert transfer_list.SetItem.call_count == 5
     transfer_list.DeleteAllItems.assert_not_called()
 
 
@@ -133,7 +165,7 @@ def test_refresh_does_not_set_item_when_values_unchanged(transfer_module):
         _make_job("j11", "/tmp/same.txt", "download", progress=50, status="in_progress")
     ]
     transfer_list.GetItemCount.return_value = 1
-    current_values = ["same.txt", "download", "50%", "50%"]
+    current_values = ["same.txt", "download", "50%", "0 B transferred", "50%"]
     transfer_list.GetItemText.side_effect = lambda _row, col: current_values[col]
 
     dialog._refresh()

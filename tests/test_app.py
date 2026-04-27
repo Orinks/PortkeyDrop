@@ -75,6 +75,9 @@ def _hydrate_frame(module):
     frame._get_selected_local_file = MagicMock()
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
+    frame._transfer_state_by_id = {}
+    frame._transfer_progress_by_id = {}
+    frame._settings = SimpleNamespace(display=SimpleNamespace(progress_interval=25))
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     frame.activity_log = MagicMock()
     frame._activity_log_visible = True
@@ -82,6 +85,33 @@ def _hydrate_frame(module):
     frame._retry_last_failed_item = MagicMock()
     frame._toolbar_panel = MagicMock()
     return frame
+
+
+def test_on_transfer_update_announces_progress_at_configured_interval(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+    job = SimpleNamespace(
+        id="job-progress",
+        direction=app.TransferDirection.DOWNLOAD,
+        source="/remote/report.zip",
+        destination="C:/Users/joshu/Downloads/report.zip",
+        status=app.TransferStatus.IN_PROGRESS,
+        progress=24,
+        transferred_bytes=24,
+        total_bytes=100,
+    )
+    frame._transfer_service.jobs = [job]
+
+    frame._on_transfer_update(None)
+    frame._announce.assert_not_called()
+
+    job.progress = 25
+    job.transferred_bytes = 25
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_called_once_with("Download report.zip 25%, 25 B of 100 B")
+    frame._update_status.assert_called_with("Download report.zip 25%, 25 B of 100 B", "")
 
 
 def test_main_frame_init_sets_transfer_state(tmp_path, app_module):

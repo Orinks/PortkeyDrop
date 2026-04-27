@@ -19,6 +19,7 @@ from portkeydrop.services.transfer_service import (  # noqa: F401
     TransferJob,
     TransferService,
     TransferStatus,
+    format_transfer_detail,
     get_transfer_event_binder,
 )
 
@@ -100,7 +101,8 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
-            self.transfer_list.InsertColumn(3, "Status", width=100)
+            self.transfer_list.InsertColumn(3, "Transferred", width=130)
+            self.transfer_list.InsertColumn(4, "Status", width=100)
             sizer.Add(self.transfer_list, 1, wx.EXPAND | wx.ALL, 8)
 
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -267,7 +269,13 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
                 display_status = (
                     f"{j.progress}%" if j.status == TransferStatus.IN_PROGRESS else j.status.value
                 )
-                cols = [name, j.direction.value, f"{j.progress}%", display_status]
+                cols = [
+                    name,
+                    j.direction.value,
+                    f"{j.progress}%",
+                    format_transfer_detail(j),
+                    display_status,
+                ]
                 if i >= current_count:
                     row = self.transfer_list.InsertItem(i, cols[0])
                     for col_idx in range(1, len(cols)):
