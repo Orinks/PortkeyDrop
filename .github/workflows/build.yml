@@ -136,10 +136,43 @@ jobs:
             dist/PortkeyDrop_Setup_*.exe
             dist/PortkeyDrop_Portable_*.zip
 
+  build-macos:
+    name: macOS
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --only-binary wxPython wxPython
+          pip install -e .[dev] pyinstaller pillow
+
+      - name: Build
+        timeout-minutes: 30
+        run: |
+          python installer/build.py --skip-installer --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: macos
+          path: |
+            dist/PortkeyDrop_macOS_*.zip
+
   release:
     name: Release
-    needs: [prepare, build-windows]
-    if: always() && needs.prepare.outputs.should_build == 'true' && needs.build-windows.result == 'success'
+    needs: [prepare, build-windows, build-macos]
+    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -171,11 +204,13 @@ jobs:
               case "$name" in
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-portable.zip" ;;
+                *macOS*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-macOS.zip" ;;
               esac
             else
               case "$name" in
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-portable.zip" ;;
+                *macOS*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-macOS.zip" ;;
               esac
             fi
           done
