@@ -2,7 +2,7 @@
 PyInstaller spec file for PortkeyDrop.
 
 This spec file configures PyInstaller to build PortkeyDrop as a standalone
-application for Windows.
+application.
 
 Usage:
     pyinstaller installer/portkeydrop.spec
@@ -218,3 +218,18 @@ coll = COLLECT(
     upx_exclude=[],
     name=f"{APP_NAME}_dir",
 )
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=ICON_PATH,
+        bundle_identifier=APP_BUNDLE_ID,
+        info_plist={
+            "CFBundleName": APP_NAME,
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSHighResolutionCapable": True,
+        },
+    )
