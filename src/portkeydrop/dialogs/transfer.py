@@ -65,6 +65,8 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
     import wx
     from pathlib import PurePosixPath
 
+    from portkeydrop.accessible_list import create_report_list
+
     class TransferDialog(wx.Dialog):
         """Disposable observer over the :class:`TransferService` job list."""
 
@@ -97,13 +99,13 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             # StaticText label immediately before the list so NVDA resolves
             # "Transfer Queue" as the accessible name via HWND sibling order.
             wx.StaticText(self, label="Transfer Queue:")
-            self.transfer_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+            self.transfer_list = create_report_list(self, style=wx.LC_REPORT)
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
             self.transfer_list.InsertColumn(3, "Transferred", width=130)
             self.transfer_list.InsertColumn(4, "Status", width=100)
-            sizer.Add(self.transfer_list, 1, wx.EXPAND | wx.ALL, 8)
+            sizer.Add(self.transfer_list.window, 1, wx.EXPAND | wx.ALL, 8)
 
             btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
             # Full label gives screen reader users context without needing to read

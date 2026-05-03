@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 import wx
 
 from portkeydrop import __version__
+from portkeydrop.accessible_list import AccessibleReportList, create_report_list, file_row_text
 from portkeydrop.dialogs.properties import PropertiesDialog
 from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
@@ -307,13 +308,17 @@ class MainFrame(wx.Frame):
         local_list_label = wx.StaticText(local_panel, label="Local:")
         local_sizer.Add(local_list_label, 0, wx.LEFT, 4)
 
-        self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.local_file_list = create_report_list(
+            local_panel,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            row_formatter=file_row_text,
+        )
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
         self.local_file_list.InsertColumn(3, "Modified", width=130)
         self.local_file_list.InsertColumn(4, "Permissions", width=100)
-        local_sizer.Add(self.local_file_list, 1, wx.EXPAND)
+        local_sizer.Add(self.local_file_list.window, 1, wx.EXPAND)
         local_panel.SetSizer(local_sizer)
 
         # --- Remote pane (right) ---
@@ -332,13 +337,17 @@ class MainFrame(wx.Frame):
         remote_list_label = wx.StaticText(remote_panel, label="Remote:")
         remote_sizer.Add(remote_list_label, 0, wx.LEFT, 4)
 
-        self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.remote_file_list = create_report_list(
+            remote_panel,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            row_formatter=file_row_text,
+        )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
         self.remote_file_list.InsertColumn(3, "Modified", width=130)
         self.remote_file_list.InsertColumn(4, "Permissions", width=100)
-        remote_sizer.Add(self.remote_file_list, 1, wx.EXPAND)
+        remote_sizer.Add(self.remote_file_list.window, 1, wx.EXPAND)
         self.remote_panel = remote_panel
         remote_panel.SetSizer(remote_sizer)
 
@@ -405,20 +414,22 @@ class MainFrame(wx.Frame):
 
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""
-        focused = self.FindFocus()
-        return focused is self.local_file_list
+        return self._is_list_focused(self.local_file_list)
 
     def _is_remote_focused(self) -> bool:
         """Return True if the remote pane currently has focus."""
-        focused = self.FindFocus()
-        return focused is self.remote_file_list
+        return self._is_list_focused(self.remote_file_list)
 
-    def _get_focused_file_list(self) -> wx.ListCtrl | None:
-        """Return whichever file list has focus, or None."""
+    def _is_list_focused(self, file_list: AccessibleReportList) -> bool:
         focused = self.FindFocus()
-        if focused is self.local_file_list:
+        window = getattr(file_list, "window", file_list)
+        return focused is file_list or focused is window
+
+    def _get_focused_file_list(self) -> AccessibleReportList | None:
+        """Return whichever file list has focus, or None."""
+        if self._is_list_focused(self.local_file_list):
             return self.local_file_list
-        if focused is self.remote_file_list:
+        if self._is_list_focused(self.remote_file_list):
             return self.remote_file_list
         return None
 
@@ -768,16 +779,15 @@ class MainFrame(wx.Frame):
             self._refresh_remote_files()
 
     def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
-        focused = self.FindFocus()
         if self._activity_log_visible:
-            if focused is self.local_file_list:
+            if self._is_local_focused():
                 self.remote_file_list.SetFocus()
-            elif focused is self.remote_file_list:
+            elif self._is_remote_focused():
                 self.activity_log.SetFocus()
             else:
                 self.local_file_list.SetFocus()
         else:
-            if focused is self.local_file_list:
+            if self._is_local_focused():
                 self.remote_file_list.SetFocus()
             else:
                 self.local_file_list.SetFocus()
@@ -839,7 +849,7 @@ class MainFrame(wx.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
-        restore_focus = self.FindFocus() is self.remote_file_list
+        restore_focus = self._is_remote_focused()
         self._apply_sort(files)
         # Insert ".." entry at the top to navigate to parent
         if cwd != "/":
@@ -874,7 +884,7 @@ class MainFrame(wx.Frame):
         wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
-        restore_focus = self.FindFocus() is self.local_file_list
+        restore_focus = self._is_local_focused()
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
@@ -932,7 +942,7 @@ class MainFrame(wx.Frame):
         key_fn = key_map.get(self._settings.display.sort_by, key_map["name"])
         files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
 
-    def _populate_file_list(self, list_ctrl: wx.ListCtrl, files: list[RemoteFile]) -> None:
+    def _populate_file_list(self, list_ctrl: AccessibleReportList, files: list[RemoteFile]) -> None:
         list_ctrl.DeleteAllItems()
         for f in files:
             idx = list_ctrl.InsertItem(list_ctrl.GetItemCount(), f.name)
@@ -992,7 +1002,7 @@ class MainFrame(wx.Frame):
     # --- Selection helpers ---
 
     def _get_selected_file_from_list(
-        self, list_ctrl: wx.ListCtrl, files: list[RemoteFile], filter_text: str
+        self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
     ) -> RemoteFile | None:
         idx = list_ctrl.GetFirstSelected()
         if idx == wx.NOT_FOUND:
