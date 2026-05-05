@@ -336,6 +336,12 @@ class SettingsDialog(wx.Dialog):
             name="Passive mode",
         )
 
+        self.ftp_ssl_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Use SSL (AUTH SSL) by default for FTP"),
+            name="Use SSL with FTP by default",
+        )
+
         self.verify_keys_choice = self._add_labeled_row(
             panel,
             sizer,
@@ -454,6 +460,7 @@ class SettingsDialog(wx.Dialog):
         self.keepalive_spin.SetValue(s.connection.keepalive)
         self.retries_spin.SetValue(s.connection.max_retries)
         self.passive_check.SetValue(s.connection.passive_mode)
+        self.ftp_ssl_check.SetValue(s.connection.ftp_explicit_ssl)
         idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
         self.verify_keys_choice.SetSelection(idx)
         self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
@@ -491,6 +498,7 @@ class SettingsDialog(wx.Dialog):
         s.connection.keepalive = self.keepalive_spin.GetValue()
         s.connection.max_retries = self.retries_spin.GetValue()
         s.connection.passive_mode = self.passive_check.GetValue()
+        s.connection.ftp_explicit_ssl = self.ftp_ssl_check.GetValue()
         s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
         s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
         s.app.auto_update_enabled = self.auto_update_check.GetValue()

@@ -79,6 +79,24 @@ class _Button(_Window):
         return None
 
 
+class _CheckBox(_Window):
+    def __init__(self, *_args, **_kwargs):
+        self.value = False
+        self.enabled = True
+
+    def SetName(self, *_args, **_kwargs):
+        return None
+
+    def Enable(self, enabled):
+        self.enabled = enabled
+
+    def SetValue(self, value):
+        self.value = value
+
+    def GetValue(self):
+        return self.value
+
+
 def _load_quick_connect(monkeypatch):
     wx = types.ModuleType("wx")
     wx.Dialog = _Dialog
@@ -88,6 +106,7 @@ def _load_quick_connect(monkeypatch):
     wx.StaticText = _StaticText
     wx.Choice = _Choice
     wx.TextCtrl = _TextCtrl
+    wx.CheckBox = _CheckBox
     wx.DEFAULT_DIALOG_STYLE = 1
     wx.VERTICAL = 2
     wx.EXPAND = 4
@@ -114,3 +133,18 @@ def test_quick_connect_exposes_webdav_and_default_port(monkeypatch):
 
     assert dialog.port_text.GetValue() == "443"
     assert dialog.get_connection_info().protocol is module.Protocol.WEBDAV
+
+
+def test_quick_connect_ftp_auth_ssl_checkbox(monkeypatch):
+    module = _load_quick_connect(monkeypatch)
+    dialog = module.QuickConnectDialog()
+
+    dialog.protocol_choice.SetSelection(1)
+    dialog._on_protocol_change(None)
+    dialog.ftp_ssl_check.SetValue(True)
+
+    info = dialog.get_connection_info()
+
+    assert info.protocol is module.Protocol.FTP
+    assert info.ftp_explicit_ssl is True
+    assert dialog.port_text.GetValue() == "21"

@@ -13,7 +13,7 @@ from .models import ImportedSite
 _PROTOCOL_MAP = {
     "0": "ftp",
     "1": "sftp",
-    "3": "ftps",
+    "3": "ftp",
     "4": "ftps",
 }
 
@@ -41,6 +41,7 @@ def _parse_root(root: ET.Element) -> list[ImportedSite]:
 
         raw_protocol = (server.findtext("Protocol") or "1").strip()
         protocol = _PROTOCOL_MAP.get(raw_protocol, "sftp")
+        ftp_explicit_ssl = raw_protocol == "3"
 
         raw_port = (server.findtext("Port") or "").strip()
         port = int(raw_port) if raw_port.isdigit() else 0
@@ -64,6 +65,7 @@ def _parse_root(root: ET.Element) -> list[ImportedSite]:
                 username=username,
                 password=password,
                 key_path=key_path,
+                ftp_explicit_ssl=ftp_explicit_ssl,
                 initial_dir=initial_dir,
                 notes=notes,
             )

@@ -19,6 +19,7 @@ import pytest
 from portkeydrop.protocols import (
     ConnectionInfo,
     FTPClient,
+    FTPSAuthSSLClient,
     FTPSClient,
     HostKeyPolicy,
     Protocol,
@@ -138,6 +139,10 @@ class TestConnectionInfo:
         info = ConnectionInfo(protocol=Protocol.FTP)
         assert info.effective_port == 21
 
+    def test_effective_port_explicit_ftp_ssl(self):
+        info = ConnectionInfo(protocol=Protocol.FTP, ftp_explicit_ssl=True)
+        assert info.effective_port == 21
+
     def test_effective_port_default_ftps(self):
         info = ConnectionInfo(protocol=Protocol.FTPS)
         assert info.effective_port == 990
@@ -160,6 +165,15 @@ class TestCreateClient:
         info = ConnectionInfo(protocol=Protocol.FTP, host="example.com")
         client = create_client(info)
         assert isinstance(client, FTPClient)
+
+    def test_create_explicit_ftp_ssl_client(self):
+        info = ConnectionInfo(
+            protocol=Protocol.FTP,
+            host="example.com",
+            ftp_explicit_ssl=True,
+        )
+        client = create_client(info)
+        assert isinstance(client, FTPSAuthSSLClient)
 
     def test_create_ftps_client(self):
         info = ConnectionInfo(protocol=Protocol.FTPS, host="example.com")
@@ -555,6 +569,27 @@ class TestFTPClient:
         with pytest.raises(ConnectionError, match="FTP connection failed"):
             client.connect()
         assert not client.connected
+
+    @patch("portkeydrop.protocols.AuthSSLFTP_TLS")
+    def test_explicit_ssl_connect_uses_auth_ssl_client(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.pwd.return_value = "/"
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(
+            protocol=Protocol.FTP,
+            host="example.com",
+            username="user",
+            password="pass",
+            ftp_explicit_ssl=True,
+        )
+        client = FTPSAuthSSLClient(info)
+        client.connect()
+
+        assert client.connected
+        mock_ftp.connect.assert_called_once_with("example.com", 21, 30)
+        mock_ftp.login.assert_called_once_with("user", "pass")
+        mock_ftp.prot_p.assert_called_once()
 
     @patch("ftplib.FTP")
     def test_disconnect(self, mock_ftp_class):

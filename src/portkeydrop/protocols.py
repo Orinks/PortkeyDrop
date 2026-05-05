@@ -98,12 +98,15 @@ class ConnectionInfo:
     key_path: str = ""
     timeout: int = 30
     passive_mode: bool = True  # FTP only
+    ftp_explicit_ssl: bool = False  # FTP AUTH SSL
     host_key_policy: HostKeyPolicy = HostKeyPolicy.AUTO_ADD
 
     @property
     def effective_port(self) -> int:
         if self.port > 0:
             return self.port
+        if self.protocol is Protocol.FTP and self.ftp_explicit_ssl:
+            return 21
         defaults = {
             Protocol.FTP: 21,
             Protocol.FTPS: 990,
@@ -391,6 +394,38 @@ class FTPSClient(FTPClient):
         except Exception as e:
             self._connected = False
             raise ConnectionError(f"FTPS connection failed: {e}") from e
+
+
+class AuthSSLFTP_TLS(ftplib.FTP_TLS):
+    """FTP_TLS variant for servers which require the legacy AUTH SSL command."""
+
+    def auth(self) -> None:
+        if self.sock is None:
+            raise ValueError("Not connected")
+        if isinstance(self.sock, ssl.SSLSocket):
+            return
+        self.voidcmd("AUTH SSL")
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+        self.file = self.sock.makefile(mode="r", encoding=self.encoding)
+
+
+class FTPSAuthSSLClient(FTPSClient):
+    """Explicit FTP over SSL client using AUTH SSL on the control connection."""
+
+    def connect(self) -> None:
+        try:
+            ctx = ssl.create_default_context()
+            self._ftp = AuthSSLFTP_TLS(context=ctx)
+            self._ftp.connect(self._info.host, self._info.effective_port, self._info.timeout)
+            self._ftp.login(self._info.username, self._info.password)
+            self._ftp.prot_p()
+            if self._info.passive_mode:
+                self._ftp.set_pasv(True)
+            self._cwd = self._ftp.pwd()
+            self._connected = True
+        except Exception as e:
+            self._connected = False
+            raise ConnectionError(f"FTP explicit SSL connection failed: {e}") from e
 
 
 class WebDAVClient(TransferClient):
@@ -1763,6 +1798,8 @@ def create_client(info: ConnectionInfo) -> TransferClient:
         Protocol.SFTP: SFTPClient,
         Protocol.WEBDAV: WebDAVClient,
     }
+    if info.protocol is Protocol.FTP and info.ftp_explicit_ssl:
+        return FTPSAuthSSLClient(info)
     client_class = clients.get(info.protocol)
     if client_class is None:
         raise ValueError(f"Protocol {info.protocol.value} is not yet supported")

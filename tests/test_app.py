@@ -84,7 +84,12 @@ def _hydrate_frame(module):
     frame._retry_last_failed_item = MagicMock()
     frame._toolbar_panel = MagicMock()
     frame._settings = SimpleNamespace(
-        connection=SimpleNamespace(timeout=45, passive_mode=False, verify_host_keys="never"),
+        connection=SimpleNamespace(
+            timeout=45,
+            passive_mode=False,
+            ftp_explicit_ssl=False,
+            verify_host_keys="never",
+        ),
         display=SimpleNamespace(progress_interval=25),
         transfer=SimpleNamespace(overwrite_mode="ask"),
     )
@@ -708,10 +713,13 @@ def test_toolbar_protocol_change_uses_webdav_default_port(app_module):
     frame = _hydrate_frame(app_module)
     frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="webdav"))
     frame.tb_port = MagicMock()
+    frame.tb_ftp_ssl = MagicMock()
 
     frame._on_toolbar_protocol_change(None)
 
     frame.tb_port.SetValue.assert_called_once_with("443")
+    frame.tb_ftp_ssl.Enable.assert_called_once_with(False)
+    frame.tb_ftp_ssl.SetValue.assert_called_once_with(False)
 
 
 def test_effective_site_port_uses_webdav_default(app_module):

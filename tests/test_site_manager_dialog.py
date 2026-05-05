@@ -156,6 +156,25 @@ class _Choice(_Window):
         return self._choices[0] if self._choices else ""
 
 
+class _CheckBox(_Window):
+    def __init__(self, *a, **kw):
+        self._value = False
+        self._enabled = True
+        self._name = ""
+
+    def SetName(self, value):
+        self._name = value
+
+    def Enable(self, enabled):
+        self._enabled = enabled
+
+    def SetValue(self, value):
+        self._value = value
+
+    def GetValue(self):
+        return self._value
+
+
 class _StaticText(_Window):
     pass
 
@@ -220,6 +239,7 @@ def _make_fake_wx():
     wx.Panel = _Window
     wx.TextCtrl = _TextCtrl
     wx.Button = _Button
+    wx.CheckBox = _CheckBox
     wx.Choice = _Choice
     wx.StaticText = _StaticText
     wx.FlexGridSizer = _FlexGridSizer
@@ -252,6 +272,7 @@ def _make_fake_wx():
     wx.ID_CANCEL = 5101
     wx.WXK_ESCAPE = 27
     wx.EVT_BUTTON = object()
+    wx.EVT_CHOICE = object()
     wx.EVT_LISTBOX = object()
     wx.EVT_LISTBOX_DCLICK = object()
     wx.EVT_CHAR_HOOK = object()

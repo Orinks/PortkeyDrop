@@ -61,6 +61,13 @@ class QuickConnectDialog(wx.Dialog):
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(self.password_text, 1, wx.EXPAND)
 
+        # FTP SSL
+        self.ftp_ssl_check = wx.CheckBox(self, label="Use SSL (AUTH SSL)")
+        self.ftp_ssl_check.SetName("Use SSL with FTP")
+        self.ftp_ssl_check.Enable(False)
+        grid.Add(wx.StaticText(self, label=""))
+        grid.Add(self.ftp_ssl_check, 1, wx.EXPAND)
+
         sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 10)
 
         # Buttons
@@ -83,8 +90,16 @@ class QuickConnectDialog(wx.Dialog):
 
     def _on_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.protocol_choice.GetStringSelection()
-        defaults = {"sftp": "22", "ftp": "21", "ftps": "990", "webdav": "443"}
+        defaults = {
+            "sftp": "22",
+            "ftp": "21",
+            "ftps": "990",
+            "webdav": "443",
+        }
         self.port_text.SetValue(defaults.get(proto, "22"))
+        self.ftp_ssl_check.Enable(proto == "ftp")
+        if proto != "ftp":
+            self.ftp_ssl_check.SetValue(False)
 
     def get_connection_info(self) -> ConnectionInfo:
         """Return ConnectionInfo from dialog fields."""
@@ -98,4 +113,5 @@ class QuickConnectDialog(wx.Dialog):
             port=int(port_str) if port_str else 0,
             username=self.username_text.GetValue().strip(),
             password=self.password_text.GetValue(),
+            ftp_explicit_ssl=bool(self.ftp_ssl_check.GetValue()) if proto_str == "ftp" else False,
         )

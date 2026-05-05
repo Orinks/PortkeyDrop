@@ -88,6 +88,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.BoxSizer = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.StaticText = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Choice = lambda *args, **kwargs: _SimpleWidget()
+    fake_wx.CheckBox = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.TextCtrl = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.ListBox = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Button = lambda *args, **kwargs: _SimpleWidget()
