@@ -1,17 +1,23 @@
 # Portkey Drop - Product Requirements Document
 
 ## Overview
-Portkey Drop is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via FTP, SFTP, FTPS, SCP, and WebDAV. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
+Portkey Drop is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via SFTP, FTP, and FTPS. SCP and WebDAV are planned protocol targets. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
 
 ## Why This Exists
 Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. Portkey Drop uses a dual-pane layout with properly labeled standard ListCtrl panes ("Local Files" / "Remote Files") that screen readers like NVDA and JAWS handle naturally. Each pane is a standard list control with SetName(), so screen readers announce which pane has focus. Every action is keyboard-accessible and every state change is announced.
 
-## Supported Protocols
+## Protocols
+
+Implemented:
+
 1. **SFTP** (SSH File Transfer Protocol) - Primary, most secure, most common
 2. **FTP** (File Transfer Protocol) - Legacy support, still widely used
 3. **FTPS** (FTP over SSL/TLS) - Encrypted FTP
-4. **SCP** (Secure Copy Protocol) - Fast SSH-based transfers
-5. **WebDAV** (Web Distributed Authoring) - HTTP-based, used by cloud services
+
+Planned:
+
+1. **SCP** (Secure Copy Protocol) - Fast SSH-based transfers
+2. **WebDAV** (Web Distributed Authoring) - HTTP-based, used by cloud services
 
 ## Core Features
 
@@ -58,7 +64,7 @@ Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on vi
 
 ### Connection Defaults
 - Default protocol: SFTP (most secure)
-- Default port: 22 (SFTP), 21 (FTP), 990 (FTPS), 443 (WebDAV)
+- Default port: 22 (SFTP), 21 (FTP), 990 (FTPS)
 - Connection timeout: 30 seconds
 - Keepalive interval: 60 seconds
 - Max retries: 3
@@ -83,10 +89,10 @@ Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on vi
 ## Architecture
 - **UI Layer**: wxPython + Prismatoid (screen reader announcements)
 - **Protocol Layer**: Abstract `TransferClient` interface per protocol
-  - `paramiko` for SFTP/SCP
+  - `asyncssh` for SFTP
   - `ftplib` (stdlib) for FTP
   - `ftplib` with SSL context for FTPS
-  - `requests` + `webdavlib` for WebDAV
+  - Planned: SCP and WebDAV clients
 - **Settings**: JSON config at `~/.portkeydrop/settings.json`
 - **Site Manager**: JSON at `~/.portkeydrop/sites.json` (passwords encrypted)
 - **Transfer Queue**: Threaded background transfers with progress callbacks

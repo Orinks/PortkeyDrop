@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 import wx
 
 from portkeydrop import __version__
+from portkeydrop.accessible_list import AccessibleReportList, create_report_list, file_row_text
 from portkeydrop.dialogs.properties import PropertiesDialog
 from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
@@ -27,7 +28,7 @@ from portkeydrop.dialogs.transfer import (
     load_queue,
     save_queue,
 )
-from portkeydrop.services.transfer_service import TransferService
+from portkeydrop.services.transfer_service import TransferService, format_transfer_detail
 from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
@@ -122,6 +123,7 @@ class MainFrame(wx.Frame):
             max_workers=self._settings.transfer.concurrent_transfers,
         )
         self._transfer_state_by_id: dict[str, str] = {}
+        self._transfer_progress_by_id: dict[str, int] = {}
         self._last_failed_transfer: str | None = None
         self._announcer = ScreenReaderAnnouncer()
         self._restore_transfer_queue()
@@ -306,13 +308,17 @@ class MainFrame(wx.Frame):
         local_list_label = wx.StaticText(local_panel, label="Local:")
         local_sizer.Add(local_list_label, 0, wx.LEFT, 4)
 
-        self.local_file_list = wx.ListCtrl(local_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.local_file_list = create_report_list(
+            local_panel,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            row_formatter=file_row_text,
+        )
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
         self.local_file_list.InsertColumn(2, "Type", width=70)
         self.local_file_list.InsertColumn(3, "Modified", width=130)
         self.local_file_list.InsertColumn(4, "Permissions", width=100)
-        local_sizer.Add(self.local_file_list, 1, wx.EXPAND)
+        local_sizer.Add(self.local_file_list.window, 1, wx.EXPAND)
         local_panel.SetSizer(local_sizer)
 
         # --- Remote pane (right) ---
@@ -331,13 +337,17 @@ class MainFrame(wx.Frame):
         remote_list_label = wx.StaticText(remote_panel, label="Remote:")
         remote_sizer.Add(remote_list_label, 0, wx.LEFT, 4)
 
-        self.remote_file_list = wx.ListCtrl(remote_panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.remote_file_list = create_report_list(
+            remote_panel,
+            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            row_formatter=file_row_text,
+        )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
         self.remote_file_list.InsertColumn(2, "Type", width=70)
         self.remote_file_list.InsertColumn(3, "Modified", width=130)
         self.remote_file_list.InsertColumn(4, "Permissions", width=100)
-        remote_sizer.Add(self.remote_file_list, 1, wx.EXPAND)
+        remote_sizer.Add(self.remote_file_list.window, 1, wx.EXPAND)
         self.remote_panel = remote_panel
         remote_panel.SetSizer(remote_sizer)
 
@@ -404,20 +414,22 @@ class MainFrame(wx.Frame):
 
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""
-        focused = self.FindFocus()
-        return focused is self.local_file_list
+        return self._is_list_focused(self.local_file_list)
 
     def _is_remote_focused(self) -> bool:
         """Return True if the remote pane currently has focus."""
-        focused = self.FindFocus()
-        return focused is self.remote_file_list
+        return self._is_list_focused(self.remote_file_list)
 
-    def _get_focused_file_list(self) -> wx.ListCtrl | None:
-        """Return whichever file list has focus, or None."""
+    def _is_list_focused(self, file_list: AccessibleReportList) -> bool:
         focused = self.FindFocus()
-        if focused is self.local_file_list:
+        window = getattr(file_list, "window", file_list)
+        return focused is file_list or focused is window
+
+    def _get_focused_file_list(self) -> AccessibleReportList | None:
+        """Return whichever file list has focus, or None."""
+        if self._is_list_focused(self.local_file_list):
             return self.local_file_list
-        if focused is self.remote_file_list:
+        if self._is_list_focused(self.remote_file_list):
             return self.remote_file_list
         return None
 
@@ -509,8 +521,8 @@ class MainFrame(wx.Frame):
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
-            host_key_policy=self._host_key_policy(),
         )
+        self._apply_connection_defaults(info)
         self._do_connect(info)
 
     def _on_quick_connect(self, event: wx.CommandEvent) -> None:
@@ -518,6 +530,7 @@ class MainFrame(wx.Frame):
         info = None
         if dlg.ShowModal() == wx.ID_OK:
             info = dlg.get_connection_info()
+            self._apply_connection_defaults(info)
         dlg.Destroy()
         if info:
             self._do_connect(info)
@@ -528,7 +541,7 @@ class MainFrame(wx.Frame):
         info = None
         if result == wx.ID_OK and dlg.connect_requested and dlg.selected_site:
             info = dlg.selected_site.to_connection_info()
-            info.host_key_policy = self._host_key_policy()
+            self._apply_connection_defaults(info)
         dlg.Destroy()
         if info:
             self._do_connect(info)
@@ -639,6 +652,13 @@ class MainFrame(wx.Frame):
         }
         setting = getattr(self._settings.connection, "verify_host_keys", "ask")
         return mapping.get(setting, HostKeyPolicy.PROMPT)
+
+    def _apply_connection_defaults(self, info: ConnectionInfo) -> None:
+        """Apply app-level connection defaults to a connection request."""
+        defaults = getattr(self._settings, "connection", None)
+        info.timeout = max(1, int(getattr(defaults, "timeout", info.timeout)))
+        info.passive_mode = bool(getattr(defaults, "passive_mode", info.passive_mode))
+        info.host_key_policy = self._host_key_policy()
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
@@ -759,16 +779,15 @@ class MainFrame(wx.Frame):
             self._refresh_remote_files()
 
     def _on_switch_pane_focus(self, event: wx.CommandEvent) -> None:
-        focused = self.FindFocus()
         if self._activity_log_visible:
-            if focused is self.local_file_list:
+            if self._is_local_focused():
                 self.remote_file_list.SetFocus()
-            elif focused is self.remote_file_list:
+            elif self._is_remote_focused():
                 self.activity_log.SetFocus()
             else:
                 self.local_file_list.SetFocus()
         else:
-            if focused is self.local_file_list:
+            if self._is_local_focused():
                 self.remote_file_list.SetFocus()
             else:
                 self.local_file_list.SetFocus()
@@ -830,7 +849,7 @@ class MainFrame(wx.Frame):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
-        restore_focus = self.FindFocus() is self.remote_file_list
+        restore_focus = self._is_remote_focused()
         self._apply_sort(files)
         # Insert ".." entry at the top to navigate to parent
         if cwd != "/":
@@ -865,7 +884,7 @@ class MainFrame(wx.Frame):
         wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _refresh_local_files(self) -> None:
-        restore_focus = self.FindFocus() is self.local_file_list
+        restore_focus = self._is_local_focused()
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
@@ -923,7 +942,7 @@ class MainFrame(wx.Frame):
         key_fn = key_map.get(self._settings.display.sort_by, key_map["name"])
         files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
 
-    def _populate_file_list(self, list_ctrl: wx.ListCtrl, files: list[RemoteFile]) -> None:
+    def _populate_file_list(self, list_ctrl: AccessibleReportList, files: list[RemoteFile]) -> None:
         list_ctrl.DeleteAllItems()
         for f in files:
             idx = list_ctrl.InsertItem(list_ctrl.GetItemCount(), f.name)
@@ -983,7 +1002,7 @@ class MainFrame(wx.Frame):
     # --- Selection helpers ---
 
     def _get_selected_file_from_list(
-        self, list_ctrl: wx.ListCtrl, files: list[RemoteFile], filter_text: str
+        self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
     ) -> RemoteFile | None:
         idx = list_ctrl.GetFirstSelected()
         if idx == wx.NOT_FOUND:
@@ -1244,14 +1263,30 @@ class MainFrame(wx.Frame):
         if not f or not self._client:
             return
         local_path = os.path.join(self._local_cwd, f.name)
+        planned_path = self._resolve_local_transfer_conflict(local_path, f.name, "download")
+        if planned_path is None:
+            return
+        overwrite_existing = planned_path == local_path and os.path.exists(local_path)
         if f.is_dir:
             if f.name == "..":
                 return
-            self._transfer_service.submit_download(self._client, f.path, local_path, recursive=True)
-            self._announce(f"Downloading folder {f.name} to {self._local_cwd}")
+            self._transfer_service.submit_download(
+                self._client,
+                f.path,
+                planned_path,
+                recursive=True,
+                overwrite_existing=overwrite_existing,
+            )
+            self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
         else:
-            self._transfer_service.submit_download(self._client, f.path, local_path, f.size)
-            self._announce(f"Downloading {f.name} to {self._local_cwd}")
+            self._transfer_service.submit_download(
+                self._client,
+                f.path,
+                planned_path,
+                f.size,
+                overwrite_existing=overwrite_existing,
+            )
+            self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
         self._show_transfer_queue()
 
     def _on_upload(self, event) -> None:
@@ -1263,20 +1298,123 @@ class MainFrame(wx.Frame):
         local_path = f.path
         filename = f.name
         remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+        planned_remote_path = self._resolve_remote_transfer_conflict(
+            remote_path, filename, "upload"
+        )
+        if planned_remote_path is None:
+            return
+        overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
+            remote_path
+        )
         if f.is_dir:
             if f.name == "..":
                 return
             self._transfer_service.submit_upload(
-                self._client, local_path, remote_path, recursive=True
+                self._client,
+                local_path,
+                planned_remote_path,
+                recursive=True,
+                overwrite_existing=overwrite_existing,
             )
             self._announce(f"Uploading folder {filename}")
             self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
-            self._transfer_service.submit_upload(self._client, local_path, remote_path, total)
+            self._transfer_service.submit_upload(
+                self._client,
+                local_path,
+                planned_remote_path,
+                total,
+                overwrite_existing=overwrite_existing,
+            )
             self._announce(f"Uploading {filename}")
             self._update_status(f"Uploading {filename}...", self._client.cwd)
         self._show_transfer_queue()
+
+    def _transfer_overwrite_mode(self) -> str:
+        transfer_settings = getattr(getattr(self, "_settings", None), "transfer", None)
+        mode = getattr(transfer_settings, "overwrite_mode", "ask")
+        return mode if mode in {"ask", "overwrite", "skip", "rename"} else "ask"
+
+    def _resolve_local_transfer_conflict(
+        self, local_path: str, filename: str, action: str
+    ) -> str | None:
+        if not os.path.exists(local_path):
+            return local_path
+        mode = self._transfer_overwrite_mode()
+        if mode == "overwrite":
+            return local_path
+        if mode == "skip":
+            self._announce(f"Skipped {action}; {filename} already exists")
+            return None
+        if mode == "rename":
+            return self._unique_local_path(local_path)
+        if self._confirm_overwrite(filename, action):
+            return local_path
+        self._announce(f"Skipped {action}; {filename} already exists")
+        return None
+
+    def _resolve_remote_transfer_conflict(
+        self, remote_path: str, filename: str, action: str
+    ) -> str | None:
+        if not self._remote_path_exists(remote_path):
+            return remote_path
+        mode = self._transfer_overwrite_mode()
+        if mode == "overwrite":
+            return remote_path
+        if mode == "skip":
+            self._announce(f"Skipped {action}; {filename} already exists")
+            return None
+        if mode == "rename":
+            return self._unique_remote_path(remote_path)
+        if self._confirm_overwrite(filename, action):
+            return remote_path
+        self._announce(f"Skipped {action}; {filename} already exists")
+        return None
+
+    def _confirm_overwrite(self, filename: str, action: str) -> bool:
+        result = wx.MessageBox(
+            f"{filename} already exists. Overwrite it?",
+            f"Confirm {action.title()} Overwrite",
+            wx.YES_NO | wx.ICON_WARNING,
+            self,
+        )
+        return result == wx.YES
+
+    @staticmethod
+    def _unique_local_path(path: str) -> str:
+        if not os.path.exists(path):
+            return path
+        directory, filename = os.path.split(path)
+        stem, ext = os.path.splitext(filename)
+        counter = 1
+        while True:
+            candidate = os.path.join(directory, f"{stem} ({counter}){ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            counter += 1
+
+    def _unique_remote_path(self, path: str) -> str:
+        if not self._remote_path_exists(path):
+            return path
+        parent, _, filename = path.rpartition("/")
+        stem, ext = os.path.splitext(filename)
+        counter = 1
+        while True:
+            candidate_name = f"{stem} ({counter}){ext}"
+            candidate = f"{parent}/{candidate_name}" if parent else candidate_name
+            if not self._remote_path_exists(candidate):
+                return candidate
+            counter += 1
+
+    def _remote_path_exists(self, path: str) -> bool:
+        if not self._client:
+            return False
+        try:
+            self._client.stat(path)
+            return True
+        except Exception:
+            return False
 
     def _get_clipboard_files(self) -> list[str]:
         """Get file paths from the system clipboard."""
@@ -1306,13 +1444,31 @@ class MainFrame(wx.Frame):
                 continue
             filename = p.name
             remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
+            planned_remote_path = self._resolve_remote_transfer_conflict(
+                remote_path, filename, "upload"
+            )
+            if planned_remote_path is None:
+                continue
+            overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
+                remote_path
+            )
             if p.is_dir():
                 self._transfer_service.submit_upload(
-                    self._client, str(p), remote_path, recursive=True
+                    self._client,
+                    str(p),
+                    planned_remote_path,
+                    recursive=True,
+                    overwrite_existing=overwrite_existing,
                 )
             else:
                 total = os.path.getsize(str(p))
-                self._transfer_service.submit_upload(self._client, str(p), remote_path, total)
+                self._transfer_service.submit_upload(
+                    self._client,
+                    str(p),
+                    planned_remote_path,
+                    total,
+                    overwrite_existing=overwrite_existing,
+                )
             count += 1
         if count:
             self._announce(
@@ -1539,19 +1695,29 @@ class MainFrame(wx.Frame):
         for job in self._transfer_service.jobs:
             current_state = job.status.value
             previous_state = self._transfer_state_by_id.get(job.id)
-            if current_state == previous_state:
+            state_changed = current_state != previous_state
+            if not state_changed and job.status != TransferStatus.IN_PROGRESS:
                 continue
 
-            self._transfer_state_by_id[job.id] = current_state
+            if state_changed:
+                self._transfer_state_by_id[job.id] = current_state
             direction_label = "Upload" if job.direction == TransferDirection.UPLOAD else "Download"
             filename = os.path.basename(job.destination) or PurePosixPath(job.source).name
 
             if job.status == TransferStatus.PENDING:
                 latest_status_message = f"{direction_label} queued."
             elif job.status == TransferStatus.IN_PROGRESS:
-                latest_status_message = f"{direction_label} in progress..."
+                progress_message = self._format_transfer_progress_message(
+                    job, direction_label, filename
+                )
+                latest_status_message = (
+                    f"{direction_label} in progress..." if state_changed else progress_message
+                )
+                if self._should_announce_transfer_progress(job):
+                    self._announce(progress_message)
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
+                self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} complete: {filename}")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
@@ -1559,6 +1725,7 @@ class MainFrame(wx.Frame):
                     refresh_remote_files = True
             elif job.status == TransferStatus.FAILED:
                 latest_status_message = f"{direction_label} failed."
+                self._clear_transfer_progress(job.id)
                 error_msg = job.error or "Unknown error"
                 self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
                 self._announce(f"{direction_label} failed.")
@@ -1566,6 +1733,7 @@ class MainFrame(wx.Frame):
                 self._retry_last_failed_item.Enable(True)
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
+                self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} cancelled: {filename}")
 
         if refresh_local_files:
@@ -1576,6 +1744,33 @@ class MainFrame(wx.Frame):
         if latest_status_message:
             current_path = self._client.cwd if self._client and self._client.connected else ""
             self._update_status(latest_status_message, current_path)
+
+    def _format_transfer_progress_message(self, job, direction_label: str, filename: str) -> str:
+        return f"{direction_label} {filename} {job.progress}%, {format_transfer_detail(job)}"
+
+    def _should_announce_transfer_progress(self, job) -> bool:
+        settings = getattr(self, "_settings", None)
+        display_settings = getattr(settings, "display", None)
+        interval = max(1, int(getattr(display_settings, "progress_interval", 25)))
+        if job.progress <= 0:
+            return False
+        bucket = min(100, (int(job.progress) // interval) * interval)
+        if bucket <= 0:
+            return False
+        progress_by_id = getattr(self, "_transfer_progress_by_id", None)
+        if progress_by_id is None:
+            progress_by_id = {}
+            self._transfer_progress_by_id = progress_by_id
+        previous_bucket = progress_by_id.get(job.id, 0)
+        if bucket <= previous_bucket:
+            return False
+        progress_by_id[job.id] = bucket
+        return True
+
+    def _clear_transfer_progress(self, job_id: str) -> None:
+        progress_by_id = getattr(self, "_transfer_progress_by_id", None)
+        if progress_by_id is not None:
+            progress_by_id.pop(job_id, None)
 
     def _on_settings(self, event: wx.CommandEvent) -> None:
         dlg = SettingsDialog(

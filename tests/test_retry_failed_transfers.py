@@ -392,7 +392,7 @@ class FakeListCtrl:
         pass
 
     def InsertItem(self, index, label):
-        row = [label, "", "", ""]
+        row = [label, "", "", "", ""]
         if index >= len(self._rows):
             self._rows.append(row)
         else:

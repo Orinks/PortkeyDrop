@@ -52,6 +52,7 @@ class TransferJob:
     progress: int = 0  # 0-100
     total_bytes: int = 0
     transferred_bytes: int = 0
+    overwrite_existing: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
     # Internal: client + recursive flag (not part of the public data model)
     _client: TransferClient | None = field(default=None, repr=False)
@@ -71,6 +72,7 @@ class TransferJob:
             "protocol": self.protocol,
             "total_bytes": self.total_bytes,
             "transferred_bytes": self.transferred_bytes,
+            "overwrite_existing": self.overwrite_existing,
             "status": self.status.value,
             "error": self.error or "",
         }
@@ -86,9 +88,35 @@ class TransferJob:
             protocol=data.get("protocol", ""),
             total_bytes=data.get("total_bytes", 0),
             transferred_bytes=data.get("transferred_bytes", 0),
+            overwrite_existing=bool(data.get("overwrite_existing", False)),
             status=TransferStatus.RESTORED,
             error=data.get("error") or None,
         )
+
+
+def format_bytes(byte_count: int) -> str:
+    """Return a compact human-readable byte count for transfer progress."""
+    size = max(0, int(byte_count))
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(size)
+    for unit in units:
+        if unit == "B":
+            if value < 1024:
+                return f"{int(value)} B"
+        elif value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} PB"
+
+
+def format_transfer_detail(job: TransferJob) -> str:
+    """Return byte-level progress text for queue rows and speech output."""
+    transferred_bytes = int(getattr(job, "transferred_bytes", 0) or 0)
+    total_bytes = int(getattr(job, "total_bytes", 0) or 0)
+    transferred = format_bytes(transferred_bytes)
+    if total_bytes > 0:
+        return f"{transferred} of {format_bytes(total_bytes)}"
+    return f"{transferred} transferred"
 
 
 @dataclass
@@ -128,6 +156,7 @@ class TransferService:
         total_bytes: int = 0,
         *,
         recursive: bool = False,
+        overwrite_existing: bool = False,
     ) -> TransferJob:
         job = TransferJob(
             direction=TransferDirection.DOWNLOAD,
@@ -135,6 +164,7 @@ class TransferService:
             destination=local_path,
             protocol=getattr(client, "_protocol_name", "sftp"),
             total_bytes=total_bytes,
+            overwrite_existing=overwrite_existing,
             _client=client,
             _recursive=recursive,
         )
@@ -149,6 +179,7 @@ class TransferService:
         total_bytes: int = 0,
         *,
         recursive: bool = False,
+        overwrite_existing: bool = False,
     ) -> TransferJob:
         job = TransferJob(
             direction=TransferDirection.UPLOAD,
@@ -156,6 +187,7 @@ class TransferService:
             destination=remote_path,
             protocol=getattr(client, "_protocol_name", "sftp"),
             total_bytes=total_bytes,
+            overwrite_existing=overwrite_existing,
             _client=client,
             _recursive=recursive,
         )
@@ -311,10 +343,22 @@ class TransferService:
         client = job._client
 
         # Determine whether we can resume from a previous partial download.
+        had_partial_download = job.transferred_bytes > 0
         offset = self._resolve_download_offset(job, client)
 
-        mode = "r+b" if offset > 0 else "wb"
-        with open(job.destination, mode) as f:
+        if offset > 0:
+            mode = "r+b"
+        elif job.overwrite_existing or had_partial_download:
+            mode = "wb"
+        else:
+            mode = "xb"
+
+        try:
+            f = open(job.destination, mode)
+        except FileExistsError as exc:
+            raise FileExistsError(f"Destination already exists: {job.destination}") from exc
+
+        with f:
             if offset > 0:
                 f.seek(offset)
 
@@ -373,7 +417,12 @@ class TransferService:
                 raise InterruptedError("Transfer cancelled")
             os.makedirs(os.path.dirname(local_file), exist_ok=True)
             base = job.transferred_bytes
-            with open(local_file, "wb") as f:
+            mode = "wb" if job.overwrite_existing else "xb"
+            try:
+                f = open(local_file, mode)
+            except FileExistsError as exc:
+                raise FileExistsError(f"Destination already exists: {local_file}") from exc
+            with f:
 
                 def _cb(transferred: int, total: int, _base=base) -> None:
                     if job.cancel_event.is_set():

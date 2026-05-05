@@ -145,6 +145,39 @@ class TestSubmitDownload:
         assert job.status == TransferStatus.FAILED
         assert "disk full" in job.error
 
+    def test_fresh_download_fails_before_overwriting_existing_file(self, tmp_path):
+        dest = tmp_path / "file.bin"
+        dest.write_bytes(b"existing")
+        mock_client = MagicMock()
+
+        svc = TransferService(notify_window=None)
+        job = svc.submit_download(mock_client, "/remote/file.bin", str(dest), total_bytes=4)
+
+        _wait_for_terminal(job)
+        assert job.status == TransferStatus.FAILED
+        assert "already exists" in (job.error or "")
+        assert dest.read_bytes() == b"existing"
+        mock_client.download.assert_not_called()
+
+    def test_download_allows_explicit_overwrite(self, tmp_path):
+        dest = tmp_path / "file.bin"
+        dest.write_bytes(b"existing")
+        mock_client = MagicMock()
+        mock_client.download.side_effect = lambda src, fh, callback=None, offset=0: fh.write(b"new")
+
+        svc = TransferService(notify_window=None)
+        job = svc.submit_download(
+            mock_client,
+            "/remote/file.bin",
+            str(dest),
+            total_bytes=3,
+            overwrite_existing=True,
+        )
+
+        _wait_for_terminal(job)
+        assert job.status == TransferStatus.COMPLETE
+        assert dest.read_bytes() == b"new"
+
 
 class TestSubmitUpload:
     def test_enqueues_and_completes_upload(self, tmp_path):
@@ -314,6 +347,27 @@ class TestRecursiveDownload:
 
         assert job.total_bytes == 500
         mock_client.stat.assert_called_once_with("/remote/dir/link.txt")
+
+    def test_recursive_download_fails_before_overwriting_existing_child(self, tmp_path):
+        from portkeydrop.protocols import RemoteFile
+
+        destination = tmp_path / "local"
+        destination.mkdir()
+        existing = destination / "a.txt"
+        existing.write_text("existing")
+        mock_client = MagicMock()
+        mock_client.list_dir.return_value = [
+            RemoteFile(name="a.txt", path="/remote/dir/a.txt", size=10),
+        ]
+
+        svc = TransferService(notify_window=None)
+        job = svc.submit_download(mock_client, "/remote/dir", str(destination), recursive=True)
+
+        _wait_for_terminal(job)
+        assert job.status == TransferStatus.FAILED
+        assert "already exists" in (job.error or "")
+        assert existing.read_text() == "existing"
+        mock_client.download.assert_not_called()
 
 
 class TestRecursiveUpload:

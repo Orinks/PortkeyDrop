@@ -75,13 +75,47 @@ def _hydrate_frame(module):
     frame._get_selected_local_file = MagicMock()
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
+    frame._transfer_state_by_id = {}
+    frame._transfer_progress_by_id = {}
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
     frame.activity_log = MagicMock()
     frame._activity_log_visible = True
     frame._last_failed_transfer = None
     frame._retry_last_failed_item = MagicMock()
     frame._toolbar_panel = MagicMock()
+    frame._settings = SimpleNamespace(
+        connection=SimpleNamespace(timeout=45, passive_mode=False, verify_host_keys="never"),
+        display=SimpleNamespace(progress_interval=25),
+        transfer=SimpleNamespace(overwrite_mode="ask"),
+    )
     return frame
+
+
+def test_on_transfer_update_announces_progress_at_configured_interval(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+    job = SimpleNamespace(
+        id="job-progress",
+        direction=app.TransferDirection.DOWNLOAD,
+        source="/remote/report.zip",
+        destination="C:/Users/joshu/Downloads/report.zip",
+        status=app.TransferStatus.IN_PROGRESS,
+        progress=24,
+        transferred_bytes=24,
+        total_bytes=100,
+    )
+    frame._transfer_service.jobs = [job]
+
+    frame._on_transfer_update(None)
+    frame._announce.assert_not_called()
+
+    job.progress = 25
+    job.transferred_bytes = 25
+    frame._on_transfer_update(None)
+
+    frame._announce.assert_called_once_with("Download report.zip 25%, 25 B of 100 B")
+    frame._update_status.assert_called_with("Download report.zip 25%, 25 B of 100 B", "")
 
 
 def test_main_frame_init_sets_transfer_state(tmp_path, app_module):
@@ -178,6 +212,7 @@ def test_on_upload_directory_updates_status(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.side_effect = FileNotFoundError
     selected = MagicMock()
     selected.name = "docs"
     selected.path = "/tmp/docs"
@@ -195,6 +230,7 @@ def test_on_upload_file_reports_progress(app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.side_effect = FileNotFoundError
     selected = MagicMock(name="file.txt")
     selected.is_dir = False
     selected.name = "file.txt"
@@ -209,10 +245,234 @@ def test_on_upload_file_reports_progress(app_module):
     frame._update_status.assert_called_with("Uploading file.txt...", "/remote")
 
 
+def test_on_download_skip_existing_file_does_not_enqueue(tmp_path, app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._local_cwd = str(tmp_path)
+    frame._settings.transfer.overwrite_mode = "skip"
+    existing = tmp_path / "report.txt"
+    existing.write_text("existing")
+    selected = MagicMock()
+    selected.name = "report.txt"
+    selected.path = "/remote/report.txt"
+    selected.is_dir = False
+    selected.size = 123
+    frame._get_selected_remote_file.return_value = selected
+    frame._transfer_service.submit_download = MagicMock()
+
+    frame._on_download(None)
+
+    frame._transfer_service.submit_download.assert_not_called()
+    frame._announce.assert_called_with("Skipped download; report.txt already exists")
+    frame._show_transfer_queue.assert_not_called()
+
+
+def test_on_download_rename_existing_file_before_enqueue(tmp_path, app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._local_cwd = str(tmp_path)
+    frame._settings.transfer.overwrite_mode = "rename"
+    (tmp_path / "report.txt").write_text("existing")
+    selected = MagicMock()
+    selected.name = "report.txt"
+    selected.path = "/remote/report.txt"
+    selected.is_dir = False
+    selected.size = 123
+    frame._get_selected_remote_file.return_value = selected
+    frame._transfer_service.submit_download = MagicMock()
+
+    frame._on_download(None)
+
+    expected = str(tmp_path / "report (1).txt")
+    frame._transfer_service.submit_download.assert_called_once_with(
+        frame._client,
+        "/remote/report.txt",
+        expected,
+        123,
+        overwrite_existing=False,
+    )
+
+
+def test_on_download_existing_folder_overwrite_enqueues_recursive(tmp_path, app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._local_cwd = str(tmp_path)
+    frame._settings.transfer.overwrite_mode = "overwrite"
+    (tmp_path / "docs").mkdir()
+    selected = MagicMock()
+    selected.name = "docs"
+    selected.path = "/remote/docs"
+    selected.is_dir = True
+    frame._get_selected_remote_file.return_value = selected
+    frame._transfer_service.submit_download = MagicMock()
+
+    frame._on_download(None)
+
+    frame._transfer_service.submit_download.assert_called_once_with(
+        frame._client,
+        "/remote/docs",
+        str(tmp_path / "docs"),
+        recursive=True,
+        overwrite_existing=True,
+    )
+    frame._announce.assert_called_with(f"Downloading folder docs to {tmp_path}")
+
+
+def test_on_upload_skip_existing_remote_file_does_not_enqueue(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.return_value = SimpleNamespace()
+    frame._settings.transfer.overwrite_mode = "skip"
+    selected = MagicMock()
+    selected.name = "report.txt"
+    selected.path = "/tmp/report.txt"
+    selected.is_dir = False
+    frame._get_selected_local_file.return_value = selected
+    frame._transfer_service.submit_upload = MagicMock()
+
+    with patch.object(app.os.path, "getsize", return_value=123):
+        frame._on_upload(None)
+
+    frame._client.stat.assert_called_once_with("/remote/report.txt")
+    frame._transfer_service.submit_upload.assert_not_called()
+    frame._announce.assert_called_with("Skipped upload; report.txt already exists")
+
+
+def test_on_upload_overwrite_existing_remote_file(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.return_value = SimpleNamespace()
+    frame._settings.transfer.overwrite_mode = "overwrite"
+    selected = MagicMock()
+    selected.name = "report.txt"
+    selected.path = "/tmp/report.txt"
+    selected.is_dir = False
+    frame._get_selected_local_file.return_value = selected
+    frame._transfer_service.submit_upload = MagicMock()
+
+    with patch.object(app.os.path, "getsize", return_value=123):
+        frame._on_upload(None)
+
+    frame._transfer_service.submit_upload.assert_called_once_with(
+        frame._client,
+        "/tmp/report.txt",
+        "/remote/report.txt",
+        123,
+        overwrite_existing=True,
+    )
+
+
+def test_on_upload_rename_existing_remote_file_before_enqueue(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._settings.transfer.overwrite_mode = "rename"
+
+    def stat(path):
+        if path == "/remote/report.txt":
+            return SimpleNamespace()
+        raise FileNotFoundError(path)
+
+    frame._client.stat.side_effect = stat
+    selected = MagicMock()
+    selected.name = "report.txt"
+    selected.path = "/tmp/report.txt"
+    selected.is_dir = False
+    frame._get_selected_local_file.return_value = selected
+    frame._transfer_service.submit_upload = MagicMock()
+
+    with patch.object(app.os.path, "getsize", return_value=123):
+        frame._on_upload(None)
+
+    frame._transfer_service.submit_upload.assert_called_once_with(
+        frame._client,
+        "/tmp/report.txt",
+        "/remote/report (1).txt",
+        123,
+        overwrite_existing=False,
+    )
+
+
+def test_resolve_local_conflict_ask_accepts_existing_path(tmp_path, app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    local_path = tmp_path / "report.txt"
+    local_path.write_text("existing")
+    fake_wx.MessageBox.return_value = fake_wx.YES
+
+    result = frame._resolve_local_transfer_conflict(str(local_path), "report.txt", "download")
+
+    assert result == str(local_path)
+    fake_wx.MessageBox.assert_called_once()
+
+
+def test_resolve_local_conflict_ask_rejects_existing_path(tmp_path, app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    local_path = tmp_path / "report.txt"
+    local_path.write_text("existing")
+    fake_wx.MessageBox.return_value = fake_wx.OK
+
+    result = frame._resolve_local_transfer_conflict(str(local_path), "report.txt", "download")
+
+    assert result is None
+    frame._announce.assert_called_with("Skipped download; report.txt already exists")
+
+
+def test_unique_local_path_skips_existing_numbered_candidate(tmp_path, app_module):
+    app, _ = app_module
+    original = tmp_path / "report.txt"
+    first = tmp_path / "report (1).txt"
+    original.write_text("existing")
+    first.write_text("existing")
+
+    assert app.MainFrame._unique_local_path(str(original)) == str(tmp_path / "report (2).txt")
+
+
+def test_remote_conflict_helpers_cover_empty_and_ask_paths(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+    assert frame._remote_path_exists("/remote/missing.txt") is False
+
+    frame._client = MagicMock()
+    frame._client.stat.side_effect = [FileNotFoundError, SimpleNamespace(), FileNotFoundError]
+    assert frame._unique_remote_path("/remote/report.txt") == "/remote/report.txt"
+
+    def stat_existing_numbered(path):
+        if path in {"/remote/report.txt", "/remote/report (1).txt"}:
+            return SimpleNamespace()
+        raise FileNotFoundError(path)
+
+    frame._client.stat.side_effect = stat_existing_numbered
+    assert frame._unique_remote_path("/remote/report.txt") == "/remote/report (2).txt"
+
+    frame._client.stat.return_value = SimpleNamespace()
+    frame._client.stat.side_effect = None
+    fake_wx.MessageBox.return_value = fake_wx.YES
+    assert (
+        frame._resolve_remote_transfer_conflict("/remote/report.txt", "report.txt", "upload")
+        == "/remote/report.txt"
+    )
+
+    fake_wx.MessageBox.return_value = fake_wx.OK
+    assert (
+        frame._resolve_remote_transfer_conflict("/remote/report.txt", "report.txt", "upload")
+        is None
+    )
+    frame._announce.assert_called_with("Skipped upload; report.txt already exists")
+
+
 def test_paste_upload_shows_queue(tmp_path, app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.side_effect = FileNotFoundError
     frame._transfer_service.submit_upload = MagicMock()
     file_path = tmp_path / "clip.txt"
     file_path.write_text("clip")
@@ -222,6 +482,24 @@ def test_paste_upload_shows_queue(tmp_path, app_module):
 
     frame._transfer_service.submit_upload.assert_called_once()
     frame._show_transfer_queue.assert_called_once()
+
+
+def test_paste_upload_skip_existing_remote_file(tmp_path, app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    frame._client.stat.return_value = SimpleNamespace()
+    frame._settings.transfer.overwrite_mode = "skip"
+    frame._transfer_service.submit_upload = MagicMock()
+    file_path = tmp_path / "clip.txt"
+    file_path.write_text("clip")
+    frame._get_clipboard_files = MagicMock(return_value=[str(file_path)])
+
+    frame._paste_upload()
+
+    frame._transfer_service.submit_upload.assert_not_called()
+    frame._show_transfer_queue.assert_not_called()
+    frame._announce.assert_called_with("Skipped upload; clip.txt already exists")
 
 
 def test_delete_remote_updates_status_on_success(app_module):
@@ -411,6 +689,62 @@ def test_import_connections_skips_duplicates(app_module):
     message = fake_wx.MessageBox.call_args.args[0]
     assert "Imported 0 connections" in message
     assert "Skipped 1 duplicate" in message
+
+
+def test_apply_connection_defaults_sets_timeout_passive_and_host_key_policy(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    info = app.ConnectionInfo(protocol=app.Protocol.SFTP, host="example.com")
+
+    frame._apply_connection_defaults(info)
+
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_quick_connect_applies_connection_defaults(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    info = app.ConnectionInfo(protocol=app.Protocol.FTP, host="example.com", username="alice")
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        get_connection_info=MagicMock(return_value=info),
+        Destroy=MagicMock(),
+    )
+
+    with patch.object(app, "QuickConnectDialog", return_value=dialog):
+        frame._on_quick_connect(None)
+
+    frame._do_connect.assert_called_once_with(info)
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_site_manager_connect_applies_connection_defaults(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    site = MagicMock()
+    info = app.ConnectionInfo(protocol=app.Protocol.FTPS, host="example.com", username="alice")
+    site.to_connection_info.return_value = info
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        connect_requested=True,
+        selected_site=site,
+        Destroy=MagicMock(),
+    )
+    frame._site_manager = MagicMock()
+
+    with patch.object(app, "SiteManagerDialog", return_value=dialog):
+        frame._on_site_manager(None)
+
+    frame._do_connect.assert_called_once_with(info)
+    assert info.timeout == 45
+    assert info.passive_mode is False
+    assert info.host_key_policy == app.HostKeyPolicy.STRICT
 
 
 def test_on_transfer_update_reports_latest_status(app_module):

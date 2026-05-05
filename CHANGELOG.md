@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-05
+
+### Added
+- Added a macOS listbox fallback so VoiceOver can read local and remote file lists more reliably.
+
+### Fixed
+- Announce transfer progress details more clearly for screen reader users.
+- Apply configured connection defaults consistently when creating and importing saved connections.
+- Enforce overwrite policy before transfers are queued.
+
 ## [0.3.0] - 2026-03-23
 
 ### Fixed
