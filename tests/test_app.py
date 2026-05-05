@@ -703,6 +703,24 @@ def test_apply_connection_defaults_sets_timeout_passive_and_host_key_policy(app_
     assert info.host_key_policy == app.HostKeyPolicy.STRICT
 
 
+def test_toolbar_protocol_change_uses_webdav_default_port(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="webdav"))
+    frame.tb_port = MagicMock()
+
+    frame._on_toolbar_protocol_change(None)
+
+    frame.tb_port.SetValue.assert_called_once_with("443")
+
+
+def test_effective_site_port_uses_webdav_default(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    assert frame._effective_site_port("webdav", 0) == 443
+
+
 def test_quick_connect_applies_connection_defaults(app_module):
     app, fake_wx = app_module
     frame = _hydrate_frame(app_module)

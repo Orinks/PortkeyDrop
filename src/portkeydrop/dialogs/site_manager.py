@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import wx
 
+from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES
 from portkeydrop.sites import Site, SiteManager
 
 
@@ -60,7 +61,12 @@ class SiteManagerDialog(wx.Dialog):
 
         fields = [
             ("Na&me:", "name_text", wx.TextCtrl, {}),
-            ("Pro&tocol:", "protocol_choice", wx.Choice, {"choices": ["sftp", "ftp", "ftps"]}),
+            (
+                "Pro&tocol:",
+                "protocol_choice",
+                wx.Choice,
+                {"choices": list(SUPPORTED_PROTOCOL_VALUES)},
+            ),
             ("&Host:", "host_text", wx.TextCtrl, {}),
             ("Po&rt:", "port_text", wx.TextCtrl, {}),
             ("&Username:", "username_text", wx.TextCtrl, {}),
@@ -143,8 +149,8 @@ class SiteManagerDialog(wx.Dialog):
     def _populate_form(self, site: Site) -> None:
         self.name_text.SetValue(site.name)
         proto_idx = (
-            ["sftp", "ftp", "ftps"].index(site.protocol)
-            if site.protocol in ["sftp", "ftp", "ftps"]
+            list(SUPPORTED_PROTOCOL_VALUES).index(site.protocol)
+            if site.protocol in SUPPORTED_PROTOCOL_VALUES
             else 0
         )
         self.protocol_choice.SetSelection(proto_idx)

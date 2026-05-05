@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import wx
 
-from portkeydrop.protocols import ConnectionInfo, Protocol
+from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES, ConnectionInfo, Protocol
 
 
 class QuickConnectDialog(wx.Dialog):
@@ -27,7 +27,7 @@ class QuickConnectDialog(wx.Dialog):
 
         # Protocol
         lbl = wx.StaticText(self, label="&Protocol:")
-        self.protocol_choice = wx.Choice(self, choices=["sftp", "ftp", "ftps"])
+        self.protocol_choice = wx.Choice(self, choices=list(SUPPORTED_PROTOCOL_VALUES))
         self.protocol_choice.SetSelection(0)
         _link(lbl, self.protocol_choice)  # pragma: no cover
         grid.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -83,16 +83,17 @@ class QuickConnectDialog(wx.Dialog):
 
     def _on_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.protocol_choice.GetStringSelection()
-        defaults = {"sftp": "22", "ftp": "21", "ftps": "990"}
+        defaults = {"sftp": "22", "ftp": "21", "ftps": "990", "webdav": "443"}
         self.port_text.SetValue(defaults.get(proto, "22"))
 
     def get_connection_info(self) -> ConnectionInfo:
         """Return ConnectionInfo from dialog fields."""
-        proto_map = {"sftp": Protocol.SFTP, "ftp": Protocol.FTP, "ftps": Protocol.FTPS}
         proto_str = self.protocol_choice.GetStringSelection()
         port_str = self.port_text.GetValue().strip()
         return ConnectionInfo(
-            protocol=proto_map.get(proto_str, Protocol.SFTP),
+            protocol=Protocol(proto_str)
+            if proto_str in SUPPORTED_PROTOCOL_VALUES
+            else Protocol.SFTP,
             host=self.host_text.GetValue().strip(),
             port=int(port_str) if port_str else 0,
             username=self.username_text.GetValue().strip(),

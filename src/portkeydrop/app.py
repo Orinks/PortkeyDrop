@@ -42,7 +42,14 @@ from portkeydrop.migration import (
     migrate_files,
 )
 from portkeydrop.portable import get_config_dir, is_portable_mode
-from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
+from portkeydrop.protocols import (
+    SUPPORTED_PROTOCOL_VALUES,
+    ConnectionInfo,
+    HostKeyPolicy,
+    Protocol,
+    RemoteFile,
+    create_client,
+)
 from portkeydrop.settings import (
     load_settings,
     resolve_startup_local_folder,
@@ -248,7 +255,7 @@ class MainFrame(wx.Frame):
                 lbl.SetLabelFor(ctrl)
 
         protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol:")
-        self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
+        self.tb_protocol = wx.Choice(toolbar_panel, choices=list(SUPPORTED_PROTOCOL_VALUES))
         self.tb_protocol.SetSelection(0)
         _bind_label(protocol_lbl, self.tb_protocol)
         sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -506,17 +513,18 @@ class MainFrame(wx.Frame):
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
-        defaults = {"sftp": "22", "ftp": "21", "ftps": "990"}
+        defaults = {"sftp": "22", "ftp": "21", "ftps": "990", "webdav": "443"}
         self.tb_port.SetValue(defaults.get(proto, "22"))
 
     # --- Connection ---
 
     def _on_connect_toolbar(self, event: wx.CommandEvent) -> None:
-        proto_map = {"sftp": Protocol.SFTP, "ftp": Protocol.FTP, "ftps": Protocol.FTPS}
         proto_str = self.tb_protocol.GetStringSelection()
         port_str = self.tb_port.GetValue().strip()
         info = ConnectionInfo(
-            protocol=proto_map.get(proto_str, Protocol.SFTP),
+            protocol=Protocol(proto_str)
+            if proto_str in SUPPORTED_PROTOCOL_VALUES
+            else Protocol.SFTP,
             host=self.tb_host.GetValue().strip(),
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
@@ -640,7 +648,7 @@ class MainFrame(wx.Frame):
     def _effective_site_port(self, protocol: str, port: int) -> int:
         if port > 0:
             return port
-        defaults = {"sftp": 22, "ftp": 21, "ftps": 990}
+        defaults = {"sftp": 22, "ftp": 21, "ftps": 990, "webdav": 443}
         return defaults.get(protocol, 22)
 
     def _host_key_policy(self) -> HostKeyPolicy:

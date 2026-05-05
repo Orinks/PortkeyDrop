@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+- Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
+
 ## [0.3.0] - 2026-03-23
 
 ### Fixed
