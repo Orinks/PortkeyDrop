@@ -92,6 +92,9 @@ binaries += asyncssh_binaries
 puttykeys_datas, puttykeys_binaries, puttykeys_hiddenimports = collect_all("puttykeys")
 datas += puttykeys_datas
 binaries += puttykeys_binaries
+webdav_datas, webdav_binaries, webdav_hiddenimports = collect_optional_all("webdav3")
+datas += webdav_datas
+binaries += webdav_binaries
 
 # Pull prism/prismatoid runtime package data/binaries for accessibility backend support
 prism_datas, prism_binaries, prism_hiddenimports = collect_optional_all("prism")
@@ -120,6 +123,8 @@ hiddenimports = [
     *asyncssh_hiddenimports,
     *collect_submodules("puttykeys"),
     *puttykeys_hiddenimports,
+    *collect_optional_submodules("webdav3"),
+    *webdav_hiddenimports,
     *collect_optional_submodules("prism"),
     *collect_optional_submodules("prismatoid"),
     *prism_hiddenimports,

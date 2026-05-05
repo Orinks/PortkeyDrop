@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import wx
 
+from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES
 from portkeydrop.settings import Settings
 
 
@@ -298,7 +299,7 @@ class SettingsDialog(wx.Dialog):
             panel,
             sizer,
             label="&Default protocol:",
-            make_control=lambda p: wx.Choice(p, choices=["sftp", "ftp", "ftps"]),
+            make_control=lambda p: wx.Choice(p, choices=list(SUPPORTED_PROTOCOL_VALUES)),
             control_name="Default protocol",
         )
 
@@ -447,7 +448,7 @@ class SettingsDialog(wx.Dialog):
         idx = ["relative", "absolute"].index(s.display.date_format)
         self.date_format_choice.SetSelection(idx)
         # Connection
-        idx = ["sftp", "ftp", "ftps"].index(s.connection.protocol)
+        idx = list(SUPPORTED_PROTOCOL_VALUES).index(s.connection.protocol)
         self.default_proto_choice.SetSelection(idx)
         self.timeout_spin.SetValue(s.connection.timeout)
         self.keepalive_spin.SetValue(s.connection.keepalive)

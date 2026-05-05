@@ -9,6 +9,7 @@ dependencies = [
     "keyring>=25.0",
     "wxPython>=4.2",
     "prismatoid",
+    "webdavclient3>=3.14",
 ]
 
 [project.optional-dependencies]

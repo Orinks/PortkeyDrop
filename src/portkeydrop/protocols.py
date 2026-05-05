@@ -12,13 +12,16 @@ import logging
 import os
 import ssl
 import stat
+import tempfile
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO, Callable
+from urllib.parse import urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     import asyncssh
@@ -38,6 +41,9 @@ class Protocol(Enum):
     SFTP = "sftp"
     SCP = "scp"
     WEBDAV = "webdav"
+
+
+SUPPORTED_PROTOCOL_VALUES = ("sftp", "ftp", "ftps", "webdav")
 
 
 class HostKeyPolicy(Enum):
@@ -385,6 +391,198 @@ class FTPSClient(FTPClient):
         except Exception as e:
             self._connected = False
             raise ConnectionError(f"FTPS connection failed: {e}") from e
+
+
+class WebDAVClient(TransferClient):
+    """Experimental WebDAV protocol client using webdavclient3."""
+
+    def __init__(self, info: ConnectionInfo) -> None:
+        super().__init__(info)
+        self._client = None
+
+    def connect(self) -> None:
+        try:
+            from webdav3.client import Client
+
+            self._client = Client(
+                {
+                    "webdav_hostname": self._build_hostname(),
+                    "webdav_login": self._info.username,
+                    "webdav_password": self._info.password,
+                    "webdav_timeout": self._info.timeout,
+                }
+            )
+            self._cwd = "/"
+            self._connected = True
+        except ImportError as e:
+            self._connected = False
+            raise ConnectionError(
+                "WebDAV support is not installed. Install PortkeyDrop with WebDAV support."
+            ) from e
+        except Exception as e:
+            self._connected = False
+            raise ConnectionError(f"WebDAV connection failed: {e}") from e
+
+    def disconnect(self) -> None:
+        self._client = None
+        self._connected = False
+
+    def _ensure_connected(self):
+        if not self._client or not self._connected:
+            raise ConnectionError("Not connected")
+        return self._client
+
+    def _build_hostname(self) -> str:
+        raw_host = self._info.host.strip()
+        if "://" not in raw_host:
+            scheme = "http" if self._info.effective_port == 80 else "https"
+            raw_host = f"{scheme}://{raw_host}"
+        parts = urlsplit(raw_host)
+        hostname = parts.hostname or self._info.host.strip()
+        port = self._info.effective_port
+        default_port = 80 if parts.scheme == "http" else 443
+        netloc = hostname
+        if port and port != default_port:
+            netloc = f"{hostname}:{port}"
+        if parts.username or parts.password:
+            userinfo = parts.username or ""
+            if parts.password:
+                userinfo += f":{parts.password}"
+            netloc = f"{userinfo}@{netloc}"
+        return urlunsplit((parts.scheme or "https", netloc, parts.path, parts.query, ""))
+
+    def _resolve_path(self, path: str = ".") -> str:
+        if not path or path == ".":
+            return self._cwd
+        candidate = PurePosixPath(path)
+        if candidate.is_absolute():
+            resolved = str(candidate)
+        else:
+            resolved = str(PurePosixPath(self._cwd) / candidate)
+        if path.endswith("/") and not resolved.endswith("/"):
+            resolved += "/"
+        return resolved if resolved.startswith("/") else f"/{resolved}"
+
+    @staticmethod
+    def _parse_modified(value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        try:
+            return parsedate_to_datetime(str(value)).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_dir_info(info: dict) -> bool:
+        for key in ("isdir", "is_dir", "directory"):
+            value = info.get(key)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str) and value.lower() in {"true", "1", "yes", "dir", "directory"}:
+                return True
+        path = str(info.get("path") or info.get("href") or info.get("name") or "")
+        content_type = str(info.get("content_type") or info.get("content-type") or "").lower()
+        return path.endswith("/") or content_type == "httpd/unix-directory"
+
+    def _remote_file_from_info(self, info: dict, fallback_path: str = "") -> RemoteFile:
+        path = str(info.get("path") or info.get("href") or fallback_path)
+        name = str(
+            info.get("name") or PurePosixPath(path.rstrip("/")).name or path.strip("/") or "/"
+        )
+        is_dir = self._is_dir_info(info)
+        try:
+            size = 0 if is_dir else int(info.get("size") or info.get("content_length") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        modified = self._parse_modified(
+            info.get("modified") or info.get("modified_at") or info.get("lastmodified")
+        )
+        if path and not path.startswith("/"):
+            path = f"/{path}"
+        return RemoteFile(name=name, path=path, size=size, is_dir=is_dir, modified=modified)
+
+    def list_dir(self, path: str = ".") -> list[RemoteFile]:
+        client = self._ensure_connected()
+        target = self._resolve_path(path)
+        items = client.list(target, get_info=True)
+        return [self._remote_file_from_info(item) for item in items if isinstance(item, dict)]
+
+    def chdir(self, path: str) -> str:
+        remote = self.stat(self._resolve_path(path))
+        if not remote.is_dir:
+            raise NotADirectoryError(path)
+        self._cwd = remote.path if remote.path.endswith("/") else f"{remote.path}/"
+        return self._cwd
+
+    def download(
+        self,
+        remote_path: str,
+        local_file: BinaryIO,
+        callback: ProgressCallback | None = None,
+        offset: int = 0,
+    ) -> None:
+        if offset:
+            raise ValueError("WebDAV downloads do not support resume yet")
+        client = self._ensure_connected()
+        target = self._resolve_path(remote_path)
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            client.download(target, tmp_path)
+            with open(tmp_path, "rb") as fh:
+                data = fh.read()
+            local_file.write(data)
+            if callback:
+                callback(len(data), len(data))
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def upload(
+        self, local_file: BinaryIO, remote_path: str, callback: ProgressCallback | None = None
+    ) -> None:
+        client = self._ensure_connected()
+        target = self._resolve_path(remote_path)
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            local_file.seek(0)
+            data = local_file.read()
+            tmp.write(data)
+        try:
+            client.upload(remote_path=target, local_path=tmp_path)
+            if callback:
+                callback(len(data), len(data))
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def delete(self, path: str) -> None:
+        self._ensure_connected().clean(self._resolve_path(path))
+
+    def rmdir(self, path: str) -> None:
+        self._ensure_connected().clean(self._resolve_path(path))
+
+    def mkdir(self, path: str) -> None:
+        self._ensure_connected().mkdir(self._resolve_path(path))
+
+    def rename(self, old_path: str, new_path: str) -> None:
+        self._ensure_connected().move(
+            remote_path_from=self._resolve_path(old_path),
+            remote_path_to=self._resolve_path(new_path),
+        )
+
+    def stat(self, path: str) -> RemoteFile:
+        target = self._resolve_path(path)
+        info = self._ensure_connected().info(target)
+        if not isinstance(info, dict):
+            raise FileNotFoundError(path)
+        return self._remote_file_from_info(info, fallback_path=target)
 
 
 class SFTPClient(TransferClient):
@@ -1563,6 +1761,7 @@ def create_client(info: ConnectionInfo) -> TransferClient:
         Protocol.FTP: FTPClient,
         Protocol.FTPS: FTPSClient,
         Protocol.SFTP: SFTPClient,
+        Protocol.WEBDAV: WebDAVClient,
     }
     client_class = clients.get(info.protocol)
     if client_class is None:

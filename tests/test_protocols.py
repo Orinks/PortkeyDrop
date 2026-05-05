@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import builtins
 import base64
 import hashlib
 import hmac
@@ -10,6 +11,7 @@ import sys
 import stat as stat_mod
 import types
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +24,7 @@ from portkeydrop.protocols import (
     Protocol,
     RemoteFile,
     SFTPClient,
+    WebDAVClient,
     create_client,
 )
 
@@ -212,10 +215,305 @@ class TestCreateClient:
         assert isinstance(ftp_client, FTPClient)
         assert isinstance(ftps_client, FTPSClient)
 
-    def test_create_unsupported_raises(self):
+    def test_create_webdav_client(self):
         info = ConnectionInfo(protocol=Protocol.WEBDAV, host="example.com")
-        with pytest.raises(ValueError, match="not yet supported"):
-            create_client(info)
+        client = create_client(info)
+        assert isinstance(client, WebDAVClient)
+
+
+class TestWebDAVClient:
+    def _install_fake_webdav(self, monkeypatch, client):
+        fake_client_mod = types.ModuleType("webdav3.client")
+        fake_client_mod.Client = MagicMock(return_value=client)
+        fake_pkg = types.ModuleType("webdav3")
+        fake_pkg.client = fake_client_mod
+        monkeypatch.setitem(sys.modules, "webdav3", fake_pkg)
+        monkeypatch.setitem(sys.modules, "webdav3.client", fake_client_mod)
+        return fake_client_mod.Client
+
+    def test_connect_builds_webdavclient_options(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        client_class = self._install_fake_webdav(monkeypatch, webdav)
+        info = ConnectionInfo(
+            protocol=Protocol.WEBDAV,
+            host="dav.example.com",
+            username="alice",
+            password="secret",
+            timeout=12,
+        )
+
+        client = WebDAVClient(info)
+        client.connect()
+
+        client_class.assert_called_once_with(
+            {
+                "webdav_hostname": "https://dav.example.com",
+                "webdav_login": "alice",
+                "webdav_password": "secret",
+                "webdav_timeout": 12,
+            }
+        )
+        assert client.connected
+        assert client.cwd == "/"
+
+    def test_connect_preserves_explicit_webdav_url_and_port(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        client_class = self._install_fake_webdav(monkeypatch, webdav)
+        info = ConnectionInfo(
+            protocol=Protocol.WEBDAV,
+            host="http://dav.example.com/root",
+            port=8080,
+            username="alice",
+            password="secret",
+        )
+
+        WebDAVClient(info).connect()
+
+        assert (
+            client_class.call_args.args[0]["webdav_hostname"] == "http://dav.example.com:8080/root"
+        )
+
+    def test_list_dir_maps_webdav_items(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = [
+            {
+                "path": "/docs/",
+                "name": "docs",
+                "isdir": True,
+                "size": "0",
+                "modified": "Tue, 05 May 2026 10:15:00 GMT",
+            },
+            {
+                "path": "/readme.txt",
+                "name": "readme.txt",
+                "isdir": False,
+                "size": "12",
+            },
+        ]
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        files = client.list_dir("/")
+
+        webdav.list.assert_called_once_with("/", get_info=True)
+        assert files[0] == RemoteFile(
+            name="docs",
+            path="/docs/",
+            size=0,
+            is_dir=True,
+            modified=datetime(2026, 5, 5, 10, 15),
+        )
+        assert files[1].name == "readme.txt"
+        assert files[1].size == 12
+        assert files[1].is_dir is False
+
+    def test_stat_maps_webdav_info(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.return_value = {
+            "path": "/docs/",
+            "name": "docs",
+            "isdir": True,
+            "size": "0",
+            "modified": "Tue, 05 May 2026 10:15:00 GMT",
+        }
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        remote = client.stat("/docs/")
+
+        webdav.info.assert_called_once_with("/docs/")
+        assert remote.name == "docs"
+        assert remote.path == "/docs/"
+        assert remote.is_dir is True
+
+    def test_chdir_requires_existing_directory(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.return_value = {"path": "/docs/", "name": "docs", "isdir": True}
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        assert client.chdir("docs") == "/docs/"
+        assert client.cwd == "/docs/"
+
+    def test_file_operations_delegate_to_webdavclient(self, monkeypatch, tmp_path):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.return_value = {"path": "/file.txt", "name": "file.txt", "size": "5"}
+
+        def fake_download(remote_path, local_path):
+            Path(local_path).write_bytes(b"hello")
+
+        uploaded: dict[str, bytes] = {}
+
+        def fake_upload(*, remote_path, local_path):
+            uploaded["remote_path"] = remote_path
+            uploaded["data"] = Path(local_path).read_bytes()
+
+        webdav.download.side_effect = fake_download
+        webdav.upload.side_effect = fake_upload
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        out = io.BytesIO()
+        progress: list[tuple[int, int]] = []
+        client.download(
+            "/file.txt", out, callback=lambda done, total: progress.append((done, total))
+        )
+        assert out.getvalue() == b"hello"
+        assert progress == [(5, 5)]
+
+        src = tmp_path / "upload.txt"
+        src.write_bytes(b"data")
+        progress.clear()
+        with src.open("rb") as fh:
+            client.upload(
+                fh, "/upload.txt", callback=lambda done, total: progress.append((done, total))
+            )
+
+        webdav.upload.assert_called_once()
+        assert uploaded == {"remote_path": "/upload.txt", "data": b"data"}
+        assert progress == [(4, 4)]
+
+        client.delete("/old.txt")
+        client.rmdir("/old-dir/")
+        client.mkdir("/new/")
+        client.rename("/old.txt", "/new.txt")
+
+        webdav.clean.assert_any_call("/old.txt")
+        webdav.clean.assert_any_call("/old-dir/")
+        webdav.mkdir.assert_called_once_with("/new/")
+        webdav.move.assert_called_once_with(remote_path_from="/old.txt", remote_path_to="/new.txt")
+
+    def test_connect_reports_missing_webdav_dependency(self, monkeypatch):
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "webdav3.client":
+                raise ImportError("missing webdav")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+
+        with pytest.raises(ConnectionError, match="WebDAV support is not installed"):
+            client.connect()
+
+        assert not client.connected
+
+    def test_connect_wraps_webdavclient_errors(self, monkeypatch):
+        fake_client_mod = types.ModuleType("webdav3.client")
+        fake_client_mod.Client = MagicMock(side_effect=RuntimeError("boom"))
+        fake_pkg = types.ModuleType("webdav3")
+        fake_pkg.client = fake_client_mod
+        monkeypatch.setitem(sys.modules, "webdav3", fake_pkg)
+        monkeypatch.setitem(sys.modules, "webdav3.client", fake_client_mod)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+
+        with pytest.raises(ConnectionError, match="WebDAV connection failed"):
+            client.connect()
+
+        assert not client.connected
+
+    def test_disconnect_and_disconnected_operations(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        client.disconnect()
+
+        assert not client.connected
+        with pytest.raises(ConnectionError, match="Not connected"):
+            client.list_dir()
+
+    def test_build_hostname_preserves_userinfo_and_relative_paths(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        client_class = self._install_fake_webdav(monkeypatch, webdav)
+        info = ConnectionInfo(
+            protocol=Protocol.WEBDAV,
+            host="https://bob:secret@dav.example.com/root",
+        )
+        client = WebDAVClient(info)
+        client.connect()
+        client._cwd = "/root/"
+
+        assert client_class.call_args.args[0]["webdav_hostname"] == (
+            "https://bob:secret@dav.example.com/root"
+        )
+        assert client._resolve_path(".") == "/root/"
+        assert client._resolve_path("folder/") == "/root/folder/"
+
+    def test_metadata_edge_cases(self):
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+
+        assert client._parse_modified(datetime(2026, 5, 5, 10, 15)) == datetime(2026, 5, 5, 10, 15)
+        assert client._parse_modified("not a date") is None
+        assert client._is_dir_info({"isdir": "yes"}) is True
+        assert client._is_dir_info({"path": "/collection/"}) is True
+        assert client._is_dir_info({"content_type": "httpd/unix-directory"}) is True
+        remote = client._remote_file_from_info(
+            {"href": "file.txt", "size": "not-a-number"},
+            fallback_path="fallback.txt",
+        )
+        assert remote.path == "/file.txt"
+        assert remote.size == 0
+
+    def test_chdir_rejects_files_and_stat_requires_dict(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.side_effect = [
+            {"path": "/file.txt", "name": "file.txt", "isdir": False},
+            None,
+        ]
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        with pytest.raises(NotADirectoryError):
+            client.chdir("/file.txt")
+        with pytest.raises(FileNotFoundError):
+            client.stat("/missing")
+
+    def test_download_resume_and_temp_cleanup_edges(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        with pytest.raises(ValueError, match="do not support resume"):
+            client.download("/file.txt", io.BytesIO(), offset=1)
+
+        def fake_download(remote_path, local_path):
+            Path(local_path).write_bytes(b"x")
+
+        webdav.download.side_effect = fake_download
+        monkeypatch.setattr("portkeydrop.protocols.os.unlink", MagicMock(side_effect=OSError))
+        out = io.BytesIO()
+        client.download("/file.txt", out)
+        assert out.getvalue() == b"x"
+
+    def test_upload_temp_cleanup_edge(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+        monkeypatch.setattr("portkeydrop.protocols.os.unlink", MagicMock(side_effect=OSError))
+
+        client.upload(io.BytesIO(b"x"), "/file.txt")
+
+        webdav.upload.assert_called_once()
 
 
 class TestFTPClient:
