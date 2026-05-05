@@ -156,6 +156,25 @@ class _Choice(_Window):
         return self._choices[0] if self._choices else ""
 
 
+class _CheckBox(_Window):
+    def __init__(self, *a, **kw):
+        self._value = False
+        self._enabled = True
+        self._name = ""
+
+    def SetName(self, value):
+        self._name = value
+
+    def Enable(self, enabled):
+        self._enabled = enabled
+
+    def SetValue(self, value):
+        self._value = value
+
+    def GetValue(self):
+        return self._value
+
+
 class _StaticText(_Window):
     pass
 
@@ -220,6 +239,7 @@ def _make_fake_wx():
     wx.Panel = _Window
     wx.TextCtrl = _TextCtrl
     wx.Button = _Button
+    wx.CheckBox = _CheckBox
     wx.Choice = _Choice
     wx.StaticText = _StaticText
     wx.FlexGridSizer = _FlexGridSizer
@@ -252,6 +272,7 @@ def _make_fake_wx():
     wx.ID_CANCEL = 5101
     wx.WXK_ESCAPE = 27
     wx.EVT_BUTTON = object()
+    wx.EVT_CHOICE = object()
     wx.EVT_LISTBOX = object()
     wx.EVT_LISTBOX_DCLICK = object()
     wx.EVT_CHAR_HOOK = object()
@@ -523,6 +544,55 @@ class TestRemoveFocusManagement:
 
         # Form should reflect "Gamma" (now at index 1), not the removed "Beta".
         assert dlg.host_text._value == "gamma.example.com"
+
+
+class TestFTPSSLFields:
+    def _make_populate_dialog(self, mod):
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.name_text = _TextCtrl()
+        dlg.protocol_choice = _Choice(choices=["sftp", "ftp", "ftps"])
+        dlg.host_text = _TextCtrl()
+        dlg.port_text = _TextCtrl()
+        dlg.username_text = _TextCtrl()
+        dlg.password_text = _TextCtrl()
+        dlg.ftp_ssl_check = _CheckBox()
+        dlg.key_path_text = _TextCtrl()
+        dlg.initial_dir_text = _TextCtrl()
+        return dlg
+
+    def test_populate_form_sets_ftp_ssl_checkbox(self, dialog_module):
+        from portkeydrop.sites import Site
+
+        mod, _fake_wx = dialog_module
+        dlg = self._make_populate_dialog(mod)
+        site = Site(protocol="ftp", ftp_explicit_ssl=True)
+
+        mod.SiteManagerDialog._populate_form(dlg, site)
+
+        assert dlg.ftp_ssl_check._value is True
+        assert dlg.ftp_ssl_check._enabled is True
+
+    def test_protocol_change_clears_ftp_ssl_for_non_ftp(self, dialog_module):
+        mod, _fake_wx = dialog_module
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.protocol_choice = MagicMock(GetStringSelection=MagicMock(return_value="sftp"))
+        dlg.ftp_ssl_check = _CheckBox()
+        dlg.ftp_ssl_check.SetValue(True)
+
+        mod.SiteManagerDialog._on_protocol_change(dlg, MagicMock())
+
+        assert dlg.ftp_ssl_check._enabled is False
+        assert dlg.ftp_ssl_check._value is False
+
+    def test_protocol_change_enables_ftp_ssl_for_ftp(self, dialog_module):
+        mod, _fake_wx = dialog_module
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.protocol_choice = MagicMock(GetStringSelection=MagicMock(return_value="ftp"))
+        dlg.ftp_ssl_check = _CheckBox()
+
+        mod.SiteManagerDialog._on_protocol_change(dlg, MagicMock())
+
+        assert dlg.ftp_ssl_check._enabled is True
 
 
 class TestPortValidation:

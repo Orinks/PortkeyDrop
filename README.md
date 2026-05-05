@@ -36,6 +36,7 @@ Implemented:
 
 - **SFTP** (default) — SSH-based, most secure
 - **FTP** — Legacy support
+- **FTP with SSL (AUTH SSL)** — Explicit SSL upgrade for FTP servers which require it
 - **FTPS** — FTP over SSL/TLS
 - **WebDAV** — Experimental HTTP-based support for compatible servers and cloud services
 

@@ -41,6 +41,7 @@ class ConnectionDefaults:
     keepalive: int = 60
     max_retries: int = 3
     passive_mode: bool = True  # FTP only
+    ftp_explicit_ssl: bool = False
     verify_host_keys: str = "ask"  # ask, always, never
 
 

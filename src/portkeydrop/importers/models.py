@@ -16,5 +16,6 @@ class ImportedSite:
     username: str = ""
     password: str = ""
     key_path: str = ""
+    ftp_explicit_ssl: bool = False
     initial_dir: str = "/"
     notes: str = ""

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 ### Added
+- FTP connections can now enable explicit SSL with the AUTH SSL command.
 - Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
 
 ## [0.3.0] - 2026-03-23

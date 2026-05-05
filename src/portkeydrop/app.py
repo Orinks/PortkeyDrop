@@ -285,6 +285,11 @@ class MainFrame(wx.Frame):
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
+        self.tb_ftp_ssl = wx.CheckBox(toolbar_panel, label="Use SSL (AUTH SSL)")
+        self.tb_ftp_ssl.SetName("Use SSL with FTP")
+        self.tb_ftp_ssl.Enable(False)
+        sizer.Add(self.tb_ftp_ssl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
+
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
         sizer.Add(self.tb_connect_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
 
@@ -513,8 +518,16 @@ class MainFrame(wx.Frame):
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
-        defaults = {"sftp": "22", "ftp": "21", "ftps": "990", "webdav": "443"}
+        defaults = {
+            "sftp": "22",
+            "ftp": "21",
+            "ftps": "990",
+            "webdav": "443",
+        }
         self.tb_port.SetValue(defaults.get(proto, "22"))
+        self.tb_ftp_ssl.Enable(proto == "ftp")
+        if proto != "ftp":
+            self.tb_ftp_ssl.SetValue(False)
 
     # --- Connection ---
 
@@ -529,6 +542,7 @@ class MainFrame(wx.Frame):
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
+            ftp_explicit_ssl=bool(self.tb_ftp_ssl.GetValue()) if proto_str == "ftp" else False,
         )
         self._apply_connection_defaults(info)
         self._do_connect(info)
@@ -581,6 +595,7 @@ class MainFrame(wx.Frame):
                 port=int(port_str) if port_str else 0,
                 username=username,
                 password=password,
+                ftp_explicit_ssl=bool(self.tb_ftp_ssl.GetValue()) if proto_str == "ftp" else False,
                 initial_dir=self._client.cwd,
             )
             self._site_manager.add(site)
@@ -626,6 +641,7 @@ class MainFrame(wx.Frame):
                 username=imported.username,
                 password=imported.password,
                 key_path=imported.key_path,
+                ftp_explicit_ssl=getattr(imported, "ftp_explicit_ssl", False),
                 initial_dir=imported.initial_dir or "/",
                 notes=imported.notes,
             )
@@ -666,6 +682,10 @@ class MainFrame(wx.Frame):
         defaults = getattr(self._settings, "connection", None)
         info.timeout = max(1, int(getattr(defaults, "timeout", info.timeout)))
         info.passive_mode = bool(getattr(defaults, "passive_mode", info.passive_mode))
+        if info.protocol is Protocol.FTP:
+            info.ftp_explicit_ssl = bool(
+                info.ftp_explicit_ssl or getattr(defaults, "ftp_explicit_ssl", False)
+            )
         info.host_key_policy = self._host_key_policy()
 
     def _do_connect(self, info: ConnectionInfo) -> None:
