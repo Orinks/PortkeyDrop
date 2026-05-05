@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from portkeydrop.protocols import (
+    AuthSSLFTP_TLS,
     ConnectionInfo,
     FTPClient,
     FTPSAuthSSLClient,
@@ -590,6 +591,62 @@ class TestFTPClient:
         mock_ftp.connect.assert_called_once_with("example.com", 21, 30)
         mock_ftp.login.assert_called_once_with("user", "pass")
         mock_ftp.prot_p.assert_called_once()
+
+    @patch("portkeydrop.protocols.AuthSSLFTP_TLS")
+    def test_explicit_ssl_connect_failure_raises_connection_error(self, mock_ftp_class):
+        mock_ftp = MagicMock()
+        mock_ftp.connect.side_effect = OSError("refused")
+        mock_ftp_class.return_value = mock_ftp
+
+        info = ConnectionInfo(protocol=Protocol.FTP, host="example.com", ftp_explicit_ssl=True)
+        client = FTPSAuthSSLClient(info)
+
+        with pytest.raises(ConnectionError, match="FTP explicit SSL connection failed"):
+            client.connect()
+        assert not client.connected
+
+    def test_auth_ssl_command_wraps_plain_socket(self):
+        plain_socket = MagicMock()
+        wrapped_socket = MagicMock()
+        wrapped_file = MagicMock()
+        wrapped_socket.makefile.return_value = wrapped_file
+        client = object.__new__(AuthSSLFTP_TLS)
+        client.sock = plain_socket
+        client.context = MagicMock(wrap_socket=MagicMock(return_value=wrapped_socket))
+        client.host = "ftp.example.com"
+        client.encoding = "utf-8"
+        client.voidcmd = MagicMock()
+
+        client.auth()
+
+        client.voidcmd.assert_called_once_with("AUTH SSL")
+        client.context.wrap_socket.assert_called_once_with(
+            plain_socket, server_hostname="ftp.example.com"
+        )
+        assert client.sock is wrapped_socket
+        assert client.file is wrapped_file
+
+    def test_auth_ssl_requires_connected_socket(self):
+        client = object.__new__(AuthSSLFTP_TLS)
+        client.sock = None
+
+        with pytest.raises(ValueError, match="Not connected"):
+            client.auth()
+
+    def test_auth_ssl_skips_existing_ssl_socket(self, monkeypatch):
+        class FakeSSLSocket:
+            pass
+
+        import portkeydrop.protocols as protocols
+
+        monkeypatch.setattr(protocols.ssl, "SSLSocket", FakeSSLSocket)
+        client = object.__new__(AuthSSLFTP_TLS)
+        client.sock = FakeSSLSocket()
+        client.voidcmd = MagicMock()
+
+        client.auth()
+
+        client.voidcmd.assert_not_called()
 
     @patch("ftplib.FTP")
     def test_disconnect(self, mock_ftp_class):

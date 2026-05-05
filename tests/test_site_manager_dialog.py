@@ -546,6 +546,55 @@ class TestRemoveFocusManagement:
         assert dlg.host_text._value == "gamma.example.com"
 
 
+class TestFTPSSLFields:
+    def _make_populate_dialog(self, mod):
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.name_text = _TextCtrl()
+        dlg.protocol_choice = _Choice(choices=["sftp", "ftp", "ftps"])
+        dlg.host_text = _TextCtrl()
+        dlg.port_text = _TextCtrl()
+        dlg.username_text = _TextCtrl()
+        dlg.password_text = _TextCtrl()
+        dlg.ftp_ssl_check = _CheckBox()
+        dlg.key_path_text = _TextCtrl()
+        dlg.initial_dir_text = _TextCtrl()
+        return dlg
+
+    def test_populate_form_sets_ftp_ssl_checkbox(self, dialog_module):
+        from portkeydrop.sites import Site
+
+        mod, _fake_wx = dialog_module
+        dlg = self._make_populate_dialog(mod)
+        site = Site(protocol="ftp", ftp_explicit_ssl=True)
+
+        mod.SiteManagerDialog._populate_form(dlg, site)
+
+        assert dlg.ftp_ssl_check._value is True
+        assert dlg.ftp_ssl_check._enabled is True
+
+    def test_protocol_change_clears_ftp_ssl_for_non_ftp(self, dialog_module):
+        mod, _fake_wx = dialog_module
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.protocol_choice = MagicMock(GetStringSelection=MagicMock(return_value="sftp"))
+        dlg.ftp_ssl_check = _CheckBox()
+        dlg.ftp_ssl_check.SetValue(True)
+
+        mod.SiteManagerDialog._on_protocol_change(dlg, MagicMock())
+
+        assert dlg.ftp_ssl_check._enabled is False
+        assert dlg.ftp_ssl_check._value is False
+
+    def test_protocol_change_enables_ftp_ssl_for_ftp(self, dialog_module):
+        mod, _fake_wx = dialog_module
+        dlg = object.__new__(mod.SiteManagerDialog)
+        dlg.protocol_choice = MagicMock(GetStringSelection=MagicMock(return_value="ftp"))
+        dlg.ftp_ssl_check = _CheckBox()
+
+        mod.SiteManagerDialog._on_protocol_change(dlg, MagicMock())
+
+        assert dlg.ftp_ssl_check._enabled is True
+
+
 class TestPortValidation:
     """Port field validation in _update_site_from_form."""
 
