@@ -156,11 +156,12 @@ class MainFrame(wx.Frame):
         # File menu
         file_menu = wx.Menu()
         file_menu.Append(ID_CONNECT, "&Connect\tCtrl+Enter", "Connect to server")
-        file_menu.Append(ID_DISCONNECT, "&Disconnect\tCtrl+Q", "Disconnect from server")
+        file_menu.Append(ID_DISCONNECT, "&Disconnect", "Disconnect from server")
         file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
         file_menu.AppendSeparator()
-        file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Exit application")
+        exit_shortcut = "Ctrl+Q" if wx.Platform == "__WXMAC__" else "Alt+F4"
+        file_menu.Append(wx.ID_EXIT, f"E&xit\t{exit_shortcut}", "Exit application")
         menubar.Append(file_menu, "&File")
 
         # Edit menu (for file operations)
