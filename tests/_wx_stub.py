@@ -137,6 +137,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.ACCEL_NORMAL = 1
     fake_wx.ACCEL_CTRL = 2
     fake_wx.ID_OK = 100
+    fake_wx.ID_CANCEL = 99
     fake_wx.OK = 100
     fake_wx.YES = 101
     fake_wx.YES_NO = 102
@@ -156,6 +157,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.EVT_KEY_DOWN = object()
     fake_wx.EVT_CONTEXT_MENU = object()
     fake_wx.EVT_TEXT_ENTER = object()
+    fake_wx.EVT_LISTBOX_DCLICK = object()
     fake_wx.EVT_TIMER = object()
     fake_wx.EVT_CHAR_HOOK = object()
     fake_wx.EVT_CLOSE = object()

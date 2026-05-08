@@ -39,6 +39,7 @@ def _build_frame(module, tmp_path):
     settings = SimpleNamespace(display=display, transfer=transfer)
     fake_manager = MagicMock(jobs=[])
     fake_site_manager = MagicMock()
+    fake_workspace_manager = MagicMock()
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(app, "load_settings", return_value=settings))
@@ -46,6 +47,9 @@ def _build_frame(module, tmp_path):
             patch.object(app, "resolve_startup_local_folder", return_value=str(tmp_path))
         )
         stack.enter_context(patch.object(app, "SiteManager", return_value=fake_site_manager))
+        stack.enter_context(
+            patch.object(app, "WorkspaceManager", return_value=fake_workspace_manager)
+        )
         transfer_service_patch = stack.enter_context(patch.object(app, "TransferService"))
         transfer_service_patch.return_value = fake_manager
         for method in (
@@ -72,9 +76,11 @@ def _hydrate_frame(module):
     frame._show_transfer_queue = MagicMock()
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
+    frame._set_local_cwd = MagicMock()
     frame._get_selected_local_file = MagicMock()
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
+    frame._workspace_manager = MagicMock()
     frame._transfer_state_by_id = {}
     frame._transfer_progress_by_id = {}
     frame.status_bar = MagicMock(SetStatusText=MagicMock())
@@ -820,6 +826,109 @@ def test_site_manager_connect_applies_connection_defaults(app_module):
     assert info.timeout == 45
     assert info.passive_mode is False
     assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_save_workspace_requires_connection(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+
+    frame._on_save_workspace(None)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Save Workspace"
+
+
+def test_save_workspace_records_current_local_and_remote_paths(app_module, tmp_path):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = SimpleNamespace(connected=True, cwd="/srv/reports")
+    frame._local_cwd = str(tmp_path / "reports")
+    frame._workspace_manager = MagicMock()
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        GetValue=MagicMock(return_value="Daily Reports"),
+        SetName=MagicMock(),
+        Destroy=MagicMock(),
+    )
+
+    with patch.object(fake_wx, "TextEntryDialog", return_value=dialog):
+        frame._on_save_workspace(None)
+
+    saved = frame._workspace_manager.add.call_args.args[0]
+    assert saved.name == "Daily Reports"
+    assert saved.local_path == str(tmp_path / "reports")
+    assert saved.remote_path == "/srv/reports"
+    frame._announce.assert_called_once_with("Workspace 'Daily Reports' saved")
+
+
+def test_open_workspace_requires_saved_workspace(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._workspace_manager = MagicMock(workspaces=[])
+    frame._client = SimpleNamespace(connected=True, cwd="/srv")
+
+    frame._on_open_workspace(None)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Open Workspace"
+
+
+def test_open_workspace_requires_connection(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._workspace_manager = MagicMock(
+        workspaces=[app.WorkspaceBookmark(name="Reports", local_path=".", remote_path="/srv")]
+    )
+    frame._client = None
+
+    frame._on_open_workspace(None)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[1] == "Open Workspace"
+
+
+def test_open_workspace_uses_selected_bookmark(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    workspace = app.WorkspaceBookmark(
+        name="Reports",
+        local_path="C:/Reports",
+        remote_path="/srv/reports",
+    )
+    frame._workspace_manager = MagicMock(workspaces=[workspace])
+    frame._client = SimpleNamespace(connected=True, cwd="/srv", chdir=MagicMock())
+    frame._open_workspace = MagicMock()
+    dialog = MagicMock(
+        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
+        selected_workspace=workspace,
+        Destroy=MagicMock(),
+    )
+
+    with patch.object(app, "create_workspace_dialog", return_value=dialog):
+        frame._on_open_workspace(None)
+
+    frame._open_workspace.assert_called_once_with(workspace)
+
+
+def test_open_workspace_changes_both_panes(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    workspace = app.WorkspaceBookmark(
+        name="Reports",
+        local_path="C:/Reports",
+        remote_path="/srv/reports",
+    )
+    frame._client = SimpleNamespace(connected=True, cwd="/srv", chdir=MagicMock())
+
+    with patch.object(app.threading, "Thread", _ImmediateThread):
+        frame._open_workspace(workspace)
+
+    frame._set_local_cwd.assert_called_once_with("C:/Reports")
+    frame._refresh_local_files.assert_called_once()
+    frame._client.chdir.assert_called_once_with("/srv/reports")
+    frame._refresh_remote_files.assert_called_once()
+    frame._announce.assert_called_once_with("Opening workspace Reports")
 
 
 def test_on_transfer_update_reports_latest_status(app_module):

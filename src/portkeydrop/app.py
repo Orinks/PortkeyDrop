@@ -20,6 +20,7 @@ from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
 from portkeydrop.dialogs.import_connections import ImportConnectionsDialog
 from portkeydrop.dialogs.site_manager import SiteManagerDialog
+from portkeydrop.dialogs.workspaces import create_workspace_dialog
 from portkeydrop.dialogs.transfer import (
     TransferDirection,
     TransferStatus,
@@ -66,6 +67,7 @@ from portkeydrop.services.updater import (
 )
 from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
 from portkeydrop.ui.dialogs.update_dialog import UpdateAvailableDialog
+from portkeydrop.workspaces import WorkspaceBookmark, WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,8 @@ ID_SAVE_CONNECTION = wx.NewIdRef()
 ID_SETTINGS = wx.NewIdRef()
 ID_CHECK_UPDATES = wx.NewIdRef()
 ID_IMPORT_CONNECTIONS = wx.NewIdRef()
+ID_SAVE_WORKSPACE = wx.NewIdRef()
+ID_OPEN_WORKSPACE = wx.NewIdRef()
 ID_RETRY_LAST_FAILED = wx.NewIdRef()
 ID_SWITCH_PANE_FOCUS = wx.NewIdRef()
 ID_FOCUS_ADDRESS_BAR = wx.NewIdRef()
@@ -125,6 +129,7 @@ class MainFrame(wx.Frame):
             self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
         self._site_manager = SiteManager()
+        self._workspace_manager = WorkspaceManager()
         self._transfer_service = TransferService(
             notify_window=self,
             max_workers=self._settings.transfer.concurrent_transfers,
@@ -223,6 +228,16 @@ class MainFrame(wx.Frame):
         sites_menu.AppendSeparator()
         sites_menu.Append(
             ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
+        )
+        sites_menu.Append(
+            ID_SAVE_WORKSPACE,
+            "Save Current &Workspace...",
+            "Save current local and remote folders as a workspace",
+        )
+        sites_menu.Append(
+            ID_OPEN_WORKSPACE,
+            "Open &Workspace...",
+            "Open a saved local and remote workspace",
         )
         sites_menu.AppendSeparator()
         sites_menu.Append(
@@ -454,6 +469,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_site_manager, id=ID_SITE_MANAGER)
         self.Bind(wx.EVT_MENU, self._on_quick_connect, id=ID_QUICK_CONNECT)
         self.Bind(wx.EVT_MENU, self._on_save_connection, id=ID_SAVE_CONNECTION)
+        self.Bind(wx.EVT_MENU, self._on_save_workspace, id=ID_SAVE_WORKSPACE)
+        self.Bind(wx.EVT_MENU, self._on_open_workspace, id=ID_OPEN_WORKSPACE)
         self.Bind(wx.EVT_MENU, self._on_transfer, id=ID_TRANSFER)
         self.Bind(wx.EVT_MENU, self._on_upload, id=ID_UPLOAD)
         self.Bind(wx.EVT_MENU, self._on_download, id=ID_DOWNLOAD)
@@ -602,6 +619,90 @@ class MainFrame(wx.Frame):
             self._site_manager.add(site)
             self._announce(f"Site '{name}' saved")
         dlg.Destroy()
+
+    def _on_save_workspace(self, event: wx.CommandEvent) -> None:
+        if not self._client or not self._client.connected:
+            wx.MessageBox(
+                "Connect to a remote server before saving a workspace.",
+                "Save Workspace",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+
+        local_label = Path(self._local_cwd).name or self._local_cwd
+        remote_label = PurePosixPath(self._client.cwd).name or self._client.cwd
+        default_name = f"{local_label} to {remote_label}"
+        dlg = wx.TextEntryDialog(self, "Workspace name:", "Save Workspace", default_name)
+        dlg.SetName("Save Workspace")
+        if dlg.ShowModal() == wx.ID_OK:
+            name = dlg.GetValue().strip() or default_name
+            workspace = WorkspaceBookmark(
+                name=name,
+                local_path=self._local_cwd,
+                remote_path=self._client.cwd,
+            )
+            self._workspace_manager.add(workspace)
+            self._announce(f"Workspace '{name}' saved")
+        dlg.Destroy()
+
+    def _on_open_workspace(self, event: wx.CommandEvent) -> None:
+        if not self._workspace_manager.workspaces:
+            wx.MessageBox(
+                "No saved workspaces yet.",
+                "Open Workspace",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if not self._client or not self._client.connected:
+            wx.MessageBox(
+                "Connect to a remote server before opening a workspace.",
+                "Open Workspace",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+
+        dlg = create_workspace_dialog(self, self._workspace_manager)
+        workspace = None
+        if dlg.ShowModal() == wx.ID_OK:
+            workspace = dlg.selected_workspace
+        dlg.Destroy()
+        if workspace:
+            self._open_workspace(workspace)
+
+    def _open_workspace(self, workspace: WorkspaceBookmark) -> None:
+        try:
+            self._set_local_cwd(workspace.local_path)
+            self._refresh_local_files()
+        except Exception as exc:
+            wx.MessageBox(
+                f"Failed to open local workspace folder: {exc}",
+                "Open Workspace",
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        self._status(f"Opening workspace {workspace.name}...")
+        self._announce(f"Opening workspace {workspace.name}")
+        client = self._client
+
+        def _worker() -> None:
+            try:
+                client.chdir(workspace.remote_path)
+                wx.CallAfter(self._refresh_remote_files)
+            except Exception as exc:
+                wx.CallAfter(
+                    wx.MessageBox,
+                    f"Failed to open remote workspace folder: {exc}",
+                    "Open Workspace",
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_import_connections(self, event: wx.CommandEvent) -> None:
         dlg = ImportConnectionsDialog(self)
