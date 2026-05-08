@@ -174,6 +174,11 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
         app.ID_SWITCH_PANE_FOCUS,
     ) in table_entries
     assert (fake_wx.ACCEL_CTRL, ord("L"), app.ID_FOCUS_ADDRESS_BAR) in table_entries
+    assert (
+        fake_wx.ACCEL_CTRL | fake_wx.ACCEL_SHIFT,
+        ord("C"),
+        app.ID_COMPARE_DIRECTORIES,
+    ) in table_entries
 
 
 def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
@@ -260,6 +265,42 @@ def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
 
     frame.tb_host.SetFocus.assert_called_once()
     frame._announce.assert_called_once_with("Address bar")
+
+
+def test_compare_directories_requires_remote_connection(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+
+    frame._on_compare_directories(None)
+
+    frame._announce.assert_called_once_with(
+        "Connect to a remote server before comparing directories."
+    )
+
+
+def test_compare_directories_announces_summary_and_opens_dialog(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True)
+    frame._local_filter_text = ""
+    frame._remote_filter_text = ""
+    frame._settings.display.show_hidden_files = True
+    frame._local_files = [app.RemoteFile(name="local.txt", path="/local.txt")]
+    frame._remote_files = [app.RemoteFile(name="remote.txt", path="/remote.txt")]
+    dialog = MagicMock()
+
+    with patch.object(
+        app, "create_directory_compare_dialog", return_value=dialog
+    ) as dialog_factory:
+        frame._on_compare_directories(None)
+
+    frame._announce.assert_called_once_with(
+        "Directory comparison: 2 items, 1 upload, 1 download, 0 conflict, 0 unchanged"
+    )
+    dialog_factory.assert_called_once()
+    dialog.ShowModal.assert_called_once()
+    dialog.Destroy.assert_called_once()
 
 
 def test_on_upload_directory_updates_status(app_module):

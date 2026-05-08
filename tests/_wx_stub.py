@@ -136,6 +136,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.WXK_TAB = 9
     fake_wx.ACCEL_NORMAL = 1
     fake_wx.ACCEL_CTRL = 2
+    fake_wx.ACCEL_SHIFT = 4
     fake_wx.ID_OK = 100
     fake_wx.OK = 100
     fake_wx.YES = 101
@@ -145,6 +146,8 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.ICON_INFORMATION = 105
     fake_wx.ID_EXIT = 200
     fake_wx.ID_ABOUT = 201
+    fake_wx.DEFAULT_DIALOG_STYLE = 301
+    fake_wx.RESIZE_BORDER = 302
 
     fake_wx.StaticBox = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.StaticBoxSizer = lambda *args, **kwargs: _SimpleWidget()

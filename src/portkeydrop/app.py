@@ -15,6 +15,8 @@ import wx
 
 from portkeydrop import __version__
 from portkeydrop.accessible_list import AccessibleReportList, create_report_list, file_row_text
+from portkeydrop.directory_compare import compare_directories
+from portkeydrop.dialogs.directory_compare import create_directory_compare_dialog
 from portkeydrop.dialogs.properties import PropertiesDialog
 from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
@@ -102,6 +104,7 @@ ID_TOGGLE_ACTIVITY_LOG = wx.NewIdRef()
 ID_FOCUS_LOCAL_PANE = wx.NewIdRef()
 ID_FOCUS_REMOTE_PANE = wx.NewIdRef()
 ID_FOCUS_ACTIVITY_LOG_PANE = wx.NewIdRef()
+ID_COMPARE_DIRECTORIES = wx.NewIdRef()
 
 
 class MainFrame(wx.Frame):
@@ -193,6 +196,12 @@ class MainFrame(wx.Frame):
             ID_TOGGLE_ACTIVITY_LOG,
             "Hide &Activity Log",
             "Toggle activity log panel visibility",
+        )
+        view_menu.AppendSeparator()
+        view_menu.Append(
+            ID_COMPARE_DIRECTORIES,
+            "Compare &Directories\tCtrl+Shift+C",
+            "Compare the current local and remote directories",
         )
         menubar.Append(view_menu, "&View")
 
@@ -484,6 +493,7 @@ class MainFrame(wx.Frame):
             self._on_focus_activity_log_pane,
             id=ID_FOCUS_ACTIVITY_LOG_PANE,
         )
+        self.Bind(wx.EVT_MENU, self._on_compare_directories, id=ID_COMPARE_DIRECTORIES)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
@@ -511,6 +521,7 @@ class MainFrame(wx.Frame):
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL | wx.ACCEL_SHIFT, ord("C"), ID_COMPARE_DIRECTORIES),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("1"), ID_FOCUS_LOCAL_PANE),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("2"), ID_FOCUS_REMOTE_PANE),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("3"), ID_FOCUS_ACTIVITY_LOG_PANE),
@@ -1543,6 +1554,22 @@ class MainFrame(wx.Frame):
             self, self._transfer_service, log_callback=self.log_event
         )
         self._transfer_dlg.Show()
+
+    def _on_compare_directories(self, event) -> None:
+        """Show a read-only accessible comparison of current local and remote panes."""
+        if not self._client or not self._client.connected:
+            self._announce("Connect to a remote server before comparing directories.")
+            return
+        local_files = self._get_visible_files(self._local_files, self._local_filter_text)
+        remote_files = self._get_visible_files(self._remote_files, self._remote_filter_text)
+        result = compare_directories(local_files, remote_files)
+        message = f"Directory comparison: {result.summary}"
+        self._announce(message)
+        dialog = create_directory_compare_dialog(self, result)
+        try:
+            dialog.ShowModal()
+        finally:
+            dialog.Destroy()
 
     # --- File operations (context-aware) ---
 
