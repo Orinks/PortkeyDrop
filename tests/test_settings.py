@@ -70,6 +70,8 @@ class TestAppSettings:
         assert s.auto_update_enabled is True
         assert s.update_check_interval_hours == 24
         assert s.update_channel == "stable"
+        assert s.show_notification_area_icon is True
+        assert s.minimize_to_notification_area_on_close is False
 
 
 class TestSettings:
@@ -97,6 +99,8 @@ class TestLoadSaveSettings:
         settings.app.auto_update_enabled = False
         settings.app.update_check_interval_hours = 12
         settings.app.update_channel = "nightly"
+        settings.app.show_notification_area_icon = False
+        settings.app.minimize_to_notification_area_on_close = True
 
         save_settings(settings, tmp_path)
         loaded = load_settings(tmp_path)
@@ -108,6 +112,8 @@ class TestLoadSaveSettings:
         assert loaded.app.auto_update_enabled is False
         assert loaded.app.update_check_interval_hours == 12
         assert loaded.app.update_channel == "nightly"
+        assert loaded.app.show_notification_area_icon is False
+        assert loaded.app.minimize_to_notification_area_on_close is True
 
     def test_load_corrupt_file(self, tmp_path):
         (tmp_path / "settings.json").write_text("not json", encoding="utf-8")

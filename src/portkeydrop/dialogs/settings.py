@@ -289,6 +289,18 @@ class SettingsDialog(wx.Dialog):
             control_name="Date format",
         )
 
+        self.show_tray_icon_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Show &notification area icon"),
+            name="Show notification area icon",
+        )
+
+        self.minimize_to_tray_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Minimize to notification area when &closing"),
+            name="Minimize to notification area on close",
+        )
+
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Display")
 
@@ -453,6 +465,10 @@ class SettingsDialog(wx.Dialog):
         self.sort_asc_check.SetValue(s.display.sort_ascending)
         idx = ["relative", "absolute"].index(s.display.date_format)
         self.date_format_choice.SetSelection(idx)
+        self.show_tray_icon_check.SetValue(getattr(s.app, "show_notification_area_icon", True))
+        self.minimize_to_tray_check.SetValue(
+            getattr(s.app, "minimize_to_notification_area_on_close", False)
+        )
         # Connection
         idx = list(SUPPORTED_PROTOCOL_VALUES).index(s.connection.protocol)
         self.default_proto_choice.SetSelection(idx)
@@ -492,6 +508,8 @@ class SettingsDialog(wx.Dialog):
         s.display.sort_by = self.sort_by_choice.GetStringSelection()
         s.display.sort_ascending = self.sort_asc_check.GetValue()
         s.display.date_format = self.date_format_choice.GetStringSelection()
+        s.app.show_notification_area_icon = self.show_tray_icon_check.GetValue()
+        s.app.minimize_to_notification_area_on_close = self.minimize_to_tray_check.GetValue()
 
         s.connection.protocol = self.default_proto_choice.GetStringSelection()
         s.connection.timeout = self.timeout_spin.GetValue()

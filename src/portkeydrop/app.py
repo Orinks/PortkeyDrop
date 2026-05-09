@@ -29,6 +29,7 @@ from portkeydrop.dialogs.transfer import (
     save_queue,
 )
 from portkeydrop.services.transfer_service import TransferService, format_transfer_detail
+from portkeydrop.system_tray import SystemTrayIcon
 from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
@@ -124,6 +125,8 @@ class MainFrame(wx.Frame):
         except ImportError:
             self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
+        self._tray_icon: SystemTrayIcon | None = None
+        self._force_exit = False
         self._site_manager = SiteManager()
         self._transfer_service = TransferService(
             notify_window=self,
@@ -146,6 +149,7 @@ class MainFrame(wx.Frame):
         self._bind_events()
         self._update_title()
         self._refresh_local_files()
+        self._sync_tray_icon()
         wx.CallAfter(self._set_initial_focus)
         self._start_auto_update_checks()
         wx.CallAfter(self._check_for_updates_on_startup)
@@ -757,7 +761,12 @@ class MainFrame(wx.Frame):
             self.tb_host.SetFocus()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
-        self.Close()
+        self.request_exit()
+
+    def request_exit(self) -> None:
+        """Close the application even when close-to-tray is enabled."""
+        self._force_exit = True
+        self.Close(True)
 
     # --- Path bar events ---
 
@@ -1816,6 +1825,7 @@ class MainFrame(wx.Frame):
             )
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
+            self._sync_tray_icon()
             self._populate_file_list(
                 self.remote_file_list,
                 self._get_visible_files(self._remote_files, self._remote_filter_text),
@@ -2127,11 +2137,58 @@ class MainFrame(wx.Frame):
             msg = f"Restored {count} pending transfer{'s' if count != 1 else ''} from last session"
             wx.CallAfter(self._announce, msg)
 
+    def _sync_tray_icon(self) -> None:
+        """Create or remove the notification area icon to match settings."""
+        app_settings = getattr(getattr(self, "_settings", None), "app", None)
+        enabled = bool(getattr(app_settings, "show_notification_area_icon", True))
+        if not hasattr(self, "_tray_icon"):
+            self._tray_icon = None
+        if enabled and self._tray_icon is None:
+            try:
+                self._tray_icon = SystemTrayIcon(self)
+            except Exception:
+                logger.warning("Failed to initialize notification area icon", exc_info=True)
+                self._tray_icon = None
+            return
+
+        if not enabled and self._tray_icon is not None:
+            self._destroy_tray_icon()
+
+    def _destroy_tray_icon(self) -> None:
+        tray_icon = getattr(self, "_tray_icon", None)
+        if tray_icon is None:
+            return
+        try:
+            tray_icon.RemoveIcon()
+        except Exception:
+            logger.debug("Failed to remove notification area icon", exc_info=True)
+        try:
+            tray_icon.Destroy()
+        except Exception:
+            logger.debug("Failed to destroy notification area icon", exc_info=True)
+        self._tray_icon = None
+
+    def _should_minimize_to_tray_on_close(self) -> bool:
+        app_settings = getattr(getattr(self, "_settings", None), "app", None)
+        return (
+            not getattr(self, "_force_exit", False)
+            and getattr(self, "_tray_icon", None) is not None
+            and bool(getattr(app_settings, "show_notification_area_icon", True))
+            and bool(getattr(app_settings, "minimize_to_notification_area_on_close", False))
+        )
+
     def _on_close(self, event) -> None:
         """Save transfer queue and stop timers before closing the window."""
         save_queue(self._transfer_service, get_config_dir())
+        if self._should_minimize_to_tray_on_close():
+            self.Hide()
+            self._announce("Portkey Drop is still running in the notification area.")
+            if event is not None and hasattr(event, "Veto"):
+                event.Veto()
+            return
         if self._auto_update_check_timer:
             self._auto_update_check_timer.Stop()
+        self._destroy_tray_icon()
         if event is not None and hasattr(event, "Skip"):
             event.Skip()
 
