@@ -222,7 +222,7 @@ def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
 
     assert "&Disconnect" in appended_labels
     assert "&Disconnect\tCtrl+Q" not in appended_labels
-    assert "E&xit\tCtrl+Q" in appended_labels
+    assert "E&xit\tCmd+Q" in appended_labels
 
 
 def test_windows_menu_does_not_override_alt_f4_close(app_module):

@@ -164,7 +164,7 @@ class MainFrame(wx.Frame):
         file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
         file_menu.AppendSeparator()
-        exit_label = "E&xit\tCtrl+Q" if wx.Platform == "__WXMAC__" else "E&xit"
+        exit_label = "E&xit\tCmd+Q" if wx.Platform == "__WXMAC__" else "E&xit"
         file_menu.Append(wx.ID_EXIT, exit_label, "Exit application")
         menubar.Append(file_menu, "&File")
 
