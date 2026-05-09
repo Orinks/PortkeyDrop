@@ -222,7 +222,56 @@ def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
 
     assert "&Disconnect" in appended_labels
     assert "&Disconnect\tCtrl+Q" not in appended_labels
+    # wx maps Ctrl accelerators to Command on macOS, so this is Command+Q to users.
     assert "E&xit\tCtrl+Q" in appended_labels
+
+
+def test_windows_menu_does_not_override_alt_f4_close(app_module):
+    app, fake_wx = app_module
+    fake_wx.Platform = "__WXMSW__"
+
+    appended_labels: list[str] = []
+
+    class FakeMenu:
+        def Append(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock(Enable=MagicMock())
+
+        def AppendSeparator(self):
+            pass
+
+        def AppendCheckItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendRadioItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendSubMenu(self, *_args):
+            pass
+
+        def Check(self, *_args):
+            pass
+
+    class FakeMenuBar:
+        def Append(self, *_args):
+            pass
+
+    fake_wx.Menu = FakeMenu
+    fake_wx.MenuBar = FakeMenuBar
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(display=SimpleNamespace(show_hidden_files=False))
+    frame._get_update_channel = MagicMock(return_value="stable")
+    frame.SetMenuBar = MagicMock()
+
+    frame._build_menu()
+
+    assert "E&xit" in appended_labels
+    assert "E&xit\tAlt+F4" not in appended_labels
 
 
 def test_switch_pane_focus_local_to_remote(app_module):

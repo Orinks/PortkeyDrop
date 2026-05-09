@@ -59,6 +59,8 @@ class AppSettings:
     auto_update_enabled: bool = True
     update_check_interval_hours: int = 24
     update_channel: str = "stable"
+    show_notification_area_icon: bool = True
+    minimize_to_notification_area_on_close: bool = False
 
 
 @dataclass

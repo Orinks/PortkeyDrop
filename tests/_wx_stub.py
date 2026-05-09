@@ -95,6 +95,13 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.ListCtrl = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.Timer = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.FileDataObject = MagicMock()
+    fake_wx.Icon = MagicMock
+    fake_wx.Bitmap = MagicMock
+    fake_wx.MemoryDC = MagicMock
+    fake_wx.Brush = MagicMock
+    fake_wx.Colour = MagicMock
+    fake_wx.Pen = MagicMock
+    fake_wx.NullBitmap = None
 
     class _Clipboard:
         @staticmethod
@@ -145,6 +152,9 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.ICON_INFORMATION = 105
     fake_wx.ID_EXIT = 200
     fake_wx.ID_ABOUT = 201
+    fake_wx.ID_ANY = -1
+    fake_wx.BITMAP_TYPE_ICO = 1
+    fake_wx.BITMAP_TYPE_PNG = 2
 
     fake_wx.StaticBox = lambda *args, **kwargs: _SimpleWidget()
     fake_wx.StaticBoxSizer = lambda *args, **kwargs: _SimpleWidget()
@@ -201,6 +211,30 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
 
     fake_adv.AboutDialogInfo = _AboutDialogInfo
     fake_adv.AboutBox = lambda info: None
+    fake_adv.EVT_TASKBAR_LEFT_DOWN = object()
+    fake_adv.EVT_TASKBAR_LEFT_DCLICK = object()
+    fake_adv.EVT_TASKBAR_RIGHT_DOWN = object()
+
+    class _TaskBarIcon:
+        def __init__(self, *args, **kwargs) -> None:
+            self._bindings: list[tuple] = []
+
+        def Bind(self, *args, **kwargs) -> None:
+            self._bindings.append((args, kwargs))
+
+        def SetIcon(self, *args, **kwargs) -> bool:
+            return True
+
+        def PopupMenu(self, *_args, **_kwargs) -> None:
+            return None
+
+        def RemoveIcon(self) -> bool:
+            return True
+
+        def Destroy(self) -> None:
+            return None
+
+    fake_adv.TaskBarIcon = _TaskBarIcon
     fake_wx.adv = fake_adv
 
     return fake_wx, fake_adv

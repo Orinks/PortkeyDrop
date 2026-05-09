@@ -217,6 +217,8 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
         "passive_check": "Passive mode",
         "verify_keys_choice": "Verify host keys",
         "remember_local_folder_check": "Remember last local folder on startup",
+        "show_tray_icon_check": "Show notification area icon",
+        "minimize_to_tray_check": "Minimize to notification area on close",
         "auto_update_check": "Automatic update checks",
         "update_interval_spin": "Update check interval",
         "update_channel_choice": "Update channel",
@@ -362,6 +364,8 @@ def test_check_updates_button_invokes_callback_with_selected_channel(monkeypatch
 def test_get_settings_persists_updater_fields(monkeypatch):
     dlg = _load_dialog(monkeypatch)
     dlg.auto_update_check.SetValue(False)
+    dlg.show_tray_icon_check.SetValue(False)
+    dlg.minimize_to_tray_check.SetValue(True)
     dlg.update_interval_spin.SetValue(12)
     dlg.update_channel_choice.SetSelection(1)
     dlg.remember_local_folder_check.SetValue(False)
@@ -370,6 +374,8 @@ def test_get_settings_persists_updater_fields(monkeypatch):
     settings = dlg.get_settings()
 
     assert settings.app.auto_update_enabled is False
+    assert settings.app.show_notification_area_icon is False
+    assert settings.app.minimize_to_notification_area_on_close is True
     assert settings.app.update_check_interval_hours == 12
     assert settings.app.update_channel == "nightly"
     assert settings.app.remember_last_local_folder_on_startup is False
