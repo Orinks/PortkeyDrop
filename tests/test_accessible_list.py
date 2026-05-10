@@ -74,10 +74,16 @@ def test_macos_report_list_uses_listbox_with_complete_row_text(monkeypatch):
 
     assert report.window is listbox
     assert listbox.items == [
-        "File, archive.zip, size 42 MB, modified 2026-05-02 10:00, permissions rw-r--r--"
+        "archive.zip, File, size 42 MB, modified 2026-05-02 10:00, permissions rw-r--r--"
     ]
     assert report.GetItemText(0, 0) == "archive.zip"
     assert report.GetItemText(0, 3) == "2026-05-02 10:00"
+
+
+def test_file_row_text_announces_name_before_directory_type(monkeypatch):
+    module, _ = load_module_with_fake_wx("portkeydrop.accessible_list", monkeypatch)
+
+    assert module.file_row_text(["Projects", "", "Directory"], []) == "Projects, Directory"
 
 
 def test_report_list_passes_through_to_listctrl_off_macos(monkeypatch):

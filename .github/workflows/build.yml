@@ -58,12 +58,21 @@ jobs:
             if [ -z "$LAST_TAG" ]; then
               echo "should_build=true" >> $GITHUB_OUTPUT
             else
-              USER_FACING_COUNT=$(git log "$LAST_TAG"..HEAD --pretty='%s' --no-merges --first-parent | \
-                grep -Ei '^(feat|fix|perf|security)(\([^)]+\))?:' | \
-                grep -Eiv '^fix\((test|ci|build|chore|docs|style|refactor)\):' | \
-                wc -l | tr -d ' ')
+              RANGE="$LAST_TAG"..HEAD
 
-              if [ "${USER_FACING_COUNT:-0}" -gt 0 ]; then
+              # Build only when there is at least one user-facing file change.
+              # This avoids shipping nightlies for docs/test/ci-only changes and
+              # works even when squash merges or sync commits hide the original
+              # commit subjects on first-parent history.
+              USER_FACING_PATHS=$(git diff --name-only "$RANGE" -- \
+                src/ \
+                installer/ \
+                scripts/generate_build_meta.py \
+                pyproject.toml \
+                '*.spec' \
+                soundpacks/ | sed '/^$/d')
+
+              if [ -n "$USER_FACING_PATHS" ]; then
                 echo "should_build=true" >> $GITHUB_OUTPUT
               else
                 echo "should_build=false" >> $GITHUB_OUTPUT
@@ -190,6 +199,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
           CLIFF_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p assets
           TIMESTAMP=$(date -u +%Y%m%d)
@@ -216,23 +226,25 @@ jobs:
           # Generate checksums
           cd assets && sha256sum * > checksums.txt 2>/dev/null || true
 
-          # Generate release notes via git-cliff (nightly and stable)
+          # Generate release notes from curated CHANGELOG.md entries.
           cd ..
           if [ "$IS_NIGHTLY" = "true" ]; then
             LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
             if [ -n "$LAST_TAG" ]; then
-              npx git-cliff@latest "$LAST_TAG"..HEAD --strip all > notes.md.tmp || true
-              awk '!seen[$0]++' notes.md.tmp > notes.md && rm -f notes.md.tmp
-              [ -s notes.md ] || echo "- No user-facing changes" > notes.md
+              gh release view "$LAST_TAG" --json body -q .body > previous-notes.md || true
+              python scripts/changelog_tools.py notes \
+                --kind nightly \
+                --previous-tag "$LAST_TAG" \
+                --exclude-notes previous-notes.md \
+                --output notes.md
             else
-              echo "Initial nightly build" > notes.md
+              python scripts/changelog_tools.py notes --kind nightly --output notes.md
             fi
           else
-            npx git-cliff@latest --latest --ignore-tags "nightly-.*" --strip all > notes.md.tmp || true
-            awk '!seen[$0]++' notes.md.tmp > notes.md && rm -f notes.md.tmp
-            if [ ! -s notes.md ]; then
-              echo "See [CHANGELOG.md](https://github.com/Orinks/PortkeyDrop/blob/main/CHANGELOG.md) for full release notes." > notes.md
-            fi
+            python scripts/changelog_tools.py notes \
+              --kind stable \
+              --version "$TAG" \
+              --output notes.md
           fi
 
       - name: Create release
@@ -250,6 +262,7 @@ jobs:
           else
             if gh release view "$TAG" &>/dev/null; then
               gh release upload "$TAG" assets/* --clobber
+              gh release edit "$TAG" --notes-file notes.md --title "PortkeyDrop v${VERSION}"
             else
               gh release create "$TAG" assets/* --notes-file notes.md \
                 --title "PortkeyDrop v${VERSION}"

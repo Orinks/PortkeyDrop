@@ -123,6 +123,9 @@ def _parse_site(
     protocol = _detect_protocol(cfg)
     if protocol == "scp":
         protocol = "sftp"
+    ftp_explicit_ssl = protocol == "ftps" and port != 990
+    if ftp_explicit_ssl:
+        protocol = "ftp"
 
     username = str(cfg.get("UserName", "")).strip()
     initial_dir = _decode_value(str(cfg.get("RemoteDirectory", "")).strip()) or "/"
@@ -137,6 +140,7 @@ def _parse_site(
         port=port,
         username=username,
         password=password,
+        ftp_explicit_ssl=ftp_explicit_ssl,
         key_path=key_path,
         initial_dir=initial_dir,
     )

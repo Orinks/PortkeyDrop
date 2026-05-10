@@ -84,7 +84,12 @@ def _hydrate_frame(module):
     frame._retry_last_failed_item = MagicMock()
     frame._toolbar_panel = MagicMock()
     frame._settings = SimpleNamespace(
-        connection=SimpleNamespace(timeout=45, passive_mode=False, verify_host_keys="never"),
+        connection=SimpleNamespace(
+            timeout=45,
+            passive_mode=False,
+            ftp_explicit_ssl=False,
+            verify_host_keys="never",
+        ),
         display=SimpleNamespace(progress_interval=25),
         transfer=SimpleNamespace(overwrite_mode="ask"),
     )
@@ -169,6 +174,104 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
         app.ID_SWITCH_PANE_FOCUS,
     ) in table_entries
     assert (fake_wx.ACCEL_CTRL, ord("L"), app.ID_FOCUS_ADDRESS_BAR) in table_entries
+
+
+def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
+    app, fake_wx = app_module
+    fake_wx.Platform = "__WXMAC__"
+
+    appended_labels: list[str] = []
+
+    class FakeMenu:
+        def Append(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock(Enable=MagicMock())
+
+        def AppendSeparator(self):
+            pass
+
+        def AppendCheckItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendRadioItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendSubMenu(self, *_args):
+            pass
+
+        def Check(self, *_args):
+            pass
+
+    class FakeMenuBar:
+        def Append(self, *_args):
+            pass
+
+    fake_wx.Menu = FakeMenu
+    fake_wx.MenuBar = FakeMenuBar
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(display=SimpleNamespace(show_hidden_files=False))
+    frame._get_update_channel = MagicMock(return_value="stable")
+    frame.SetMenuBar = MagicMock()
+
+    frame._build_menu()
+
+    assert "&Disconnect" in appended_labels
+    assert "&Disconnect\tCtrl+Q" not in appended_labels
+    # wx maps Ctrl accelerators to Command on macOS, so this is Command+Q to users.
+    assert "E&xit\tCtrl+Q" in appended_labels
+
+
+def test_windows_menu_does_not_override_alt_f4_close(app_module):
+    app, fake_wx = app_module
+    fake_wx.Platform = "__WXMSW__"
+
+    appended_labels: list[str] = []
+
+    class FakeMenu:
+        def Append(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock(Enable=MagicMock())
+
+        def AppendSeparator(self):
+            pass
+
+        def AppendCheckItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendRadioItem(self, *_args):
+            if len(_args) >= 2:
+                appended_labels.append(_args[1])
+            return MagicMock()
+
+        def AppendSubMenu(self, *_args):
+            pass
+
+        def Check(self, *_args):
+            pass
+
+    class FakeMenuBar:
+        def Append(self, *_args):
+            pass
+
+    fake_wx.Menu = FakeMenu
+    fake_wx.MenuBar = FakeMenuBar
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(display=SimpleNamespace(show_hidden_files=False))
+    frame._get_update_channel = MagicMock(return_value="stable")
+    frame.SetMenuBar = MagicMock()
+
+    frame._build_menu()
+
+    assert "E&xit" in appended_labels
+    assert "E&xit\tAlt+F4" not in appended_labels
 
 
 def test_switch_pane_focus_local_to_remote(app_module):
@@ -701,6 +804,27 @@ def test_apply_connection_defaults_sets_timeout_passive_and_host_key_policy(app_
     assert info.timeout == 45
     assert info.passive_mode is False
     assert info.host_key_policy == app.HostKeyPolicy.STRICT
+
+
+def test_toolbar_protocol_change_uses_webdav_default_port(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="webdav"))
+    frame.tb_port = MagicMock()
+    frame.tb_ftp_ssl = MagicMock()
+
+    frame._on_toolbar_protocol_change(None)
+
+    frame.tb_port.SetValue.assert_called_once_with("443")
+    frame.tb_ftp_ssl.Enable.assert_called_once_with(False)
+    frame.tb_ftp_ssl.SetValue.assert_called_once_with(False)
+
+
+def test_effective_site_port_uses_webdav_default(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    assert frame._effective_site_port("webdav", 0) == 443
 
 
 def test_quick_connect_applies_connection_defaults(app_module):

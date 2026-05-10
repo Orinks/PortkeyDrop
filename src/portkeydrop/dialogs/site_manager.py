@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import wx
 
+from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES
 from portkeydrop.sites import Site, SiteManager
 
 
@@ -60,11 +61,17 @@ class SiteManagerDialog(wx.Dialog):
 
         fields = [
             ("Na&me:", "name_text", wx.TextCtrl, {}),
-            ("Pro&tocol:", "protocol_choice", wx.Choice, {"choices": ["sftp", "ftp", "ftps"]}),
+            (
+                "Pro&tocol:",
+                "protocol_choice",
+                wx.Choice,
+                {"choices": list(SUPPORTED_PROTOCOL_VALUES)},
+            ),
             ("&Host:", "host_text", wx.TextCtrl, {}),
             ("Po&rt:", "port_text", wx.TextCtrl, {}),
             ("&Username:", "username_text", wx.TextCtrl, {}),
             ("Pass&word:", "password_text", wx.TextCtrl, {"style": wx.TE_PASSWORD}),
+            ("", "ftp_ssl_check", wx.CheckBox, {"label": "Use SSL (AUTH SSL)"}),
             ("&Key Path:", "key_path_text", wx.TextCtrl, {}),
             ("&Initial Dir:", "initial_dir_text", wx.TextCtrl, {}),
         ]
@@ -122,6 +129,7 @@ class SiteManagerDialog(wx.Dialog):
         self.add_btn.Bind(wx.EVT_BUTTON, self._on_add)
         self.remove_btn.Bind(wx.EVT_BUTTON, self._on_remove)
         self.connect_btn.Bind(wx.EVT_BUTTON, self._on_connect)
+        self.protocol_choice.Bind(wx.EVT_CHOICE, self._on_protocol_change)
         save_btn.Bind(wx.EVT_BUTTON, self._on_save)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
@@ -143,8 +151,8 @@ class SiteManagerDialog(wx.Dialog):
     def _populate_form(self, site: Site) -> None:
         self.name_text.SetValue(site.name)
         proto_idx = (
-            ["sftp", "ftp", "ftps"].index(site.protocol)
-            if site.protocol in ["sftp", "ftp", "ftps"]
+            list(SUPPORTED_PROTOCOL_VALUES).index(site.protocol)
+            if site.protocol in SUPPORTED_PROTOCOL_VALUES
             else 0
         )
         self.protocol_choice.SetSelection(proto_idx)
@@ -152,6 +160,9 @@ class SiteManagerDialog(wx.Dialog):
         self.port_text.SetValue(str(site.port) if site.port else "")
         self.username_text.SetValue(site.username)
         self.password_text.SetValue(site.password)
+        if hasattr(self, "ftp_ssl_check"):
+            self.ftp_ssl_check.SetValue(bool(getattr(site, "ftp_explicit_ssl", False)))
+            self.ftp_ssl_check.Enable(site.protocol == "ftp")
         self.key_path_text.SetValue(site.key_path)
         self.initial_dir_text.SetValue(site.initial_dir)
 
@@ -171,6 +182,12 @@ class SiteManagerDialog(wx.Dialog):
             self.EndModal(wx.ID_CANCEL)
         else:
             event.Skip()
+
+    def _on_protocol_change(self, event: wx.CommandEvent) -> None:
+        is_ftp = self.protocol_choice.GetStringSelection() == "ftp"
+        self.ftp_ssl_check.Enable(is_ftp)
+        if not is_ftp:
+            self.ftp_ssl_check.SetValue(False)
 
     def _on_remove(self, event: wx.CommandEvent) -> None:
         if self._selected_site:
@@ -288,6 +305,11 @@ class SiteManagerDialog(wx.Dialog):
             site.port = 0
         site.username = self.username_text.GetValue().strip()
         site.password = self.password_text.GetValue()
+        site.ftp_explicit_ssl = (
+            bool(self.ftp_ssl_check.GetValue())
+            if site.protocol == "ftp" and hasattr(self, "ftp_ssl_check")
+            else False
+        )
         site.key_path = self.key_path_text.GetValue().strip()
         site.initial_dir = self.initial_dir_text.GetValue().strip() or "/"
         return True

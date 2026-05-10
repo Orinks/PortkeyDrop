@@ -26,7 +26,9 @@ def file_row_text(columns: Sequence[str], _headers: Sequence[str]) -> str:
     modified = columns[3] if len(columns) > 3 else ""
     permissions = columns[4] if len(columns) > 4 else ""
 
-    parts = [kind or "Item", name]
+    parts = [name or "Item"]
+    if kind:
+        parts.append(kind)
     if size:
         parts.append(f"size {size}")
     if modified:

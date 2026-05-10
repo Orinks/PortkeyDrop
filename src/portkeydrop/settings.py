@@ -41,6 +41,7 @@ class ConnectionDefaults:
     keepalive: int = 60
     max_retries: int = 3
     passive_mode: bool = True  # FTP only
+    ftp_explicit_ssl: bool = False
     verify_host_keys: str = "ask"  # ask, always, never
 
 
@@ -58,6 +59,8 @@ class AppSettings:
     auto_update_enabled: bool = True
     update_check_interval_hours: int = 24
     update_channel: str = "stable"
+    show_notification_area_icon: bool = True
+    minimize_to_notification_area_on_close: bool = False
 
 
 @dataclass

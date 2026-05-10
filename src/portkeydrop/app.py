@@ -29,6 +29,7 @@ from portkeydrop.dialogs.transfer import (
     save_queue,
 )
 from portkeydrop.services.transfer_service import TransferService, format_transfer_detail
+from portkeydrop.system_tray import SystemTrayIcon
 from portkeydrop.local_files import (
     delete_local,
     list_local_dir,
@@ -42,7 +43,14 @@ from portkeydrop.migration import (
     migrate_files,
 )
 from portkeydrop.portable import get_config_dir, is_portable_mode
-from portkeydrop.protocols import ConnectionInfo, HostKeyPolicy, Protocol, RemoteFile, create_client
+from portkeydrop.protocols import (
+    SUPPORTED_PROTOCOL_VALUES,
+    ConnectionInfo,
+    HostKeyPolicy,
+    Protocol,
+    RemoteFile,
+    create_client,
+)
 from portkeydrop.settings import (
     load_settings,
     resolve_startup_local_folder,
@@ -117,6 +125,8 @@ class MainFrame(wx.Frame):
         except ImportError:
             self.build_tag = os.environ.get("PORTKEYDROP_BUILD_TAG")
         self._auto_update_check_timer: wx.Timer | None = None
+        self._tray_icon: SystemTrayIcon | None = None
+        self._force_exit = False
         self._site_manager = SiteManager()
         self._transfer_service = TransferService(
             notify_window=self,
@@ -139,6 +149,7 @@ class MainFrame(wx.Frame):
         self._bind_events()
         self._update_title()
         self._refresh_local_files()
+        self._sync_tray_icon()
         wx.CallAfter(self._set_initial_focus)
         self._start_auto_update_checks()
         wx.CallAfter(self._check_for_updates_on_startup)
@@ -149,11 +160,13 @@ class MainFrame(wx.Frame):
         # File menu
         file_menu = wx.Menu()
         file_menu.Append(ID_CONNECT, "&Connect\tCtrl+Enter", "Connect to server")
-        file_menu.Append(ID_DISCONNECT, "&Disconnect\tCtrl+Q", "Disconnect from server")
+        file_menu.Append(ID_DISCONNECT, "&Disconnect", "Disconnect from server")
         file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
         file_menu.AppendSeparator()
-        file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Exit application")
+        # wx maps Ctrl accelerators to Command on macOS; RawCtrl is the physical Ctrl key.
+        exit_label = "E&xit\tCtrl+Q" if wx.Platform == "__WXMAC__" else "E&xit"
+        file_menu.Append(wx.ID_EXIT, exit_label, "Exit application")
         menubar.Append(file_menu, "&File")
 
         # Edit menu (for file operations)
@@ -248,7 +261,7 @@ class MainFrame(wx.Frame):
                 lbl.SetLabelFor(ctrl)
 
         protocol_lbl = wx.StaticText(toolbar_panel, label="&Protocol:")
-        self.tb_protocol = wx.Choice(toolbar_panel, choices=["sftp", "ftp", "ftps"])
+        self.tb_protocol = wx.Choice(toolbar_panel, choices=list(SUPPORTED_PROTOCOL_VALUES))
         self.tb_protocol.SetSelection(0)
         _bind_label(protocol_lbl, self.tb_protocol)
         sizer.Add(protocol_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -277,6 +290,11 @@ class MainFrame(wx.Frame):
         _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
+
+        self.tb_ftp_ssl = wx.CheckBox(toolbar_panel, label="Use SSL (AUTH SSL)")
+        self.tb_ftp_ssl.SetName("Use SSL with FTP")
+        self.tb_ftp_ssl.Enable(False)
+        sizer.Add(self.tb_ftp_ssl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
 
         self.tb_connect_btn = wx.Button(toolbar_panel, label="&Connect")
         sizer.Add(self.tb_connect_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
@@ -506,21 +524,31 @@ class MainFrame(wx.Frame):
 
     def _on_toolbar_protocol_change(self, event: wx.CommandEvent) -> None:
         proto = self.tb_protocol.GetStringSelection()
-        defaults = {"sftp": "22", "ftp": "21", "ftps": "990"}
+        defaults = {
+            "sftp": "22",
+            "ftp": "21",
+            "ftps": "990",
+            "webdav": "443",
+        }
         self.tb_port.SetValue(defaults.get(proto, "22"))
+        self.tb_ftp_ssl.Enable(proto == "ftp")
+        if proto != "ftp":
+            self.tb_ftp_ssl.SetValue(False)
 
     # --- Connection ---
 
     def _on_connect_toolbar(self, event: wx.CommandEvent) -> None:
-        proto_map = {"sftp": Protocol.SFTP, "ftp": Protocol.FTP, "ftps": Protocol.FTPS}
         proto_str = self.tb_protocol.GetStringSelection()
         port_str = self.tb_port.GetValue().strip()
         info = ConnectionInfo(
-            protocol=proto_map.get(proto_str, Protocol.SFTP),
+            protocol=Protocol(proto_str)
+            if proto_str in SUPPORTED_PROTOCOL_VALUES
+            else Protocol.SFTP,
             host=self.tb_host.GetValue().strip(),
             port=int(port_str) if port_str else 0,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
+            ftp_explicit_ssl=bool(self.tb_ftp_ssl.GetValue()) if proto_str == "ftp" else False,
         )
         self._apply_connection_defaults(info)
         self._do_connect(info)
@@ -573,6 +601,7 @@ class MainFrame(wx.Frame):
                 port=int(port_str) if port_str else 0,
                 username=username,
                 password=password,
+                ftp_explicit_ssl=bool(self.tb_ftp_ssl.GetValue()) if proto_str == "ftp" else False,
                 initial_dir=self._client.cwd,
             )
             self._site_manager.add(site)
@@ -618,6 +647,7 @@ class MainFrame(wx.Frame):
                 username=imported.username,
                 password=imported.password,
                 key_path=imported.key_path,
+                ftp_explicit_ssl=getattr(imported, "ftp_explicit_ssl", False),
                 initial_dir=imported.initial_dir or "/",
                 notes=imported.notes,
             )
@@ -640,7 +670,7 @@ class MainFrame(wx.Frame):
     def _effective_site_port(self, protocol: str, port: int) -> int:
         if port > 0:
             return port
-        defaults = {"sftp": 22, "ftp": 21, "ftps": 990}
+        defaults = {"sftp": 22, "ftp": 21, "ftps": 990, "webdav": 443}
         return defaults.get(protocol, 22)
 
     def _host_key_policy(self) -> HostKeyPolicy:
@@ -658,6 +688,10 @@ class MainFrame(wx.Frame):
         defaults = getattr(self._settings, "connection", None)
         info.timeout = max(1, int(getattr(defaults, "timeout", info.timeout)))
         info.passive_mode = bool(getattr(defaults, "passive_mode", info.passive_mode))
+        if info.protocol is Protocol.FTP:
+            info.ftp_explicit_ssl = bool(
+                info.ftp_explicit_ssl or getattr(defaults, "ftp_explicit_ssl", False)
+            )
         info.host_key_policy = self._host_key_policy()
 
     def _do_connect(self, info: ConnectionInfo) -> None:
@@ -728,7 +762,12 @@ class MainFrame(wx.Frame):
             self.tb_host.SetFocus()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
-        self.Close()
+        self.request_exit()
+
+    def request_exit(self) -> None:
+        """Close the application even when close-to-tray is enabled."""
+        self._force_exit = True
+        self.Close(True)
 
     # --- Path bar events ---
 
@@ -1787,6 +1826,7 @@ class MainFrame(wx.Frame):
             )
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
+            self._sync_tray_icon()
             self._populate_file_list(
                 self.remote_file_list,
                 self._get_visible_files(self._remote_files, self._remote_filter_text),
@@ -2098,11 +2138,58 @@ class MainFrame(wx.Frame):
             msg = f"Restored {count} pending transfer{'s' if count != 1 else ''} from last session"
             wx.CallAfter(self._announce, msg)
 
+    def _sync_tray_icon(self) -> None:
+        """Create or remove the notification area icon to match settings."""
+        app_settings = getattr(getattr(self, "_settings", None), "app", None)
+        enabled = bool(getattr(app_settings, "show_notification_area_icon", True))
+        if not hasattr(self, "_tray_icon"):
+            self._tray_icon = None
+        if enabled and self._tray_icon is None:
+            try:
+                self._tray_icon = SystemTrayIcon(self)
+            except Exception:
+                logger.warning("Failed to initialize notification area icon", exc_info=True)
+                self._tray_icon = None
+            return
+
+        if not enabled and self._tray_icon is not None:
+            self._destroy_tray_icon()
+
+    def _destroy_tray_icon(self) -> None:
+        tray_icon = getattr(self, "_tray_icon", None)
+        if tray_icon is None:
+            return
+        try:
+            tray_icon.RemoveIcon()
+        except Exception:
+            logger.debug("Failed to remove notification area icon", exc_info=True)
+        try:
+            tray_icon.Destroy()
+        except Exception:
+            logger.debug("Failed to destroy notification area icon", exc_info=True)
+        self._tray_icon = None
+
+    def _should_minimize_to_tray_on_close(self) -> bool:
+        app_settings = getattr(getattr(self, "_settings", None), "app", None)
+        return (
+            not getattr(self, "_force_exit", False)
+            and getattr(self, "_tray_icon", None) is not None
+            and bool(getattr(app_settings, "show_notification_area_icon", True))
+            and bool(getattr(app_settings, "minimize_to_notification_area_on_close", False))
+        )
+
     def _on_close(self, event) -> None:
         """Save transfer queue and stop timers before closing the window."""
         save_queue(self._transfer_service, get_config_dir())
+        if self._should_minimize_to_tray_on_close():
+            self.Hide()
+            self._announce("Portkey Drop is still running in the notification area.")
+            if event is not None and hasattr(event, "Veto"):
+                event.Veto()
+            return
         if self._auto_update_check_timer:
             self._auto_update_check_timer.Stop()
+        self._destroy_tray_icon()
         if event is not None and hasattr(event, "Skip"):
             event.Skip()
 

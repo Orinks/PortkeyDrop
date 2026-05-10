@@ -204,6 +204,7 @@ class Site:
     username: str = ""
     password: str = ""
     key_path: str = ""
+    ftp_explicit_ssl: bool = False
     initial_dir: str = "/"
     notes: str = ""
 
@@ -215,6 +216,7 @@ class Site:
             username=self.username,
             password=self.password,
             key_path=self.key_path,
+            ftp_explicit_ssl=self.ftp_explicit_ssl if self.protocol == "ftp" else False,
         )
 
 

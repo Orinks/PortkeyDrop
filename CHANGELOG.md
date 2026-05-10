@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
+
+### Added
+- FTP connections can now enable explicit SSL with the AUTH SSL command.
+- Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
+
 ## [0.4.0] - 2026-05-05
 
 ### Added

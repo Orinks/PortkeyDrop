@@ -29,26 +29,29 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Check for CHANGELOG updates
+    - name: Check CHANGELOG entry
       run: |
         if [ "${{ github.event_name }}" = "pull_request" ]; then
           BASE="origin/${{ github.base_ref }}"
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:${BASE}" || true
+          echo "PR detected - checking changelog entries against $BASE"
+        elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+          BASE="${{ github.event.before }}"
+          git fetch --no-tags origin "$BASE" || true
+          echo "Push detected - checking changelog entries against $BASE"
         else
-          LAST_NIGHTLY=$(git tag --list "nightly-*" --sort=-version:refname | head -n 1)
-          BASE="${LAST_NIGHTLY:-HEAD~1}"
+          BASE="HEAD~1"
+          echo "Manual run detected - checking changelog entries against $BASE"
         fi
 
-        CHANGED_FILES=$(git diff --name-only "$BASE"..HEAD)
-        SRC_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^src/" || true)
-        CHANGELOG_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^CHANGELOG\.md$" || true)
-
-        if [ -n "$SRC_CHANGED" ] && [ -z "$CHANGELOG_CHANGED" ]; then
-          echo "::warning::⚠️ Source files changed but CHANGELOG.md was not updated!"
-          exit 0
-        elif [ -n "$SRC_CHANGED" ] && [ -n "$CHANGELOG_CHANGED" ]; then
-          echo "✅ CHANGELOG.md updated. Good work!"
-        else
-          echo "ℹ️ No source changes detected."
+        if ! python scripts/changelog_tools.py check --base "$BASE" --head HEAD; then
+          {
+            echo "### CHANGELOG gate"
+            echo
+            echo "User-facing changes need a curated \`CHANGELOG.md\` entry under \`## Unreleased\`."
+            echo "This keeps nightly and stable release notes based on product wording instead of PR titles."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
         fi
 
   lint:

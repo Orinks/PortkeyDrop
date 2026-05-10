@@ -88,6 +88,12 @@ class TestSite:
         info = site.to_connection_info()
         assert info.protocol == Protocol.FTP
 
+    def test_to_connection_info_ftp_explicit_ssl(self):
+        site = Site(protocol="ftp", host="ftp.example.com", ftp_explicit_ssl=True)
+        info = site.to_connection_info()
+        assert info.protocol == Protocol.FTP
+        assert info.ftp_explicit_ssl is True
+
     def test_unique_ids(self):
         s1 = Site()
         s2 = Site()

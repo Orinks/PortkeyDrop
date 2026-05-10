@@ -56,7 +56,9 @@ def test_parse_file_ftps_protocol(tmp_path):
     xml = '<?xml version="1.0"?><FileZilla3><Servers><Server><Host>h.com</Host><Protocol>3</Protocol><Port>21</Port><User>u</User><Pass></Pass><RemoteDir></RemoteDir><Name>X</Name><Comments></Comments></Server></Servers></FileZilla3>'
     f = tmp_path / "sm.xml"
     f.write_text(xml)
-    assert parse_file(f)[0].protocol == "ftps"
+    site = parse_file(f)[0]
+    assert site.protocol == "ftp"
+    assert site.ftp_explicit_ssl is True
 
 
 def test_parse_file_invalid_port(tmp_path):

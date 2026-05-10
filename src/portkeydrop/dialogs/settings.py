@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import wx
 
+from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES
 from portkeydrop.settings import Settings
 
 
@@ -288,6 +289,18 @@ class SettingsDialog(wx.Dialog):
             control_name="Date format",
         )
 
+        self.show_tray_icon_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Show &notification area icon"),
+            name="Show notification area icon",
+        )
+
+        self.minimize_to_tray_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Minimize to notification area when &closing"),
+            name="Minimize to notification area on close",
+        )
+
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Display")
 
@@ -298,7 +311,7 @@ class SettingsDialog(wx.Dialog):
             panel,
             sizer,
             label="&Default protocol:",
-            make_control=lambda p: wx.Choice(p, choices=["sftp", "ftp", "ftps"]),
+            make_control=lambda p: wx.Choice(p, choices=list(SUPPORTED_PROTOCOL_VALUES)),
             control_name="Default protocol",
         )
 
@@ -333,6 +346,12 @@ class SettingsDialog(wx.Dialog):
             sizer,
             wx.CheckBox(panel, label="&Passive mode (FTP)"),
             name="Passive mode",
+        )
+
+        self.ftp_ssl_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Use SSL (AUTH SSL) by default for FTP"),
+            name="Use SSL with FTP by default",
         )
 
         self.verify_keys_choice = self._add_labeled_row(
@@ -446,13 +465,18 @@ class SettingsDialog(wx.Dialog):
         self.sort_asc_check.SetValue(s.display.sort_ascending)
         idx = ["relative", "absolute"].index(s.display.date_format)
         self.date_format_choice.SetSelection(idx)
+        self.show_tray_icon_check.SetValue(getattr(s.app, "show_notification_area_icon", True))
+        self.minimize_to_tray_check.SetValue(
+            getattr(s.app, "minimize_to_notification_area_on_close", False)
+        )
         # Connection
-        idx = ["sftp", "ftp", "ftps"].index(s.connection.protocol)
+        idx = list(SUPPORTED_PROTOCOL_VALUES).index(s.connection.protocol)
         self.default_proto_choice.SetSelection(idx)
         self.timeout_spin.SetValue(s.connection.timeout)
         self.keepalive_spin.SetValue(s.connection.keepalive)
         self.retries_spin.SetValue(s.connection.max_retries)
         self.passive_check.SetValue(s.connection.passive_mode)
+        self.ftp_ssl_check.SetValue(s.connection.ftp_explicit_ssl)
         idx = ["ask", "always", "never"].index(s.connection.verify_host_keys)
         self.verify_keys_choice.SetSelection(idx)
         self.remember_local_folder_check.SetValue(s.app.remember_last_local_folder_on_startup)
@@ -484,12 +508,15 @@ class SettingsDialog(wx.Dialog):
         s.display.sort_by = self.sort_by_choice.GetStringSelection()
         s.display.sort_ascending = self.sort_asc_check.GetValue()
         s.display.date_format = self.date_format_choice.GetStringSelection()
+        s.app.show_notification_area_icon = self.show_tray_icon_check.GetValue()
+        s.app.minimize_to_notification_area_on_close = self.minimize_to_tray_check.GetValue()
 
         s.connection.protocol = self.default_proto_choice.GetStringSelection()
         s.connection.timeout = self.timeout_spin.GetValue()
         s.connection.keepalive = self.keepalive_spin.GetValue()
         s.connection.max_retries = self.retries_spin.GetValue()
         s.connection.passive_mode = self.passive_check.GetValue()
+        s.connection.ftp_explicit_ssl = self.ftp_ssl_check.GetValue()
         s.connection.verify_host_keys = self.verify_keys_choice.GetStringSelection()
         s.app.remember_last_local_folder_on_startup = self.remember_local_folder_check.GetValue()
         s.app.auto_update_enabled = self.auto_update_check.GetValue()
