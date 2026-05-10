@@ -1,6 +1,8 @@
-# Portkey Drop
+# PortkeyDrop
 
-A keyboard-driven file transfer client supporting SFTP, FTP, FTPS, and experimental WebDAV. Dual-pane interface with full keyboard navigation and screen reader compatibility (NVDA, JAWS).
+A keyboard-first file transfer client that works the way you do.
+
+PortkeyDrop is a desktop client for SFTP, FTP, FTPS, and WebDAV. Connect to your servers, move files, and track every transfer without ever reaching for a mouse. Its dual-pane interface keeps local and remote files clear, labeled, and ready for screen readers including NVDA, JAWS, and VoiceOver.
 
 ## Layout
 
