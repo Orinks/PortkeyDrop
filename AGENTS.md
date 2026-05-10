@@ -22,6 +22,19 @@ uv run pytest -n auto                               # Parallel tests
 
 ## Commit Format
 
+Use conventional commits only. Do not use Lore commit trailers in this repo.
+When committing from an OMX-enabled Codex surface, opt out of the Lore commit guard:
+
+```bash
+OMX_LORE_COMMIT_GUARD=0 git commit -m "type(scope): description"
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:OMX_LORE_COMMIT_GUARD="0"; git commit -m "type(scope): description"
+```
+
 ```
 type(scope): description
 Types: feat, fix, docs, style, refactor, test, chore
