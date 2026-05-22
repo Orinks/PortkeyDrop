@@ -140,7 +140,7 @@ jobs:
         run: |
           python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --pyz-path build/portkeydrop/PYZ-00.pyz --require-runtime-no-data --portable-zip dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -174,7 +174,7 @@ jobs:
         run: |
           python installer/build.py --skip-installer --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: |
