@@ -827,6 +827,50 @@ def test_effective_site_port_uses_webdav_default(app_module):
     assert frame._effective_site_port("webdav", 0) == 443
 
 
+def test_do_connect_allows_webdav_without_password(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.WEBDAV,
+        host="dav.example.com",
+        username="guest",
+        password="",
+    )
+    client = MagicMock(cwd="/")
+    frame._on_connect_success = MagicMock()
+
+    with (
+        patch.object(app, "create_client", return_value=client) as create_client,
+        patch.object(app.threading, "Thread", _ImmediateThread),
+    ):
+        frame._do_connect(info)
+
+    fake_wx.MessageBox.assert_not_called()
+    create_client.assert_called_once_with(info)
+    client.connect.assert_called_once_with()
+    frame._on_connect_success.assert_called_once_with(client)
+
+
+def test_do_connect_still_requires_ftp_password(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.FTP,
+        host="ftp.example.com",
+        username="guest",
+        password="",
+    )
+
+    with patch.object(app, "create_client") as create_client:
+        frame._do_connect(info)
+
+    fake_wx.MessageBox.assert_called_once()
+    assert fake_wx.MessageBox.call_args.args[0] == "Please enter a password."
+    create_client.assert_not_called()
+
+
 def test_quick_connect_applies_connection_defaults(app_module):
     app, fake_wx = app_module
     frame = _hydrate_frame(app_module)
