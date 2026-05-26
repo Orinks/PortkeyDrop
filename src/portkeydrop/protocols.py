@@ -486,6 +486,34 @@ class WebDAVClient(TransferClient):
             netloc = f"{userinfo}@{netloc}"
         return urlunsplit((parts.scheme or "https", netloc, parts.path, parts.query, ""))
 
+    def _url_base_path(self) -> str:
+        raw_host = self._info.host.strip()
+        if "://" not in raw_host:
+            scheme = "http" if self._info.effective_port == 80 else "https"
+            raw_host = f"{scheme}://{raw_host}"
+        return urlsplit(raw_host).path.rstrip("/")
+
+    def _to_app_path(self, path: str) -> str:
+        if not path:
+            return "/"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        base_path = self._url_base_path()
+        if (
+            base_path
+            and base_path != "/"
+            and (path == base_path or path.startswith(f"{base_path}/"))
+        ):
+            path = path[len(base_path) :] or "/"
+        return path if path.startswith("/") else f"/{path}"
+
+    @staticmethod
+    def _same_collection(left: str, right: str) -> bool:
+        def normalize(path: str) -> str:
+            return path.rstrip("/") or "/"
+
+        return normalize(left) == normalize(right)
+
     def _resolve_path(self, path: str = ".") -> str:
         if not path or path == ".":
             return self._cwd
@@ -534,17 +562,22 @@ class WebDAVClient(TransferClient):
         modified = self._parse_modified(
             info.get("modified") or info.get("modified_at") or info.get("lastmodified")
         )
-        if path and not path.startswith("/"):
-            path = f"/{path}"
+        path = self._to_app_path(path)
         return RemoteFile(name=name, path=path, size=size, is_dir=is_dir, modified=modified)
 
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         client = self._ensure_connected()
         target = self._resolve_path(path)
         items = client.list(target, get_info=True)
-        return [self._remote_file_from_info(item) for item in items if isinstance(item, dict)]
+        files = [self._remote_file_from_info(item) for item in items if isinstance(item, dict)]
+        return [
+            item for item in files if not (item.is_dir and self._same_collection(item.path, target))
+        ]
 
     def chdir(self, path: str) -> str:
+        if self._same_collection(self._resolve_path(path), "/"):
+            self._cwd = "/"
+            return self._cwd
         remote = self.stat(self._resolve_path(path))
         if not remote.is_dir:
             raise NotADirectoryError(path)

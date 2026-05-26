@@ -325,6 +325,52 @@ class TestWebDAVClient:
         assert files[1].size == 12
         assert files[1].is_dir is False
 
+    def test_list_dir_strips_webdav_url_base_path_and_skips_current_collection(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = [
+            {
+                "path": "/webdav/",
+                "name": "webdav",
+                "isdir": True,
+            },
+            {
+                "path": "/webdav/docs/",
+                "name": "docs",
+                "isdir": True,
+            },
+            {
+                "path": "/webdav/readme.txt",
+                "name": "readme.txt",
+                "isdir": False,
+                "size": "12",
+            },
+        ]
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(
+            ConnectionInfo(protocol=Protocol.WEBDAV, host="https://dav.example.com/webdav/")
+        )
+        client.connect()
+
+        files = client.list_dir("/")
+
+        assert files == [
+            RemoteFile(name="docs", path="/docs/", size=0, is_dir=True),
+            RemoteFile(name="readme.txt", path="/readme.txt", size=12, is_dir=False),
+        ]
+
+    def test_chdir_webdav_root_does_not_require_stat(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(
+            ConnectionInfo(protocol=Protocol.WEBDAV, host="https://dav.example.com/webdav/")
+        )
+        client.connect()
+
+        assert client.chdir("/") == "/"
+        assert client.cwd == "/"
+        webdav.info.assert_not_called()
+
     def test_stat_maps_webdav_info(self, monkeypatch):
         webdav = MagicMock()
         webdav.list.return_value = []
