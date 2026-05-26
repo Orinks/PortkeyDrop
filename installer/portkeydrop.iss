@@ -3,7 +3,7 @@
 ;
 ; Requirements:
 ;   - Inno Setup 6.0 or later (https://jrsoftware.org/isinfo.php)
-;   - PyInstaller build output in dist/PortkeyDrop_dir/
+;   - Nuitka build output staged in dist/PortkeyDrop_dir/
 ;
 ; Build:
 ;   iscc installer/portkeydrop.iss
@@ -72,7 +72,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Main application files from PyInstaller directory output
+; Main application files from Nuitka directory output
 Source: "..\dist\PortkeyDrop_dir\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Fallback: if single-file exe exists, use that

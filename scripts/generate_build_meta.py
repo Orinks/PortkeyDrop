@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate _build_meta.py with version and build metadata for PyInstaller builds.
+Generate _build_meta.py with version and build metadata for packaged builds.
 
 Reads version from pyproject.toml and accepts an optional nightly tag via CLI.
 

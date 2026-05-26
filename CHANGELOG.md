@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
+- Starting Portkey Drop again on Windows now restores the running window instead of showing a stale lock-file prompt.
 - WebDAV shares that use a username with no password now connect and open folders correctly.
 
 ### Added
@@ -14,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Default sound pack: Portkey Drop now includes built-in transfer, connection, file
   operation, and app event sounds with a structured folder layout for custom packs.
 - FTP connections can now enable explicit SSL with the AUTH SSL command.
+- Release builds now use Nuitka for Windows and macOS packaged artifacts.
 - Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
 
 ## [0.3.0] - 2026-03-23

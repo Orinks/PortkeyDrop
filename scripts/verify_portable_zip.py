@@ -65,7 +65,10 @@ def verify_portable_zip(zip_path: Path) -> tuple[bool, list[str]]:
 
     errors: list[str] = []
 
-    if not any(name == "data/" or name.startswith("data/") for name in entries):
+    has_portable_data_dir = any(
+        name == "data/" or name.startswith("data/") or "/data/" in name for name in entries
+    )
+    if not has_portable_data_dir:
         errors.append("missing required data/ directory contents")
 
     if errors:

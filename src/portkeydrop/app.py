@@ -119,7 +119,7 @@ class MainFrame(wx.Frame):
         self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
         self.version = __version__
-        # Prefer _build_meta (baked in by PyInstaller CI build), fall back to env var
+        # Prefer _build_meta (baked in by packaged CI builds), fall back to env var
         try:
             from portkeydrop._build_meta import BUILD_TAG as _baked_build_tag  # type: ignore[import]
 

@@ -18,6 +18,10 @@ dependencies = [
 webdav = [
     "webdavclient3>=3.14",
 ]
+build = [
+    "nuitka>=4.0.8",
+    "pillow",
+]
 dev = [
     "pytest>=9.0",
     "pytest-cov>=7.0",

@@ -83,6 +83,17 @@ uv run pytest
 uv run ruff check
 ```
 
+## Build
+
+Release-style local builds use Nuitka, matching the GitHub Actions build path:
+
+```bash
+uv sync --extra build --group dev
+uv run python installer/build_nuitka.py
+```
+
+On Windows, install Inno Setup 6 before building the installer.
+
 ## License
 
 MIT
