@@ -328,7 +328,7 @@ class MainFrame(wx.Frame):
 
         self.local_file_list = create_report_list(
             local_panel,
-            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            style=wx.LC_REPORT,
             row_formatter=file_row_text,
         )
         self.local_file_list.InsertColumn(0, "Name", width=200)
@@ -357,7 +357,7 @@ class MainFrame(wx.Frame):
 
         self.remote_file_list = create_report_list(
             remote_panel,
-            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            style=wx.LC_REPORT,
             row_formatter=file_row_text,
         )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
@@ -515,6 +515,9 @@ class MainFrame(wx.Frame):
         # Global accelerators for pane navigation and toolbar focus
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("T"), ID_TRANSFER),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("U"), ID_UPLOAD),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("D"), ID_DOWNLOAD),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("1"), ID_FOCUS_LOCAL_PANE),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("2"), ID_FOCUS_REMOTE_PANE),
@@ -1043,21 +1046,38 @@ class MainFrame(wx.Frame):
     def _get_selected_file_from_list(
         self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
     ) -> RemoteFile | None:
-        idx = list_ctrl.GetFirstSelected()
-        if idx == wx.NOT_FOUND:
-            return None
+        selected = self._get_selected_files_from_list(list_ctrl, files, filter_text)
+        return selected[0] if selected else None
+
+    def _get_selected_files_from_list(
+        self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
+    ) -> list[RemoteFile]:
         visible = self._get_visible_files(files, filter_text)
-        if 0 <= idx < len(visible):
-            return visible[idx]
-        return None
+        selected: list[RemoteFile] = []
+        idx = list_ctrl.GetFirstSelected()
+        while idx != wx.NOT_FOUND:
+            if 0 <= idx < len(visible):
+                selected.append(visible[idx])
+            idx = list_ctrl.GetNextSelected(idx)
+        return selected
 
     def _get_selected_remote_file(self) -> RemoteFile | None:
         return self._get_selected_file_from_list(
             self.remote_file_list, self._remote_files, self._remote_filter_text
         )
 
+    def _get_selected_remote_files(self) -> list[RemoteFile]:
+        return self._get_selected_files_from_list(
+            self.remote_file_list, self._remote_files, self._remote_filter_text
+        )
+
     def _get_selected_local_file(self) -> RemoteFile | None:
         return self._get_selected_file_from_list(
+            self.local_file_list, self._local_files, self._local_filter_text
+        )
+
+    def _get_selected_local_files(self) -> list[RemoteFile]:
+        return self._get_selected_files_from_list(
             self.local_file_list, self._local_files, self._local_filter_text
         )
 
@@ -1298,17 +1318,34 @@ class MainFrame(wx.Frame):
             self._on_download(None)
 
     def _on_download(self, event) -> None:
-        f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not self._client:
             return
+        try:
+            selected_files = self._get_selected_remote_files()
+        except AttributeError:
+            selected_files = []
+        if not selected_files:
+            f = self._get_selected_remote_file()
+            selected_files = [f] if f else []
+        batch_mode = len(selected_files) > 1
+        queued = 0
+        for f in selected_files:
+            if f.name == "..":
+                continue
+            if self._queue_download(f, batch_mode=batch_mode):
+                queued += 1
+        if queued:
+            if batch_mode:
+                self._announce(f"Queued {queued} download{'s' if queued != 1 else ''}")
+            self._show_transfer_queue()
+
+    def _queue_download(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = os.path.join(self._local_cwd, f.name)
         planned_path = self._resolve_local_transfer_conflict(local_path, f.name, "download")
         if planned_path is None:
-            return
+            return False
         overwrite_existing = planned_path == local_path and os.path.exists(local_path)
         if f.is_dir:
-            if f.name == "..":
-                return
             self._transfer_service.submit_download(
                 self._client,
                 f.path,
@@ -1316,7 +1353,8 @@ class MainFrame(wx.Frame):
                 recursive=True,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
+            if not batch_mode:
+                self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
         else:
             self._transfer_service.submit_download(
                 self._client,
@@ -1325,15 +1363,33 @@ class MainFrame(wx.Frame):
                 f.size,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
-        self._show_transfer_queue()
+            if not batch_mode:
+                self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
+        return True
 
     def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
             return
-        f = self._get_selected_local_file()
-        if not f:
-            return
+        try:
+            selected_files = self._get_selected_local_files()
+        except AttributeError:
+            selected_files = []
+        if not selected_files:
+            f = self._get_selected_local_file()
+            selected_files = [f] if f else []
+        batch_mode = len(selected_files) > 1
+        queued = 0
+        for f in selected_files:
+            if f.name == "..":
+                continue
+            if self._queue_upload(f, batch_mode=batch_mode):
+                queued += 1
+        if queued:
+            if batch_mode:
+                self._announce(f"Queued {queued} upload{'s' if queued != 1 else ''}")
+            self._show_transfer_queue()
+
+    def _queue_upload(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = f.path
         filename = f.name
         remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
@@ -1341,13 +1397,11 @@ class MainFrame(wx.Frame):
             remote_path, filename, "upload"
         )
         if planned_remote_path is None:
-            return
+            return False
         overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
             remote_path
         )
         if f.is_dir:
-            if f.name == "..":
-                return
             self._transfer_service.submit_upload(
                 self._client,
                 local_path,
@@ -1355,8 +1409,9 @@ class MainFrame(wx.Frame):
                 recursive=True,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Uploading folder {filename}")
-            self._update_status(f"Uploading folder {filename}...", self._client.cwd)
+            if not batch_mode:
+                self._announce(f"Uploading folder {filename}")
+                self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
             self._transfer_service.submit_upload(
@@ -1366,9 +1421,10 @@ class MainFrame(wx.Frame):
                 total,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Uploading {filename}")
-            self._update_status(f"Uploading {filename}...", self._client.cwd)
-        self._show_transfer_queue()
+            if not batch_mode:
+                self._announce(f"Uploading {filename}")
+                self._update_status(f"Uploading {filename}...", self._client.cwd)
+        return True
 
     def _transfer_overwrite_mode(self) -> str:
         transfer_settings = getattr(getattr(self, "_settings", None), "transfer", None)
@@ -1385,12 +1441,14 @@ class MainFrame(wx.Frame):
             return local_path
         if mode == "skip":
             self._announce(f"Skipped {action}; {filename} already exists")
+            logger.info("Skipped %s for %s because it already exists", action, filename)
             return None
         if mode == "rename":
             return self._unique_local_path(local_path)
         if self._confirm_overwrite(filename, action):
             return local_path
         self._announce(f"Skipped {action}; {filename} already exists")
+        logger.info("Skipped %s for %s because it already exists", action, filename)
         return None
 
     def _resolve_remote_transfer_conflict(
@@ -1403,12 +1461,14 @@ class MainFrame(wx.Frame):
             return remote_path
         if mode == "skip":
             self._announce(f"Skipped {action}; {filename} already exists")
+            logger.info("Skipped %s for %s because it already exists", action, filename)
             return None
         if mode == "rename":
             return self._unique_remote_path(remote_path)
         if self._confirm_overwrite(filename, action):
             return remote_path
         self._announce(f"Skipped {action}; {filename} already exists")
+        logger.info("Skipped %s for %s because it already exists", action, filename)
         return None
 
     def _confirm_overwrite(self, filename: str, action: str) -> bool:

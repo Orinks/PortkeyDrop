@@ -69,7 +69,7 @@ class AccessibleReportList:
         self._is_listbox = _is_macos()
 
         if self._is_listbox:
-            listbox_style = getattr(self._wx, "LB_SINGLE", 0)
+            listbox_style = getattr(self._wx, "LB_EXTENDED", getattr(self._wx, "LB_MULTIPLE", 0))
             self._ctrl = self._wx.ListBox(parent, style=listbox_style)
         else:
             self._ctrl = self._wx.ListCtrl(parent, style=style)
@@ -82,6 +82,7 @@ class AccessibleReportList:
                 "GetFocusedItem",
                 "GetItemCount",
                 "GetItemText",
+                "GetNextSelected",
                 "InsertColumn",
                 "InsertItem",
                 "Select",
@@ -164,9 +165,17 @@ class AccessibleReportList:
     def GetFirstSelected(self) -> int:
         if not self._is_listbox:
             return self._ctrl.GetFirstSelected()
-        selection = self._ctrl.GetSelection()
-        if 0 <= selection < len(self._rows):
-            return selection
+        selections = self._get_listbox_selections()
+        if selections:
+            return selections[0]
+        return self._wx.NOT_FOUND
+
+    def GetNextSelected(self, row: int) -> int:
+        if not self._is_listbox:
+            return self._ctrl.GetNextSelected(row)
+        for selection in self._get_listbox_selections():
+            if selection > row:
+                return selection
         return self._wx.NOT_FOUND
 
     def GetFocusedItem(self) -> int:
@@ -225,6 +234,18 @@ class AccessibleReportList:
 
     def _format_row(self, row: int) -> str:
         return self._row_formatter(self._rows[row], self._headers)
+
+    def _get_listbox_selections(self) -> list[int]:
+        if hasattr(self._ctrl, "GetSelections"):
+            return sorted(
+                selection
+                for selection in self._ctrl.GetSelections()
+                if 0 <= selection < len(self._rows)
+            )
+        selection = self._ctrl.GetSelection()
+        if 0 <= selection < len(self._rows):
+            return [selection]
+        return []
 
     def _ensure_cell(self, row: int, col: int) -> None:
         while row >= len(self._rows):

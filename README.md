@@ -9,14 +9,15 @@ Two side-by-side file browsers:
 - **Right pane**: Remote files (connected server)
 
 Each pane is a labeled standard list control, so screen readers announce "Local Files" or "Remote Files" when you Tab between them.
+Use Shift+Arrow or Ctrl+Arrow/Space in a file pane to select multiple items for batch transfers.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+T | Transfer: uploads from local pane, downloads from remote pane |
-| Ctrl+U | Upload selected local file to remote |
-| Ctrl+D | Download selected remote file to local |
+| Ctrl+T | Transfer selected items: uploads from local pane, downloads from remote pane |
+| Ctrl+U | Upload selected local items to remote |
+| Ctrl+D | Download selected remote items to local |
 | Ctrl+N | Quick Connect |
 | Ctrl+S | Site Manager |
 | Ctrl+R | Refresh active pane |

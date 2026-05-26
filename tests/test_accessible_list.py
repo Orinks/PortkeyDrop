@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 from tests._wx_stub import load_module_with_fake_wx
 
@@ -9,6 +9,7 @@ class FakeListBox:
     def __init__(self, *_args, **_kwargs):
         self.items: list[str] = []
         self.selection = -1
+        self.selections: list[int] = []
         self.Bind = MagicMock()
         self.SetFocus = MagicMock()
 
@@ -22,12 +23,20 @@ class FakeListBox:
     def GetSelection(self):
         return self.selection
 
+    def GetSelections(self):
+        return tuple(self.selections)
+
     def SetSelection(self, index):
         self.selection = index
+        if index == -1:
+            self.selections.clear()
+        elif index not in self.selections:
+            self.selections.append(index)
 
     def Clear(self):
         self.items.clear()
         self.selection = -1
+        self.selections.clear()
 
     def Delete(self, index):
         del self.items[index]
@@ -95,6 +104,7 @@ def test_report_list_passes_through_to_listctrl_off_macos(monkeypatch):
     listctrl.GetItemText.return_value = "cell"
     listctrl.GetItemCount.return_value = 3
     listctrl.GetFirstSelected.return_value = 2
+    listctrl.GetNextSelected.return_value = -1
     listctrl.GetFocusedItem.return_value = 1
     listctrl.custom_attr = "forwarded"
     fake_wx.ListCtrl = MagicMock(return_value=listctrl)
@@ -110,6 +120,7 @@ def test_report_list_passes_through_to_listctrl_off_macos(monkeypatch):
     report.DeleteAllItems()
     report.DeleteItem(2)
     assert report.GetFirstSelected() == 2
+    assert report.GetNextSelected(2) == -1
     assert report.GetFocusedItem() == 1
     report.Select(2, False)
     report.Focus(1)
@@ -121,6 +132,7 @@ def test_report_list_passes_through_to_listctrl_off_macos(monkeypatch):
     listctrl.SetItem.assert_called_once_with(4, 1, "42 MB")
     listctrl.DeleteAllItems.assert_called_once_with()
     listctrl.DeleteItem.assert_called_once_with(2)
+    listctrl.GetNextSelected.assert_called_once_with(2)
     listctrl.Select.assert_called_once_with(2, False)
     listctrl.Focus.assert_called_once_with(1)
     listctrl.Bind.assert_called_once()
@@ -147,6 +159,29 @@ def test_macos_report_list_preserves_selection_api(monkeypatch):
     report.DeleteItem(1)
     assert report.GetItemCount() == 1
     assert report.GetFocusedItem() == -1
+
+
+def test_macos_report_list_supports_multiple_selections(monkeypatch):
+    module, fake_wx = load_module_with_fake_wx("portkeydrop.accessible_list", monkeypatch)
+    fake_wx.Platform = "__WXMAC__"
+    fake_wx.LB_EXTENDED = 0x0800
+
+    listbox = FakeListBox()
+    fake_wx.ListBox = MagicMock(return_value=listbox)
+
+    report = module.create_report_list(MagicMock(), style=fake_wx.LC_REPORT)
+    report.InsertColumn(0, "File")
+    report.InsertItem(0, "a.txt")
+    report.InsertItem(1, "b.txt")
+    report.InsertItem(2, "c.txt")
+
+    report.Select(0)
+    report.Select(2)
+
+    fake_wx.ListBox.assert_called_once_with(ANY, style=fake_wx.LB_EXTENDED)
+    assert report.GetFirstSelected() == 0
+    assert report.GetNextSelected(0) == 2
+    assert report.GetNextSelected(2) == -1
 
 
 def test_macos_report_list_handles_empty_rows_and_out_of_range_cells(monkeypatch):
