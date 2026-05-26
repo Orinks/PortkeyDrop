@@ -447,6 +447,8 @@ class WebDAVClient(TransferClient):
                     "webdav_timeout": self._info.timeout,
                 }
             )
+            if self._info.username:
+                self._client.session.auth = (self._info.username, self._info.password)
             self._cwd = "/"
             self._connected = True
         except ImportError as e:
@@ -538,14 +540,14 @@ class WebDAVClient(TransferClient):
             return None
 
     @staticmethod
-    def _is_dir_info(info: dict) -> bool:
+    def _is_dir_info(info: dict, fallback_path: str = "") -> bool:
         for key in ("isdir", "is_dir", "directory"):
             value = info.get(key)
             if isinstance(value, bool):
                 return value
             if isinstance(value, str) and value.lower() in {"true", "1", "yes", "dir", "directory"}:
                 return True
-        path = str(info.get("path") or info.get("href") or info.get("name") or "")
+        path = str(info.get("path") or info.get("href") or info.get("name") or fallback_path)
         content_type = str(info.get("content_type") or info.get("content-type") or "").lower()
         return path.endswith("/") or content_type == "httpd/unix-directory"
 
@@ -554,7 +556,7 @@ class WebDAVClient(TransferClient):
         name = str(
             info.get("name") or PurePosixPath(path.rstrip("/")).name or path.strip("/") or "/"
         )
-        is_dir = self._is_dir_info(info)
+        is_dir = self._is_dir_info(info, fallback_path=fallback_path)
         try:
             size = 0 if is_dir else int(info.get("size") or info.get("content_length") or 0)
         except (TypeError, ValueError):

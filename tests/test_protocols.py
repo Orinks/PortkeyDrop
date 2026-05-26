@@ -272,6 +272,23 @@ class TestWebDAVClient:
         assert client.connected
         assert client.cwd == "/"
 
+    def test_connect_sets_session_auth_for_blank_webdav_password(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        client_class = self._install_fake_webdav(monkeypatch, webdav)
+        info = ConnectionInfo(
+            protocol=Protocol.WEBDAV,
+            host="dav.example.com",
+            username="share-token",
+            password="",
+        )
+
+        client = WebDAVClient(info)
+        client.connect()
+
+        client_class.assert_called_once()
+        assert webdav.session.auth == ("share-token", "")
+
     def test_connect_preserves_explicit_webdav_url_and_port(self, monkeypatch):
         webdav = MagicMock()
         webdav.list.return_value = []
@@ -402,6 +419,24 @@ class TestWebDAVClient:
 
         assert client.chdir("docs") == "/docs/"
         assert client.cwd == "/docs/"
+
+    def test_chdir_treats_trailing_slash_fallback_path_as_webdav_directory(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.return_value = {
+            "created": None,
+            "name": None,
+            "size": None,
+            "modified": "Thu, 18 Sep 2025 17:39:08 GMT",
+            "etag": '"68cc43bcc684e"',
+            "content_type": None,
+        }
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        assert client.chdir("/11 ai/") == "/11 ai/"
+        assert client.cwd == "/11 ai/"
 
     def test_file_operations_delegate_to_webdavclient(self, monkeypatch, tmp_path):
         webdav = MagicMock()

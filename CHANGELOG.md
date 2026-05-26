@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
+- WebDAV shares that use a username with no password now connect and open folders correctly.
 
 ### Added
 - FTP connections can now enable explicit SSL with the AUTH SSL command.
