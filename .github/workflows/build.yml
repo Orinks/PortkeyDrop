@@ -2,9 +2,9 @@ name: Build
 
 on:
   schedule:
-    # Nightly at 02:17 UTC (10:17 PM EDT / 9:17 PM EST).
+    # Nightly at 00:27 UTC (8:27 PM EDT / 7:27 PM EST), near AccessiWeather.
     # GitHub Actions schedules are UTC-only and can queue late, so avoid :00/:30.
-    - cron: "17 2 * * *"
+    - cron: "27 0 * * *"
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
