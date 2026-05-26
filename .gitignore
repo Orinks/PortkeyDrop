@@ -9,7 +9,6 @@ dist/
 .ruff_cache/
 .coverage
 cov.json
-uv.lock
 
 # Security - credentials and keys
 .env

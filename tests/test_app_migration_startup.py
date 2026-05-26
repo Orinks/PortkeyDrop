@@ -22,6 +22,10 @@ def _app_instance(app):
     return instance
 
 
+def _frame():
+    return SimpleNamespace(Show=MagicMock(), _play_sound_event=MagicMock())
+
+
 def test_on_init_portable_mode_runs_migration_when_user_confirms(tmp_path, app_module):
     app, fake_wx = app_module
     portable_dir = tmp_path / "portable"
@@ -31,7 +35,7 @@ def test_on_init_portable_mode_runs_migration_when_user_confirms(tmp_path, app_m
     dialog = MagicMock()
     dialog.ShowModal.return_value = fake_wx.ID_OK
     dialog.get_selected_filenames.return_value = ["sites.json"]
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
     site_manager = MagicMock()
     site_manager.should_offer_keyring_to_vault_migration.return_value = False
 
@@ -50,6 +54,7 @@ def test_on_init_portable_mode_runs_migration_when_user_confirms(tmp_path, app_m
         migration_dialog_cls.assert_called_once_with(None, candidates)
 
     assert result is True
+    frame._play_sound_event.assert_called_once_with("startup")
     migrate_files.assert_called_once_with(["sites.json"], tmp_path / ".portkeydrop", portable_dir)
     dialog.Destroy.assert_called_once()
 
@@ -62,7 +67,7 @@ def test_on_init_portable_mode_skips_migration_when_user_cancels(tmp_path, app_m
 
     dialog = MagicMock()
     dialog.ShowModal.return_value = fake_wx.ID_CANCEL
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
     site_manager = MagicMock()
     site_manager.should_offer_keyring_to_vault_migration.return_value = False
 
@@ -86,7 +91,7 @@ def test_on_init_portable_mode_skips_migration_when_user_cancels(tmp_path, app_m
 
 def test_on_init_non_portable_mode_does_not_show_migration_dialog(app_module):
     app, _ = app_module
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
 
     with (
         patch.object(app, "is_portable_mode", return_value=False),
@@ -107,7 +112,7 @@ def test_on_init_prompts_for_keyring_to_vault_migration_and_marks_complete(tmp_p
     app, fake_wx = app_module
     portable_dir = tmp_path / "portable"
     portable_dir.mkdir()
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
     site_manager = MagicMock()
     site_manager.should_offer_keyring_to_vault_migration.return_value = True
 
@@ -132,7 +137,7 @@ def test_on_init_decline_keyring_to_vault_migration_still_writes_marker(tmp_path
     app, fake_wx = app_module
     portable_dir = tmp_path / "portable"
     portable_dir.mkdir()
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
     site_manager = MagicMock()
     site_manager.should_offer_keyring_to_vault_migration.return_value = True
 
@@ -157,7 +162,7 @@ def test_on_init_skips_keyring_prompt_when_marker_exists(tmp_path, app_module):
     portable_dir = tmp_path / "portable"
     portable_dir.mkdir()
     (portable_dir / ".keyring_migrated").touch()
-    frame = SimpleNamespace(Show=MagicMock())
+    frame = _frame()
 
     with (
         patch.object(app, "is_portable_mode", return_value=True),

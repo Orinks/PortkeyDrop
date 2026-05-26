@@ -1,0 +1,27 @@
+{
+  "name": "Default",
+  "author": "Portkey Drop",
+  "description": "Built-in Portkey Drop sound pack with short, gentle transfer and app cues.",
+  "version": "1.0.0",
+  "sounds": {
+    "transfer_queued": "transfers/transfer_queued.ogg",
+    "transfer_started": "transfers/transfer_started.ogg",
+    "transfer_complete": "transfers/transfer_complete.ogg",
+    "transfer_failed": "transfers/transfer_failed.ogg",
+    "transfer_cancelled": "transfers/transfer_cancelled.ogg",
+    "connect_success": "connections/connect_success.ogg",
+    "connect_failed": "connections/connect_failed.ogg",
+    "disconnect": "connections/disconnect.ogg",
+    "delete_complete": "file_operations/delete_complete.ogg",
+    "delete_failed": "file_operations/delete_failed.ogg",
+    "rename_complete": "file_operations/rename_complete.ogg",
+    "rename_failed": "file_operations/rename_failed.ogg",
+    "folder_created": "file_operations/folder_created.ogg",
+    "folder_create_failed": "file_operations/folder_create_failed.ogg",
+    "success": "general/success.ogg",
+    "error": "general/error.ogg",
+    "notify": "general/notify.ogg",
+    "startup": "general/startup.ogg",
+    "exit": "general/exit.ogg"
+  }
+}

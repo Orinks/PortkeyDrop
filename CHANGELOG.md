@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Batch transfers: select multiple local or remote files and folders, then use Ctrl+U,
   Ctrl+D, or Ctrl+T to queue them together.
+- Default sound pack: Portkey Drop now includes built-in transfer, connection, file
+  operation, and app event sounds with a structured folder layout for custom packs.
 - FTP connections can now enable explicit SSL with the AUTH SSL command.
 - Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
 

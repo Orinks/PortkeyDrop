@@ -7,6 +7,8 @@ dependencies = [
     "asyncssh>=2.14",
     "puttykeys",
     "keyring>=25.0",
+    "platform-utils>=1.6.0",
+    "sound_lib @ git+https://github.com/samtupy/sound_lib_macos_fixes.git",
     "wxPython>=4.2",
     "prismatoid",
     "webdavclient3>=3.14",
@@ -33,6 +35,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/portkeydrop"]
+artifacts = [
+    "src/portkeydrop/default_soundpacks/**/*.json",
+    "src/portkeydrop/default_soundpacks/**/*.ogg",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 target-version = "py311"

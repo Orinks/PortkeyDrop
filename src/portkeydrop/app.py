@@ -57,6 +57,8 @@ from portkeydrop.settings import (
     save_settings,
     update_last_local_folder,
 )
+from portkeydrop.soundpack_paths import ensure_default_soundpack, get_soundpacks_dir
+from portkeydrop.soundpacks import SoundPlayer
 from portkeydrop.sites import Site, SiteManager
 from portkeydrop.screen_reader import ScreenReaderAnnouncer
 from portkeydrop.services.updater import (
@@ -135,7 +137,14 @@ class MainFrame(wx.Frame):
         self._transfer_state_by_id: dict[str, str] = {}
         self._transfer_progress_by_id: dict[str, int] = {}
         self._last_failed_transfer: str | None = None
+        self._exit_sound_played = False
         self._announcer = ScreenReaderAnnouncer()
+        self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
+        audio_settings = getattr(self._settings, "audio", None)
+        self._sound_player = SoundPlayer(
+            self._soundpacks_dir,
+            getattr(audio_settings, "sound_pack", "default"),
+        )
         self._restore_transfer_queue()
         self._remote_filter_text = ""
         self._local_filter_text = ""
@@ -732,6 +741,7 @@ class MainFrame(wx.Frame):
             else str(client._info.protocol)
         )
         self.log_event(f"Connected to {client._info.host} via {protocol_type}")
+        self._play_sound_event("connect_success")
         self._refresh_remote_files()
         self._toolbar_panel.Hide()
         self.GetSizer().Layout()
@@ -742,6 +752,7 @@ class MainFrame(wx.Frame):
         self._client = None
         self._update_status("Disconnected", "")
         self.log_event(f"Connection failed: {exc}")
+        self._play_sound_event("connect_failed")
         wx.MessageBox(f"Connection failed: {exc}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_disconnect(self, event) -> None:
@@ -759,12 +770,14 @@ class MainFrame(wx.Frame):
         self._update_title()
         if was_connected:
             self.log_event("Disconnected from server")
+            self._play_sound_event("disconnect")
         if not self._toolbar_panel.IsShown():
             self._toolbar_panel.Show()
             self.GetSizer().Layout()
             self.tb_host.SetFocus()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
+        self._play_exit_sound_once()
         self.request_exit()
 
     def request_exit(self) -> None:
@@ -1638,9 +1651,11 @@ class MainFrame(wx.Frame):
                     self._client.delete(f.path)
                 self._announce(f"Deleted {f.name}")
                 self._update_status("Delete complete.", self._client.cwd)
+                self._play_sound_event("delete_complete")
                 self._refresh_remote_files()
             except Exception as e:
                 self._update_status("Delete failed.", self._client.cwd)
+                self._play_sound_event("delete_failed")
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _delete_local(self) -> None:
@@ -1654,8 +1669,10 @@ class MainFrame(wx.Frame):
             try:
                 delete_local(f.path)
                 self._announce(f"Deleted {f.name}")
+                self._play_sound_event("delete_complete")
                 self._refresh_local_files()
             except Exception as e:
+                self._play_sound_event("delete_failed")
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_rename(self, event) -> None:
@@ -1680,9 +1697,11 @@ class MainFrame(wx.Frame):
                     self._client.rename(f.path, new_path)
                     self._announce(f"Renamed to {new_name}")
                     self._update_status("Rename complete.", self._client.cwd)
+                    self._play_sound_event("rename_complete")
                     self._refresh_remote_files()
                 except Exception as e:
                     self._update_status("Rename failed.", self._client.cwd)
+                    self._play_sound_event("rename_failed")
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
@@ -1698,8 +1717,10 @@ class MainFrame(wx.Frame):
                 try:
                     rename_local(f.path, new_name)
                     self._announce(f"Renamed to {new_name}")
+                    self._play_sound_event("rename_complete")
                     self._refresh_local_files()
                 except Exception as e:
+                    self._play_sound_event("rename_failed")
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
@@ -1723,9 +1744,11 @@ class MainFrame(wx.Frame):
                     self._client.mkdir(path)
                     self._announce(f"Created directory {name}")
                     self._update_status("Directory created.", self._client.cwd)
+                    self._play_sound_event("folder_created")
                     self._refresh_remote_files()
                 except Exception as e:
                     self._update_status("Create directory failed.", self._client.cwd)
+                    self._play_sound_event("folder_create_failed")
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                     )
@@ -1740,8 +1763,10 @@ class MainFrame(wx.Frame):
                 try:
                     mkdir_local(self._local_cwd, name)
                     self._announce(f"Created directory {name}")
+                    self._play_sound_event("folder_created")
                     self._refresh_local_files()
                 except Exception as e:
+                    self._play_sound_event("folder_create_failed")
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                     )
@@ -1805,6 +1830,7 @@ class MainFrame(wx.Frame):
 
             if job.status == TransferStatus.PENDING:
                 latest_status_message = f"{direction_label} queued."
+                self._play_sound_event("transfer_queued")
             elif job.status == TransferStatus.IN_PROGRESS:
                 progress_message = self._format_transfer_progress_message(
                     job, direction_label, filename
@@ -1812,12 +1838,15 @@ class MainFrame(wx.Frame):
                 latest_status_message = (
                     f"{direction_label} in progress..." if state_changed else progress_message
                 )
+                if state_changed:
+                    self._play_sound_event("transfer_started")
                 if self._should_announce_transfer_progress(job):
                     self._announce(progress_message)
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
                 self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} complete: {filename}")
+                self._play_sound_event("transfer_complete")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
                 else:
@@ -1828,12 +1857,14 @@ class MainFrame(wx.Frame):
                 error_msg = job.error or "Unknown error"
                 self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
                 self._announce(f"{direction_label} failed.")
+                self._play_sound_event("transfer_failed")
                 self._last_failed_transfer = job.id
                 self._retry_last_failed_item.Enable(True)
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
                 self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} cancelled: {filename}")
+                self._play_sound_event("transfer_cancelled")
 
         if refresh_local_files:
             self._refresh_local_files()
@@ -1884,6 +1915,7 @@ class MainFrame(wx.Frame):
             self._transfer_service.set_max_workers(
                 self._settings.transfer.concurrent_transfers,
             )
+            self._refresh_sound_player()
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
             self._sync_tray_icon()
@@ -2247,6 +2279,7 @@ class MainFrame(wx.Frame):
             if event is not None and hasattr(event, "Veto"):
                 event.Veto()
             return
+        self._play_exit_sound_once()
         if self._auto_update_check_timer:
             self._auto_update_check_timer.Stop()
         self._destroy_tray_icon()
@@ -2276,6 +2309,36 @@ class MainFrame(wx.Frame):
         self._status(message)
         logger.debug("Announcement requested: %s", message)
         self._announcer.announce(message)
+
+    def _refresh_sound_player(self) -> None:
+        """Refresh the event player after audio settings change."""
+        if not hasattr(self, "_soundpacks_dir"):
+            self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
+        audio_settings = getattr(self._settings, "audio", None)
+        self._sound_player = SoundPlayer(
+            self._soundpacks_dir,
+            getattr(audio_settings, "sound_pack", "default"),
+        )
+
+    def _play_sound_event(self, event_key: str) -> bool:
+        """Play an event sound if enabled and mapped in the active pack."""
+        settings = getattr(self, "_settings", None)
+        audio = getattr(settings, "audio", None)
+        enabled = bool(getattr(audio, "sound_enabled", True))
+        muted = set(getattr(audio, "muted_sound_events", []) or [])
+        pack = getattr(audio, "sound_pack", "default")
+        if not hasattr(self, "_sound_player"):
+            return False
+        if getattr(self._sound_player, "pack_name", None) != pack:
+            self._refresh_sound_player()
+        return self._sound_player.play_event(event_key, enabled=enabled, muted=muted)
+
+    def _play_exit_sound_once(self) -> bool:
+        """Play the exit sound once for menu and window-close paths."""
+        if getattr(self, "_exit_sound_played", False):
+            return False
+        self._exit_sound_played = True
+        return self._play_sound_event("exit")
 
 
 class PortkeyDropApp(wx.App):
@@ -2321,4 +2384,5 @@ class PortkeyDropApp(wx.App):
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)
+        wx.CallAfter(frame._play_sound_event, "startup")
         return True

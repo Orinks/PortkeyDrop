@@ -11,6 +11,10 @@ Two side-by-side file browsers:
 Each pane is a labeled standard list control, so screen readers announce "Local Files" or "Remote Files" when you Tab between them.
 Use Shift+Arrow or Ctrl+Arrow/Space in a file pane to select multiple items for batch transfers.
 
+## Sound Packs
+
+Portkey Drop includes a built-in default sound pack with short cues for transfers, connections, file operations, and general app events. Sound packs live under a pack folder with section subfolders, such as `default/transfers/transfer_complete.ogg`, and a `pack.json` manifest maps each event to its sound file.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

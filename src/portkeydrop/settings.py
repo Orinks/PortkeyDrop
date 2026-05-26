@@ -8,6 +8,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from portkeydrop.portable import get_config_dir
+from portkeydrop.sound_events import (
+    DEFAULT_MUTED_SOUND_EVENTS,
+    normalize_known_muted_sound_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,13 @@ class SpeechSettings:
 
 
 @dataclass
+class AudioSettings:
+    sound_enabled: bool = True
+    sound_pack: str = "default"
+    muted_sound_events: list[str] = field(default_factory=lambda: list(DEFAULT_MUTED_SOUND_EVENTS))
+
+
+@dataclass
 class AppSettings:
     remember_last_local_folder_on_startup: bool = True
     last_local_folder: str | None = None
@@ -69,6 +80,7 @@ class Settings:
     display: DisplaySettings = field(default_factory=DisplaySettings)
     connection: ConnectionDefaults = field(default_factory=ConnectionDefaults)
     speech: SpeechSettings = field(default_factory=SpeechSettings)
+    audio: AudioSettings = field(default_factory=AudioSettings)
     app: AppSettings = field(default_factory=AppSettings)
 
 
@@ -161,6 +173,13 @@ def _dict_to_settings(data: dict) -> Settings:
                 k: v
                 for k, v in data.get("speech", {}).items()
                 if k in SpeechSettings.__dataclass_fields__
+            }
+        ),
+        audio=AudioSettings(
+            **{
+                k: (normalize_known_muted_sound_events(v) if k == "muted_sound_events" else v)
+                for k, v in data.get("audio", {}).items()
+                if k in AudioSettings.__dataclass_fields__
             }
         ),
         app=AppSettings(

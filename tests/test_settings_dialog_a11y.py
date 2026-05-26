@@ -111,8 +111,18 @@ class _Choice(_Control):
     def SetSelection(self, idx: int):
         self._selection = idx
 
+    def GetSelection(self) -> int:
+        return self._selection
+
     def GetStringSelection(self) -> str:
         return self._choices[self._selection]
+
+    def Clear(self):
+        self._choices = []
+        self._selection = 0
+
+    def Append(self, value: str):
+        self._choices.append(value)
 
 
 class _CheckBox(_Control):
@@ -223,6 +233,10 @@ def test_all_controls_have_unambiguous_accessible_names(monkeypatch):
         "update_interval_spin": "Update check interval",
         "update_channel_choice": "Update channel",
         "check_updates_button": "Check for updates now",
+        # Audio
+        "sound_enabled_check": "Enable sound notifications",
+        "sound_pack_choice": "Sound pack",
+        "manage_soundpacks_button": "Manage sound packs",
         # Speech
         "speech_rate_spin": "Speech rate",
         "speech_volume_spin": "Speech volume",
@@ -254,6 +268,8 @@ def test_labeled_controls_have_label_for_links(monkeypatch):
         "verify_keys_choice",
         "update_interval_spin",
         "update_channel_choice",
+        "sound_pack_choice",
+        "manage_soundpacks_button",
         "speech_rate_spin",
         "speech_volume_spin",
         "verbosity_choice",
@@ -343,6 +359,7 @@ def test_notebook_includes_dedicated_updates_tab(monkeypatch):
         "Display",
         "Connection",
         "Updates",
+        "Audio",
         "Speech",
     ]
 
@@ -368,6 +385,9 @@ def test_get_settings_persists_updater_fields(monkeypatch):
     dlg.minimize_to_tray_check.SetValue(True)
     dlg.update_interval_spin.SetValue(12)
     dlg.update_channel_choice.SetSelection(1)
+    dlg.sound_enabled_check.SetValue(False)
+    if dlg._audio_event_checks:
+        dlg._audio_event_checks[0][1].SetValue(True)
     dlg.remember_local_folder_check.SetValue(False)
     dlg.speech_rate_spin.SetValue(80)
 
@@ -378,6 +398,9 @@ def test_get_settings_persists_updater_fields(monkeypatch):
     assert settings.app.minimize_to_notification_area_on_close is True
     assert settings.app.update_check_interval_hours == 12
     assert settings.app.update_channel == "nightly"
+    assert settings.audio.sound_enabled is False
+    assert settings.audio.sound_pack == "default"
+    assert settings.audio.muted_sound_events == [dlg._audio_event_checks[0][0]]
     assert settings.app.remember_last_local_folder_on_startup is False
     assert settings.speech.rate == 80
 

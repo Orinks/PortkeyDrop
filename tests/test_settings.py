@@ -6,6 +6,7 @@ import json
 
 from portkeydrop.settings import (
     AppSettings,
+    AudioSettings,
     ConnectionDefaults,
     DisplaySettings,
     Settings,
@@ -62,6 +63,14 @@ class TestSpeechSettings:
         assert s.verbosity == "normal"
 
 
+class TestAudioSettings:
+    def test_defaults(self):
+        s = AudioSettings()
+        assert s.sound_enabled is True
+        assert s.sound_pack == "default"
+        assert s.muted_sound_events == []
+
+
 class TestAppSettings:
     def test_defaults(self):
         s = AppSettings()
@@ -81,6 +90,7 @@ class TestSettings:
         assert isinstance(s.display, DisplaySettings)
         assert isinstance(s.connection, ConnectionDefaults)
         assert isinstance(s.speech, SpeechSettings)
+        assert isinstance(s.audio, AudioSettings)
         assert isinstance(s.app, AppSettings)
 
 
@@ -96,6 +106,9 @@ class TestLoadSaveSettings:
         settings.display.show_hidden_files = True
         settings.connection.timeout = 60
         settings.speech.rate = 75
+        settings.audio.sound_enabled = False
+        settings.audio.sound_pack = "custom"
+        settings.audio.muted_sound_events = ["transfer_complete"]
         settings.app.auto_update_enabled = False
         settings.app.update_check_interval_hours = 12
         settings.app.update_channel = "nightly"
@@ -109,6 +122,9 @@ class TestLoadSaveSettings:
         assert loaded.display.show_hidden_files is True
         assert loaded.connection.timeout == 60
         assert loaded.speech.rate == 75
+        assert loaded.audio.sound_enabled is False
+        assert loaded.audio.sound_pack == "custom"
+        assert loaded.audio.muted_sound_events == ["transfer_complete"]
         assert loaded.app.auto_update_enabled is False
         assert loaded.app.update_check_interval_hours == 12
         assert loaded.app.update_channel == "nightly"
@@ -127,6 +143,21 @@ class TestLoadSaveSettings:
         settings = load_settings(tmp_path)
         assert settings.transfer.concurrent_transfers == 10
         assert settings.display.sort_by == "name"  # default preserved
+
+    def test_load_audio_settings_drops_unknown_muted_events(self, tmp_path):
+        data = {
+            "audio": {
+                "sound_enabled": True,
+                "sound_pack": "my_pack",
+                "muted_sound_events": ["transfer_failed", "unknown_event"],
+            }
+        }
+        (tmp_path / "settings.json").write_text(json.dumps(data), encoding="utf-8")
+
+        settings = load_settings(tmp_path)
+
+        assert settings.audio.sound_pack == "my_pack"
+        assert settings.audio.muted_sound_events == ["transfer_failed"]
 
     def test_load_ignores_unknown_keys(self, tmp_path):
         data = {"transfer": {"concurrent_transfers": 3, "unknown_key": True}}

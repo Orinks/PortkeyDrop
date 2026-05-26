@@ -72,6 +72,7 @@ def _hydrate_frame(module):
     frame._show_transfer_queue = MagicMock()
     frame._refresh_local_files = MagicMock()
     frame._refresh_remote_files = MagicMock()
+    frame._play_sound_event = MagicMock(return_value=True)
     frame._get_selected_local_file = MagicMock()
     frame._get_selected_remote_file = MagicMock()
     frame._transfer_service = MagicMock()
@@ -837,6 +838,7 @@ def test_delete_remote_updates_status_on_success(app_module):
     frame._update_status.assert_any_call("Deleting doc.txt...", "/remote")
     frame._update_status.assert_any_call("Delete complete.", "/remote")
     frame._refresh_remote_files.assert_called_once()
+    frame._play_sound_event.assert_called_with("delete_complete")
 
 
 def test_delete_remote_reports_failure(app_module):
@@ -854,6 +856,7 @@ def test_delete_remote_reports_failure(app_module):
     frame._delete_remote()
 
     frame._update_status.assert_any_call("Delete failed.", "/remote")
+    frame._play_sound_event.assert_called_with("delete_failed")
     fake_wx.MessageBox.assert_called()
 
 
@@ -876,6 +879,7 @@ def test_rename_remote_updates_status(app_module):
 
     frame._update_status.assert_any_call("Renaming old.txt...", "/remote")
     frame._update_status.assert_any_call("Rename complete.", "/remote")
+    frame._play_sound_event.assert_called_with("rename_complete")
 
 
 def test_rename_remote_handles_error(app_module):
@@ -898,6 +902,7 @@ def test_rename_remote_handles_error(app_module):
         frame._rename_remote()
 
     frame._update_status.assert_any_call("Rename failed.", "/remote")
+    frame._play_sound_event.assert_called_with("rename_failed")
     fake_wx.MessageBox.assert_called()
 
 
@@ -917,6 +922,7 @@ def test_mkdir_remote_updates_status(app_module):
 
     frame._update_status.assert_any_call("Creating directory new-dir...", "/remote")
     frame._update_status.assert_any_call("Directory created.", "/remote")
+    frame._play_sound_event.assert_called_with("folder_created")
 
 
 def test_mkdir_remote_reports_error(app_module):
@@ -934,6 +940,7 @@ def test_mkdir_remote_reports_error(app_module):
         frame._mkdir_remote()
 
     frame._update_status.assert_any_call("Create directory failed.", "/remote")
+    frame._play_sound_event.assert_called_with("folder_create_failed")
     fake_wx.MessageBox.assert_called()
 
 
@@ -2078,13 +2085,27 @@ def test_on_close_stops_auto_update_timer_and_skips_event(app_module, monkeypatc
     frame = object.__new__(app.MainFrame)
     frame._auto_update_check_timer = MagicMock(Stop=MagicMock())
     frame._transfer_service = MagicMock()
+    frame._play_exit_sound_once = MagicMock()
     event = MagicMock(Skip=MagicMock())
     monkeypatch.setattr(app, "save_queue", lambda *a, **kw: None)
 
     frame._on_close(event)
 
+    frame._play_exit_sound_once.assert_called_once()
     frame._auto_update_check_timer.Stop.assert_called_once()
     event.Skip.assert_called_once()
+
+
+def test_play_exit_sound_once_deduplicates_menu_and_close_paths(app_module):
+    app, _ = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._exit_sound_played = False
+    frame._play_sound_event = MagicMock(return_value=True)
+
+    assert frame._play_exit_sound_once() is True
+    assert frame._play_exit_sound_once() is False
+
+    frame._play_sound_event.assert_called_once_with("exit")
 
 
 def test_get_update_channel_falls_back_to_stable_on_exception(app_module):
