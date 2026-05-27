@@ -39,6 +39,7 @@ def test_windows_nuitka_command_uses_standalone_dir_and_pyproject_version() -> N
     assert "--mode=standalone" in command
     assert "--jobs=1" in command
     assert "--windows-console-mode=disable" in command
+    assert "--include-module=win32timezone" in command
     assert "--include-package-data=desktop_notifier" not in command
     assert "--nofollow-import-to=chardet" in command
     assert "--nofollow-import-to=chardet.*" in command

@@ -169,6 +169,7 @@ def build_nuitka_command(
 
     if system == "Windows":
         command.append("--windows-console-mode=disable")
+        command.append("--include-module=win32timezone")
         icon = ROOT / "installer" / "app.ico"
         if icon.exists():
             command.append(f"--windows-icon-from-ico={_repo_path(icon)}")
