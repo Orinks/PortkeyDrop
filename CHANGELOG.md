@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
 - Starting Portkey Drop again on Windows now restores the running window instead of showing a stale lock-file prompt.
 - Windows nightly builds can connect to SFTP servers again instead of failing with a missing `win32timezone` module.
+- Windows packaged builds now include the native audio libraries needed for built-in sound events.
 - WebDAV shares that use a username with no password now connect and open folders correctly.
 
 ### Added

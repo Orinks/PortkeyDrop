@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tomllib
 from pathlib import Path
 
@@ -17,6 +18,7 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build" / "nuitka"
 DEFAULT_SOUNDPACKS_DIR = SRC_DIR / "portkeydrop" / "default_soundpacks"
 APP_NAME = "PortkeyDrop"
+SOUND_LIB_DATA_DEST = Path("sound_lib") / "lib"
 LINUX_SYSTEM_DLL_EXCLUDES = (
     "libcrypto.so*",
     "libgio-2.0.so*",
@@ -31,6 +33,48 @@ LINUX_SYSTEM_DLL_EXCLUDES = (
 def _repo_path(path: Path) -> str:
     """Return a POSIX-style path relative to the repository root."""
     return path.relative_to(ROOT).as_posix()
+
+
+def _site_package_dir(package_name: str) -> Path | None:
+    candidate_roots = [
+        Path(sys.prefix),
+        Path(sysconfig.get_path("purelib", vars={"base": sys.prefix, "platbase": sys.prefix})),
+        Path(sysconfig.get_path("platlib", vars={"base": sys.prefix, "platbase": sys.prefix})),
+    ]
+
+    seen: set[Path] = set()
+    for root in candidate_roots:
+        candidate = root / package_name
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_sound_lib_data_dir() -> Path | None:
+    """Find sound_lib's native BASS library directory."""
+    package_dir = _site_package_dir("sound_lib")
+    if package_dir is None:
+        return None
+    lib_dir = package_dir / "lib"
+    if (lib_dir / "bass.dll").exists() or any(lib_dir.glob("**/bass.dll")):
+        return lib_dir
+    return None
+
+
+def stage_sound_lib_native_libraries(target_dir: Path) -> None:
+    """Copy sound_lib's native BASS DLLs into the staged app tree."""
+    source_dir = find_sound_lib_data_dir()
+    if source_dir is None:
+        return
+
+    target_lib_dir = target_dir / SOUND_LIB_DATA_DEST
+    if target_lib_dir.exists():
+        shutil.rmtree(target_lib_dir)
+    target_lib_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_dir, target_lib_dir)
 
 
 def get_version() -> str:
@@ -88,6 +132,8 @@ def stage_nuitka_distribution() -> Path:
         shutil.rmtree(target_dir)
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, target_dir)
+    if platform.system() == "Windows":
+        stage_sound_lib_native_libraries(target_dir)
     return target_dir
 
 

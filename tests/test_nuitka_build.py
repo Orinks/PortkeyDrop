@@ -57,6 +57,28 @@ def test_windows_nuitka_command_uses_standalone_dir_and_pyproject_version() -> N
     assert "--mode=onefile" not in command
 
 
+def test_stage_nuitka_distribution_copies_sound_lib_native_libraries(
+    tmp_path, monkeypatch
+) -> None:
+    build_dir = tmp_path / "build" / "nuitka"
+    nuitka_dist = build_dir / "__main__.dist"
+    nuitka_dist.mkdir(parents=True)
+    (nuitka_dist / "PortkeyDrop.exe").write_bytes(b"fake-exe")
+
+    dist_dir = tmp_path / "dist"
+    sound_lib_dir = tmp_path / "sound_lib" / "lib"
+    sound_lib_dir.mkdir(parents=True)
+    (sound_lib_dir / "bass.dll").write_bytes(b"fake-dll")
+    monkeypatch.setattr(build_nuitka, "BUILD_DIR", build_dir)
+    monkeypatch.setattr(build_nuitka, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_nuitka, "find_sound_lib_data_dir", lambda: sound_lib_dir)
+    monkeypatch.setattr(build_nuitka.platform, "system", lambda: "Windows")
+
+    staged = build_nuitka.stage_nuitka_distribution()
+
+    assert (staged / build_nuitka.SOUND_LIB_DATA_DEST / "bass.dll").read_bytes() == b"fake-dll"
+
+
 def test_macos_nuitka_command_uses_app_mode() -> None:
     command = build_nuitka.build_nuitka_command(
         output_dir=Path("dist"),
