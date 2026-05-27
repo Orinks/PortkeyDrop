@@ -9,11 +9,15 @@
 ;   iscc installer/portkeydrop.iss
 
 #define MyAppName "PortkeyDrop"
-; Version is read from dist/version.txt (written by CI from pyproject.toml)
-; Falls back to hardcoded default for local builds
-#define MyAppVersion "0.1.0"
-#ifexist "..\dist\version.txt"
-  #define MyAppVersion ReadIni("..\dist\version.txt", "version", "value", "0.1.0")
+; Version is read from dist/version.txt (written by CI/build scripts from pyproject.toml)
+; Fail the build if it is missing so installers never ship with stale metadata.
+#ifndef MyAppVersion
+  #define VersionFilePath AddBackslash(SourcePath) + "..\dist\version.txt"
+  #if FileExists(VersionFilePath)
+    #define MyAppVersion ReadIni(VersionFilePath, "version", "value", "")
+  #else
+    #error Missing dist/version.txt; run installer/build_nuitka.py or write the CI version file before compiling the installer.
+  #endif
 #endif
 #define MyAppPublisher "Orinks"
 #define MyAppURL "https://github.com/Orinks/PortkeyDrop"
@@ -49,9 +53,10 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
 
-; Privileges (no admin required for per-user install)
+; Privileges and install scope
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+UsePreviousPrivileges=yes
+PrivilegesRequiredOverridesAllowed=commandline
 
 ; Modern installer appearance
 WizardStyle=modern
@@ -98,13 +103,124 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#MyAppExeName}"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey
 
 [Code]
+const
+  RunningAppImageName = 'PortkeyDrop.exe';
+  UninstallKeyWithBraces = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A1F3E9C2-7B4D-4A8F-9E2D-3C5B8A1D7F4E}_is1';
+  UninstallKeyWithoutBraces = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\A1F3E9C2-7B4D-4A8F-9E2D-3C5B8A1D7F4E_is1';
+
+function IsPortkeyDropRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec(
+    ExpandConstant('{cmd}'),
+    '/C tasklist /FI "IMAGENAME eq ' + RunningAppImageName + '" /NH | find /I "' + RunningAppImageName + '" >nul',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+    Result := ResultCode = 0
+  else
+    Log('Could not query running PortkeyDrop processes.');
+end;
+
+procedure KillPortkeyDrop(Force: Boolean);
+var
+  ResultCode: Integer;
+  Parameters: String;
+begin
+  Parameters := '/IM ' + RunningAppImageName + ' /T';
+  if Force then
+    Parameters := '/F ' + Parameters;
+
+  if Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    Parameters,
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+    Log('taskkill.exe ' + Parameters + ' exited with code ' + IntToStr(ResultCode))
+  else
+    Log('Could not run taskkill.exe ' + Parameters);
+end;
+
+procedure WaitForPortkeyDropToExit(MaxWaitMilliseconds: Integer);
+var
+  WaitedMilliseconds: Integer;
+begin
+  WaitedMilliseconds := 0;
+  while (WaitedMilliseconds < MaxWaitMilliseconds) and IsPortkeyDropRunning() do
+  begin
+    Sleep(500);
+    WaitedMilliseconds := WaitedMilliseconds + 500;
+  end;
+end;
+
+function CloseRunningPortkeyDrop(): Boolean;
+begin
+  Result := True;
+  if not IsPortkeyDropRunning() then
+    exit;
+
+  Log('PortkeyDrop is running; requesting shutdown before install.');
+  KillPortkeyDrop(False);
+  WaitForPortkeyDropToExit(5000);
+
+  if IsPortkeyDropRunning() then
+  begin
+    Log('PortkeyDrop is still running; force-stopping before install.');
+    KillPortkeyDrop(True);
+    WaitForPortkeyDropToExit(5000);
+  end;
+
+  Result := not IsPortkeyDropRunning();
+  if not Result then
+    Log('PortkeyDrop is still running after automatic close attempts.');
+end;
+
+procedure RemoveStalePerUserArpEntriesForAdminInstall();
+begin
+  if not IsAdminInstallMode then
+    exit;
+
+  if RegKeyExists(HKCU, UninstallKeyWithBraces) then
+  begin
+    if RegDeleteKeyIncludingSubkeys(HKCU, UninstallKeyWithBraces) then
+      Log('Removed stale HKCU uninstall key: ' + UninstallKeyWithBraces)
+    else
+      Log('Failed to remove HKCU uninstall key: ' + UninstallKeyWithBraces);
+  end;
+
+  if RegKeyExists(HKCU, UninstallKeyWithoutBraces) then
+  begin
+    if RegDeleteKeyIncludingSubkeys(HKCU, UninstallKeyWithoutBraces) then
+      Log('Removed stale HKCU uninstall key: ' + UninstallKeyWithoutBraces)
+    else
+      Log('Failed to remove HKCU uninstall key: ' + UninstallKeyWithoutBraces);
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 begin
   Result := True;
 end;
 
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not CloseRunningPortkeyDrop() then
+    Result := 'Setup could not close Portkey Drop automatically. Please close it and run setup again.';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+    RemoveStalePerUserArpEntriesForAdminInstall();
+
   if CurStep = ssPostInstall then
   begin
     // Post-installation tasks
