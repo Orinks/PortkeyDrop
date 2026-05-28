@@ -147,7 +147,7 @@ jobs:
     name: macOS
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
-    runs-on: macos-15-intel
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6

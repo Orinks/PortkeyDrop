@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
-- macOS release builds now target Intel Macs again so downloaded builds open on older Macs.
+- macOS release builds now use the same current macOS runner family as AccessiWeather to avoid Intel-only frozen-app startup crashes.
 - Starting Portkey Drop again on Windows now restores the running window instead of showing a stale lock-file prompt.
 - Windows nightly builds can connect to SFTP servers again instead of failing with a missing `win32timezone` module.
 - Windows packaged builds now include the native audio libraries needed for built-in sound events.

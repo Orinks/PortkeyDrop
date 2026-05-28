@@ -119,7 +119,8 @@ def test_production_build_workflow_uses_nuitka() -> None:
     assert "python -m PyInstaller" not in workflow
     assert "pyinstaller" not in workflow.lower()
     assert "scripts/generate_build_meta.py" in workflow
-    assert "runs-on: macos-15-intel" in workflow
+    assert "runs-on: macos-latest" in workflow
+    assert "macos-15-intel" not in workflow
     assert "dist/PortkeyDrop_Setup_*.exe" in workflow
     assert "dist/PortkeyDrop_Portable_*.zip" in workflow
     assert "dist/PortkeyDrop_macOS_*.zip" in workflow
