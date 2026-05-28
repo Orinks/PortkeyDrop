@@ -132,9 +132,22 @@ def stage_nuitka_distribution() -> Path:
         shutil.rmtree(target_dir)
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, target_dir)
-    if platform.system() == "Windows":
+    if output_kind == "app":
+        stage_macos_default_soundpacks(target_dir)
+    elif platform.system() == "Windows":
         stage_sound_lib_native_libraries(target_dir)
     return target_dir
+
+
+def stage_macos_default_soundpacks(app_dir: Path) -> None:
+    """Copy default sound packs into the macOS app Resources directory."""
+    if not DEFAULT_SOUNDPACKS_DIR.exists():
+        return
+    target_dir = app_dir / "Contents" / "Resources" / "portkeydrop" / "default_soundpacks"
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(DEFAULT_SOUNDPACKS_DIR, target_dir)
 
 
 def create_portable_zip() -> bool:
@@ -202,7 +215,7 @@ def build_nuitka_command(
         _repo_path(ROOT / "installer" / "nuitka_entry.py"),
     ]
 
-    if DEFAULT_SOUNDPACKS_DIR.exists():
+    if DEFAULT_SOUNDPACKS_DIR.exists() and system != "Darwin":
         command.insert(
             -1,
             f"--include-data-dir={_repo_path(DEFAULT_SOUNDPACKS_DIR)}=portkeydrop/default_soundpacks",

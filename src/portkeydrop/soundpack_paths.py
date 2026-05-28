@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -38,6 +39,26 @@ def _copy_pack_resource(resource, target_dir: Path, *, replace_pack_json: bool) 
         target.write_bytes(child.read_bytes())
 
 
+def _packaged_default_soundpack():
+    """Return the packaged default sound pack resource, including macOS app bundles."""
+    packaged_default = resources.files("portkeydrop").joinpath("default_soundpacks", "default")
+    if packaged_default.is_dir():
+        return packaged_default
+
+    executable = Path(sys.executable).resolve()
+    for parent in executable.parents:
+        candidate = (
+            parent
+            / "Resources"
+            / "portkeydrop"
+            / "default_soundpacks"
+            / "default"
+        )
+        if candidate.is_dir():
+            return candidate
+    return packaged_default
+
+
 def ensure_default_soundpack(soundpacks_dir: Path | None = None) -> Path:
     """Ensure the built-in default pack is available in the writable packs directory."""
     base_dir = soundpacks_dir or get_soundpacks_dir()
@@ -45,7 +66,7 @@ def ensure_default_soundpack(soundpacks_dir: Path | None = None) -> Path:
     default_dir.mkdir(parents=True, exist_ok=True)
     pack_json = default_dir / "pack.json"
     replace_pack_json = _should_replace_pack_json(pack_json)
-    packaged_default = resources.files("portkeydrop").joinpath("default_soundpacks", "default")
+    packaged_default = _packaged_default_soundpack()
     if packaged_default.is_dir():
         _copy_pack_resource(packaged_default, default_dir, replace_pack_json=replace_pack_json)
     elif replace_pack_json:

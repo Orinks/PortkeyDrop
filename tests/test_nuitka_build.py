@@ -86,6 +86,7 @@ def test_macos_nuitka_command_uses_app_mode() -> None:
 
     assert "--mode=app" in command
     assert "--macos-app-name=PortkeyDrop" in command
+    assert not any("default_soundpacks" in option for option in command)
 
 
 def test_linux_nuitka_command_excludes_host_glib_and_openssl_stack() -> None:
@@ -159,6 +160,30 @@ def test_stage_nuitka_distribution_copies_macos_app_to_dist_shape(tmp_path, monk
 
     assert staged == dist_dir / "PortkeyDrop.app"
     assert (staged / "Contents" / "MacOS" / "PortkeyDrop").read_bytes() == b"fake-app"
+
+
+def test_stage_nuitka_distribution_copies_macos_soundpacks_to_resources(
+    tmp_path, monkeypatch
+) -> None:
+    build_dir = tmp_path / "build" / "nuitka"
+    nuitka_app = build_dir / "__main__.app"
+    executable = nuitka_app / "Contents" / "MacOS" / "PortkeyDrop"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"fake-app")
+
+    soundpack_source = tmp_path / "src" / "portkeydrop" / "default_soundpacks"
+    soundpack_source.mkdir(parents=True)
+    (soundpack_source / "pack.json").write_text("{}", encoding="utf-8")
+    dist_dir = tmp_path / "dist"
+    monkeypatch.setattr(build_nuitka, "BUILD_DIR", build_dir)
+    monkeypatch.setattr(build_nuitka, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build_nuitka, "DEFAULT_SOUNDPACKS_DIR", soundpack_source)
+
+    staged = build_nuitka.stage_nuitka_distribution()
+
+    assert (
+        staged / "Contents" / "Resources" / "portkeydrop" / "default_soundpacks" / "pack.json"
+    ).read_text(encoding="utf-8") == "{}"
 
 
 def test_stage_nuitka_distribution_copies_linux_output_to_archive_source_shape(
