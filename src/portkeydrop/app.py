@@ -57,6 +57,8 @@ from portkeydrop.settings import (
     save_settings,
     update_last_local_folder,
 )
+from portkeydrop.soundpack_paths import ensure_default_soundpack, get_soundpacks_dir
+from portkeydrop.soundpacks import SoundPlayer
 from portkeydrop.sites import Site, SiteManager
 from portkeydrop.screen_reader import ScreenReaderAnnouncer
 from portkeydrop.services.updater import (
@@ -117,7 +119,7 @@ class MainFrame(wx.Frame):
         self._local_files: list[RemoteFile] = []
         self._settings = load_settings()
         self.version = __version__
-        # Prefer _build_meta (baked in by PyInstaller CI build), fall back to env var
+        # Prefer _build_meta (baked in by packaged CI builds), fall back to env var
         try:
             from portkeydrop._build_meta import BUILD_TAG as _baked_build_tag  # type: ignore[import]
 
@@ -135,7 +137,14 @@ class MainFrame(wx.Frame):
         self._transfer_state_by_id: dict[str, str] = {}
         self._transfer_progress_by_id: dict[str, int] = {}
         self._last_failed_transfer: str | None = None
+        self._exit_sound_played = False
         self._announcer = ScreenReaderAnnouncer()
+        self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
+        audio_settings = getattr(self._settings, "audio", None)
+        self._sound_player = SoundPlayer(
+            self._soundpacks_dir,
+            getattr(audio_settings, "sound_pack", "default"),
+        )
         self._restore_transfer_queue()
         self._remote_filter_text = ""
         self._local_filter_text = ""
@@ -328,7 +337,7 @@ class MainFrame(wx.Frame):
 
         self.local_file_list = create_report_list(
             local_panel,
-            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            style=wx.LC_REPORT,
             row_formatter=file_row_text,
         )
         self.local_file_list.InsertColumn(0, "Name", width=200)
@@ -357,7 +366,7 @@ class MainFrame(wx.Frame):
 
         self.remote_file_list = create_report_list(
             remote_panel,
-            style=wx.LC_REPORT | wx.LC_SINGLE_SEL,
+            style=wx.LC_REPORT,
             row_formatter=file_row_text,
         )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
@@ -515,6 +524,9 @@ class MainFrame(wx.Frame):
         # Global accelerators for pane navigation and toolbar focus
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("T"), ID_TRANSFER),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("U"), ID_UPLOAD),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("D"), ID_DOWNLOAD),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("L"), ID_FOCUS_ADDRESS_BAR),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("1"), ID_FOCUS_LOCAL_PANE),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("2"), ID_FOCUS_REMOTE_PANE),
@@ -701,7 +713,7 @@ class MainFrame(wx.Frame):
         if not info.username:
             wx.MessageBox("Please enter a username.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
-        if not info.password and info.protocol in {Protocol.FTP, Protocol.FTPS, Protocol.WEBDAV}:
+        if not info.password and info.protocol in {Protocol.FTP, Protocol.FTPS}:
             wx.MessageBox("Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
         self._on_disconnect(None)
@@ -729,6 +741,7 @@ class MainFrame(wx.Frame):
             else str(client._info.protocol)
         )
         self.log_event(f"Connected to {client._info.host} via {protocol_type}")
+        self._play_sound_event("connect_success")
         self._refresh_remote_files()
         self._toolbar_panel.Hide()
         self.GetSizer().Layout()
@@ -739,6 +752,7 @@ class MainFrame(wx.Frame):
         self._client = None
         self._update_status("Disconnected", "")
         self.log_event(f"Connection failed: {exc}")
+        self._play_sound_event("connect_failed")
         wx.MessageBox(f"Connection failed: {exc}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_disconnect(self, event) -> None:
@@ -756,12 +770,14 @@ class MainFrame(wx.Frame):
         self._update_title()
         if was_connected:
             self.log_event("Disconnected from server")
+            self._play_sound_event("disconnect")
         if not self._toolbar_panel.IsShown():
             self._toolbar_panel.Show()
             self.GetSizer().Layout()
             self.tb_host.SetFocus()
 
     def _on_exit(self, event: wx.CommandEvent) -> None:
+        self._play_exit_sound_once()
         self.request_exit()
 
     def request_exit(self) -> None:
@@ -1043,21 +1059,38 @@ class MainFrame(wx.Frame):
     def _get_selected_file_from_list(
         self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
     ) -> RemoteFile | None:
-        idx = list_ctrl.GetFirstSelected()
-        if idx == wx.NOT_FOUND:
-            return None
+        selected = self._get_selected_files_from_list(list_ctrl, files, filter_text)
+        return selected[0] if selected else None
+
+    def _get_selected_files_from_list(
+        self, list_ctrl: AccessibleReportList, files: list[RemoteFile], filter_text: str
+    ) -> list[RemoteFile]:
         visible = self._get_visible_files(files, filter_text)
-        if 0 <= idx < len(visible):
-            return visible[idx]
-        return None
+        selected: list[RemoteFile] = []
+        idx = list_ctrl.GetFirstSelected()
+        while idx != wx.NOT_FOUND:
+            if 0 <= idx < len(visible):
+                selected.append(visible[idx])
+            idx = list_ctrl.GetNextSelected(idx)
+        return selected
 
     def _get_selected_remote_file(self) -> RemoteFile | None:
         return self._get_selected_file_from_list(
             self.remote_file_list, self._remote_files, self._remote_filter_text
         )
 
+    def _get_selected_remote_files(self) -> list[RemoteFile]:
+        return self._get_selected_files_from_list(
+            self.remote_file_list, self._remote_files, self._remote_filter_text
+        )
+
     def _get_selected_local_file(self) -> RemoteFile | None:
         return self._get_selected_file_from_list(
+            self.local_file_list, self._local_files, self._local_filter_text
+        )
+
+    def _get_selected_local_files(self) -> list[RemoteFile]:
+        return self._get_selected_files_from_list(
             self.local_file_list, self._local_files, self._local_filter_text
         )
 
@@ -1298,17 +1331,34 @@ class MainFrame(wx.Frame):
             self._on_download(None)
 
     def _on_download(self, event) -> None:
-        f = self._get_selected_remote_file()
-        if not f or not self._client:
+        if not self._client:
             return
+        try:
+            selected_files = self._get_selected_remote_files()
+        except AttributeError:
+            selected_files = []
+        if not selected_files:
+            f = self._get_selected_remote_file()
+            selected_files = [f] if f else []
+        batch_mode = len(selected_files) > 1
+        queued = 0
+        for f in selected_files:
+            if f.name == "..":
+                continue
+            if self._queue_download(f, batch_mode=batch_mode):
+                queued += 1
+        if queued:
+            if batch_mode:
+                self._announce(f"Queued {queued} download{'s' if queued != 1 else ''}")
+            self._show_transfer_queue()
+
+    def _queue_download(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = os.path.join(self._local_cwd, f.name)
         planned_path = self._resolve_local_transfer_conflict(local_path, f.name, "download")
         if planned_path is None:
-            return
+            return False
         overwrite_existing = planned_path == local_path and os.path.exists(local_path)
         if f.is_dir:
-            if f.name == "..":
-                return
             self._transfer_service.submit_download(
                 self._client,
                 f.path,
@@ -1316,7 +1366,8 @@ class MainFrame(wx.Frame):
                 recursive=True,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
+            if not batch_mode:
+                self._announce(f"Downloading folder {f.name} to {os.path.dirname(planned_path)}")
         else:
             self._transfer_service.submit_download(
                 self._client,
@@ -1325,15 +1376,33 @@ class MainFrame(wx.Frame):
                 f.size,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
-        self._show_transfer_queue()
+            if not batch_mode:
+                self._announce(f"Downloading {f.name} to {os.path.dirname(planned_path)}")
+        return True
 
     def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
             return
-        f = self._get_selected_local_file()
-        if not f:
-            return
+        try:
+            selected_files = self._get_selected_local_files()
+        except AttributeError:
+            selected_files = []
+        if not selected_files:
+            f = self._get_selected_local_file()
+            selected_files = [f] if f else []
+        batch_mode = len(selected_files) > 1
+        queued = 0
+        for f in selected_files:
+            if f.name == "..":
+                continue
+            if self._queue_upload(f, batch_mode=batch_mode):
+                queued += 1
+        if queued:
+            if batch_mode:
+                self._announce(f"Queued {queued} upload{'s' if queued != 1 else ''}")
+            self._show_transfer_queue()
+
+    def _queue_upload(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = f.path
         filename = f.name
         remote_path = f"{self._client.cwd.rstrip('/')}/{filename}"
@@ -1341,13 +1410,11 @@ class MainFrame(wx.Frame):
             remote_path, filename, "upload"
         )
         if planned_remote_path is None:
-            return
+            return False
         overwrite_existing = planned_remote_path == remote_path and self._remote_path_exists(
             remote_path
         )
         if f.is_dir:
-            if f.name == "..":
-                return
             self._transfer_service.submit_upload(
                 self._client,
                 local_path,
@@ -1355,8 +1422,9 @@ class MainFrame(wx.Frame):
                 recursive=True,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Uploading folder {filename}")
-            self._update_status(f"Uploading folder {filename}...", self._client.cwd)
+            if not batch_mode:
+                self._announce(f"Uploading folder {filename}")
+                self._update_status(f"Uploading folder {filename}...", self._client.cwd)
         else:
             total = os.path.getsize(local_path)
             self._transfer_service.submit_upload(
@@ -1366,9 +1434,10 @@ class MainFrame(wx.Frame):
                 total,
                 overwrite_existing=overwrite_existing,
             )
-            self._announce(f"Uploading {filename}")
-            self._update_status(f"Uploading {filename}...", self._client.cwd)
-        self._show_transfer_queue()
+            if not batch_mode:
+                self._announce(f"Uploading {filename}")
+                self._update_status(f"Uploading {filename}...", self._client.cwd)
+        return True
 
     def _transfer_overwrite_mode(self) -> str:
         transfer_settings = getattr(getattr(self, "_settings", None), "transfer", None)
@@ -1385,12 +1454,14 @@ class MainFrame(wx.Frame):
             return local_path
         if mode == "skip":
             self._announce(f"Skipped {action}; {filename} already exists")
+            logger.info("Skipped %s for %s because it already exists", action, filename)
             return None
         if mode == "rename":
             return self._unique_local_path(local_path)
         if self._confirm_overwrite(filename, action):
             return local_path
         self._announce(f"Skipped {action}; {filename} already exists")
+        logger.info("Skipped %s for %s because it already exists", action, filename)
         return None
 
     def _resolve_remote_transfer_conflict(
@@ -1403,12 +1474,14 @@ class MainFrame(wx.Frame):
             return remote_path
         if mode == "skip":
             self._announce(f"Skipped {action}; {filename} already exists")
+            logger.info("Skipped %s for %s because it already exists", action, filename)
             return None
         if mode == "rename":
             return self._unique_remote_path(remote_path)
         if self._confirm_overwrite(filename, action):
             return remote_path
         self._announce(f"Skipped {action}; {filename} already exists")
+        logger.info("Skipped %s for %s because it already exists", action, filename)
         return None
 
     def _confirm_overwrite(self, filename: str, action: str) -> bool:
@@ -1578,9 +1651,11 @@ class MainFrame(wx.Frame):
                     self._client.delete(f.path)
                 self._announce(f"Deleted {f.name}")
                 self._update_status("Delete complete.", self._client.cwd)
+                self._play_sound_event("delete_complete")
                 self._refresh_remote_files()
             except Exception as e:
                 self._update_status("Delete failed.", self._client.cwd)
+                self._play_sound_event("delete_failed")
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _delete_local(self) -> None:
@@ -1594,8 +1669,10 @@ class MainFrame(wx.Frame):
             try:
                 delete_local(f.path)
                 self._announce(f"Deleted {f.name}")
+                self._play_sound_event("delete_complete")
                 self._refresh_local_files()
             except Exception as e:
+                self._play_sound_event("delete_failed")
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_rename(self, event) -> None:
@@ -1620,9 +1697,11 @@ class MainFrame(wx.Frame):
                     self._client.rename(f.path, new_path)
                     self._announce(f"Renamed to {new_name}")
                     self._update_status("Rename complete.", self._client.cwd)
+                    self._play_sound_event("rename_complete")
                     self._refresh_remote_files()
                 except Exception as e:
                     self._update_status("Rename failed.", self._client.cwd)
+                    self._play_sound_event("rename_failed")
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
@@ -1638,8 +1717,10 @@ class MainFrame(wx.Frame):
                 try:
                     rename_local(f.path, new_name)
                     self._announce(f"Renamed to {new_name}")
+                    self._play_sound_event("rename_complete")
                     self._refresh_local_files()
                 except Exception as e:
+                    self._play_sound_event("rename_failed")
                     wx.MessageBox(f"Rename failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
         dlg.Destroy()
 
@@ -1663,9 +1744,11 @@ class MainFrame(wx.Frame):
                     self._client.mkdir(path)
                     self._announce(f"Created directory {name}")
                     self._update_status("Directory created.", self._client.cwd)
+                    self._play_sound_event("folder_created")
                     self._refresh_remote_files()
                 except Exception as e:
                     self._update_status("Create directory failed.", self._client.cwd)
+                    self._play_sound_event("folder_create_failed")
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                     )
@@ -1680,8 +1763,10 @@ class MainFrame(wx.Frame):
                 try:
                     mkdir_local(self._local_cwd, name)
                     self._announce(f"Created directory {name}")
+                    self._play_sound_event("folder_created")
                     self._refresh_local_files()
                 except Exception as e:
+                    self._play_sound_event("folder_create_failed")
                     wx.MessageBox(
                         f"Failed to create directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
                     )
@@ -1745,6 +1830,7 @@ class MainFrame(wx.Frame):
 
             if job.status == TransferStatus.PENDING:
                 latest_status_message = f"{direction_label} queued."
+                self._play_sound_event("transfer_queued")
             elif job.status == TransferStatus.IN_PROGRESS:
                 progress_message = self._format_transfer_progress_message(
                     job, direction_label, filename
@@ -1752,12 +1838,15 @@ class MainFrame(wx.Frame):
                 latest_status_message = (
                     f"{direction_label} in progress..." if state_changed else progress_message
                 )
+                if state_changed:
+                    self._play_sound_event("transfer_started")
                 if self._should_announce_transfer_progress(job):
                     self._announce(progress_message)
             elif job.status == TransferStatus.COMPLETE:
                 latest_status_message = f"{direction_label} complete."
                 self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} complete: {filename}")
+                self._play_sound_event("transfer_complete")
                 if job.direction == TransferDirection.DOWNLOAD:
                     refresh_local_files = True
                 else:
@@ -1768,12 +1857,14 @@ class MainFrame(wx.Frame):
                 error_msg = job.error or "Unknown error"
                 self.log_event(f"{direction_label} failed: {filename} — {error_msg}")
                 self._announce(f"{direction_label} failed.")
+                self._play_sound_event("transfer_failed")
                 self._last_failed_transfer = job.id
                 self._retry_last_failed_item.Enable(True)
             elif job.status == TransferStatus.CANCELLED:
                 latest_status_message = f"{direction_label} cancelled."
                 self._clear_transfer_progress(job.id)
                 self.log_event(f"{direction_label} cancelled: {filename}")
+                self._play_sound_event("transfer_cancelled")
 
         if refresh_local_files:
             self._refresh_local_files()
@@ -1824,6 +1915,7 @@ class MainFrame(wx.Frame):
             self._transfer_service.set_max_workers(
                 self._settings.transfer.concurrent_transfers,
             )
+            self._refresh_sound_player()
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
             self._sync_tray_icon()
@@ -2187,6 +2279,7 @@ class MainFrame(wx.Frame):
             if event is not None and hasattr(event, "Veto"):
                 event.Veto()
             return
+        self._play_exit_sound_once()
         if self._auto_update_check_timer:
             self._auto_update_check_timer.Stop()
         self._destroy_tray_icon()
@@ -2216,6 +2309,36 @@ class MainFrame(wx.Frame):
         self._status(message)
         logger.debug("Announcement requested: %s", message)
         self._announcer.announce(message)
+
+    def _refresh_sound_player(self) -> None:
+        """Refresh the event player after audio settings change."""
+        if not hasattr(self, "_soundpacks_dir"):
+            self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
+        audio_settings = getattr(self._settings, "audio", None)
+        self._sound_player = SoundPlayer(
+            self._soundpacks_dir,
+            getattr(audio_settings, "sound_pack", "default"),
+        )
+
+    def _play_sound_event(self, event_key: str) -> bool:
+        """Play an event sound if enabled and mapped in the active pack."""
+        settings = getattr(self, "_settings", None)
+        audio = getattr(settings, "audio", None)
+        enabled = bool(getattr(audio, "sound_enabled", True))
+        muted = set(getattr(audio, "muted_sound_events", []) or [])
+        pack = getattr(audio, "sound_pack", "default")
+        if not hasattr(self, "_sound_player"):
+            return False
+        if getattr(self._sound_player, "pack_name", None) != pack:
+            self._refresh_sound_player()
+        return self._sound_player.play_event(event_key, enabled=enabled, muted=muted)
+
+    def _play_exit_sound_once(self) -> bool:
+        """Play the exit sound once for menu and window-close paths."""
+        if getattr(self, "_exit_sound_played", False):
+            return False
+        self._exit_sound_played = True
+        return self._play_sound_event("exit")
 
 
 class PortkeyDropApp(wx.App):
@@ -2261,4 +2384,5 @@ class PortkeyDropApp(wx.App):
         frame = MainFrame()
         frame.Show()
         self.SetTopWindow(frame)
+        wx.CallAfter(frame._play_sound_event, "startup")
         return True

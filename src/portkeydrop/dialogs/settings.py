@@ -8,6 +8,9 @@ import wx
 
 from portkeydrop.protocols import SUPPORTED_PROTOCOL_VALUES
 from portkeydrop.settings import Settings
+from portkeydrop.sound_events import SOUND_EVENT_SECTIONS, normalize_known_muted_sound_events
+from portkeydrop.soundpack_paths import ensure_default_soundpack, get_soundpacks_dir
+from portkeydrop.soundpacks import get_available_sound_packs
 
 
 CheckUpdatesCallback = Callable[[str, object | None], None]
@@ -31,6 +34,8 @@ class SettingsDialog(wx.Dialog):
         self._settings = settings
         self._on_check_updates = on_check_updates
         self._spin_controls: list[tuple[wx.SpinCtrl, str]] = []
+        self._sound_pack_ids: list[str] = []
+        self._audio_event_checks: list[tuple[str, wx.CheckBox]] = []
 
         self._build_ui()
         self._populate()
@@ -51,6 +56,7 @@ class SettingsDialog(wx.Dialog):
         self._build_display_tab()
         self._build_connection_tab()
         self._build_updates_tab()
+        self._build_audio_tab()
         self._build_speech_tab()
 
         root.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 8)
@@ -444,6 +450,49 @@ class SettingsDialog(wx.Dialog):
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Speech")
 
+    def _build_audio_tab(self) -> None:
+        panel, sizer = self._new_tab_panel()
+
+        self.sound_enabled_check = self._add_checkbox_row(
+            sizer,
+            wx.CheckBox(panel, label="Enable sound &notifications"),
+            name="Enable sound notifications",
+        )
+
+        self.sound_pack_choice = self._add_labeled_row(
+            panel,
+            sizer,
+            label="Sound &pack:",
+            make_control=lambda p: wx.Choice(p, choices=self._get_sound_pack_labels()),
+            control_name="Sound pack",
+        )
+
+        self.manage_soundpacks_button = self._add_labeled_row(
+            panel,
+            sizer,
+            label="",
+            make_control=lambda p: wx.Button(p, label="Manage Sound &Packs..."),
+            control_name="Manage sound packs",
+        )
+        self.manage_soundpacks_button.Bind(wx.EVT_BUTTON, self._on_manage_soundpacks)
+
+        muted_label = wx.StaticText(panel, label="Muted sound events:")
+        sizer.Add(muted_label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        self._audio_event_checks = []
+        for section_title, _description, events in SOUND_EVENT_SECTIONS:
+            sizer.Add(wx.StaticText(panel, label=section_title), 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+            for event_key, display_name in events:
+                checkbox = wx.CheckBox(panel, label=display_name)
+                self._add_checkbox_row(
+                    sizer,
+                    checkbox,
+                    name=f"Mute {display_name}",
+                )
+                self._audio_event_checks.append((event_key, checkbox))
+
+        sizer.AddStretchSpacer(1)
+        self.notebook.AddPage(panel, "Audio")
+
     # -- Data binding --------------------------------------------------
 
     def _populate(self) -> None:
@@ -486,6 +535,15 @@ class SettingsDialog(wx.Dialog):
         )
         update_channel = getattr(s.app, "update_channel", "stable")
         self.update_channel_choice.SetSelection(0 if update_channel == "stable" else 1)
+        # Audio
+        self.sound_enabled_check.SetValue(getattr(s.audio, "sound_enabled", True))
+        sound_pack = getattr(s.audio, "sound_pack", "default")
+        self.sound_pack_choice.SetSelection(
+            self._sound_pack_ids.index(sound_pack) if sound_pack in self._sound_pack_ids else 0
+        )
+        muted_events = set(normalize_known_muted_sound_events(s.audio.muted_sound_events))
+        for event_key, checkbox in self._audio_event_checks:
+            checkbox.SetValue(event_key in muted_events)
         # Speech
         self.speech_rate_spin.SetValue(s.speech.rate)
         self.speech_volume_spin.SetValue(s.speech.volume)
@@ -522,6 +580,16 @@ class SettingsDialog(wx.Dialog):
         s.app.auto_update_enabled = self.auto_update_check.GetValue()
         s.app.update_check_interval_hours = self.update_interval_spin.GetValue()
         s.app.update_channel = self.update_channel_choice.GetStringSelection()
+        s.audio.sound_enabled = self.sound_enabled_check.GetValue()
+        selected_pack = self.sound_pack_choice.GetSelection()
+        s.audio.sound_pack = (
+            self._sound_pack_ids[selected_pack]
+            if 0 <= selected_pack < len(self._sound_pack_ids)
+            else "default"
+        )
+        s.audio.muted_sound_events = normalize_known_muted_sound_events(
+            event_key for event_key, checkbox in self._audio_event_checks if checkbox.GetValue()
+        )
 
         s.speech.rate = self.speech_rate_spin.GetValue()
         s.speech.volume = self.speech_volume_spin.GetValue()
@@ -534,3 +602,32 @@ class SettingsDialog(wx.Dialog):
             return
         channel = self.update_channel_choice.GetStringSelection()
         self._on_check_updates(channel, self)
+
+    def _get_sound_pack_labels(self) -> list[str]:
+        soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
+        packs = get_available_sound_packs(soundpacks_dir)
+        ordered = sorted(packs.items(), key=lambda item: item[1].get("name", item[0]).lower())
+        self._sound_pack_ids = [pack_id for pack_id, _data in ordered]
+        return [
+            f"{data.get('name', pack_id)} (by {data.get('author', 'Unknown')})"
+            for pack_id, data in ordered
+        ] or ["Default (by Portkey Drop)"]
+
+    def _on_manage_soundpacks(self, event: wx.CommandEvent) -> None:
+        from portkeydrop.dialogs.soundpack_manager import SoundPackManagerDialog
+
+        dialog = SoundPackManagerDialog(self)
+        dialog.ShowModal()
+        dialog.Destroy()
+        current_pack = (
+            self._sound_pack_ids[self.sound_pack_choice.GetSelection()]
+            if 0 <= self.sound_pack_choice.GetSelection() < len(self._sound_pack_ids)
+            else "default"
+        )
+        labels = self._get_sound_pack_labels()
+        self.sound_pack_choice.Clear()
+        for label in labels:
+            self.sound_pack_choice.Append(label)
+        self.sound_pack_choice.SetSelection(
+            self._sound_pack_ids.index(current_pack) if current_pack in self._sound_pack_ids else 0
+        )

@@ -6,9 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
+- Starting Portkey Drop again on Windows now restores the running window instead of showing a stale lock-file prompt.
+- Windows nightly builds can connect to SFTP servers again instead of failing with a missing `win32timezone` module.
+- Windows packaged builds now include the native audio libraries needed for built-in sound events.
+- Windows installers now close running Portkey Drop copies before replacing app files.
+- WebDAV shares that use a username with no password now connect and open folders correctly.
 
 ### Added
+- Batch transfers: select multiple local or remote files and folders, then use Ctrl+U,
+  Ctrl+D, or Ctrl+T to queue them together.
+- Default sound pack: Portkey Drop now includes built-in transfer, connection, file
+  operation, and app event sounds with a structured folder layout for custom packs.
 - FTP connections can now enable explicit SSL with the AUTH SSL command.
+- Release builds now use Nuitka for Windows and macOS packaged artifacts.
 - Experimental WebDAV connections for basic browse, upload, download, delete, folder creation, and rename workflows.
 
 ## [0.4.0] - 2026-05-05

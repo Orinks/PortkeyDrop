@@ -29,7 +29,11 @@ def sftp_info() -> ConnectionInfo:
 def _make_mock_conn() -> tuple[MagicMock, MagicMock]:
     """Create mock asyncssh connection and SFTP client."""
     mock_conn = AsyncMock()
+    mock_conn.close = MagicMock()
     mock_sftp = AsyncMock()
+    mock_sftp.exit = MagicMock()
+    mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
+    mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
     mock_conn.start_sftp_client.return_value = mock_sftp
     mock_sftp.realpath.return_value = "/home/user"
     return mock_conn, mock_sftp
@@ -483,8 +487,11 @@ class TestSFTPClientListDir:
     def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
         mock_sftp = AsyncMock()
+        mock_sftp.exit = MagicMock()
+        mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
+        mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
         mock_sftp.realpath.return_value = "/home/user"
-        client._conn = AsyncMock()
+        client._conn = MagicMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
@@ -534,12 +541,14 @@ class TestSFTPClientChdir:
     def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
         mock_sftp = AsyncMock()
+        mock_sftp.exit = MagicMock()
+        mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
         mock_sftp.realpath.return_value = "/home/user/subdir"
         stat_attrs = MagicMock()
         stat_attrs.permissions = stat_mod.S_IFDIR | 0o755
         stat_attrs.type = None
         mock_sftp.stat.return_value = stat_attrs
-        client._conn = AsyncMock()
+        client._conn = MagicMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
@@ -582,8 +591,11 @@ class TestSFTPClientListDirSpecialFiles:
     def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
         mock_sftp = AsyncMock()
+        mock_sftp.exit = MagicMock()
+        mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
+        mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
         mock_sftp.realpath.return_value = "/home/user"
-        client._conn = AsyncMock()
+        client._conn = MagicMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp
@@ -638,8 +650,11 @@ class TestSFTPBitviseCompliance:
     def _make_connected(self, sftp_info: ConnectionInfo) -> tuple[SFTPClient, AsyncMock]:
         client = SFTPClient(sftp_info)
         mock_sftp = AsyncMock()
+        mock_sftp.exit = MagicMock()
+        mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
+        mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
         mock_sftp.realpath.return_value = "/home/user"
-        client._conn = AsyncMock()
+        client._conn = MagicMock()
         client._sftp = mock_sftp
         client._cwd = "/home/user"
         return client, mock_sftp

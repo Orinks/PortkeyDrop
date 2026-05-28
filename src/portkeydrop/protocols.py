@@ -447,6 +447,8 @@ class WebDAVClient(TransferClient):
                     "webdav_timeout": self._info.timeout,
                 }
             )
+            if self._info.username:
+                self._client.session.auth = (self._info.username, self._info.password)
             self._cwd = "/"
             self._connected = True
         except ImportError as e:
@@ -486,6 +488,34 @@ class WebDAVClient(TransferClient):
             netloc = f"{userinfo}@{netloc}"
         return urlunsplit((parts.scheme or "https", netloc, parts.path, parts.query, ""))
 
+    def _url_base_path(self) -> str:
+        raw_host = self._info.host.strip()
+        if "://" not in raw_host:
+            scheme = "http" if self._info.effective_port == 80 else "https"
+            raw_host = f"{scheme}://{raw_host}"
+        return urlsplit(raw_host).path.rstrip("/")
+
+    def _to_app_path(self, path: str) -> str:
+        if not path:
+            return "/"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        base_path = self._url_base_path()
+        if (
+            base_path
+            and base_path != "/"
+            and (path == base_path or path.startswith(f"{base_path}/"))
+        ):
+            path = path[len(base_path) :] or "/"
+        return path if path.startswith("/") else f"/{path}"
+
+    @staticmethod
+    def _same_collection(left: str, right: str) -> bool:
+        def normalize(path: str) -> str:
+            return path.rstrip("/") or "/"
+
+        return normalize(left) == normalize(right)
+
     def _resolve_path(self, path: str = ".") -> str:
         if not path or path == ".":
             return self._cwd
@@ -510,14 +540,14 @@ class WebDAVClient(TransferClient):
             return None
 
     @staticmethod
-    def _is_dir_info(info: dict) -> bool:
+    def _is_dir_info(info: dict, fallback_path: str = "") -> bool:
         for key in ("isdir", "is_dir", "directory"):
             value = info.get(key)
             if isinstance(value, bool):
                 return value
             if isinstance(value, str) and value.lower() in {"true", "1", "yes", "dir", "directory"}:
                 return True
-        path = str(info.get("path") or info.get("href") or info.get("name") or "")
+        path = str(info.get("path") or info.get("href") or info.get("name") or fallback_path)
         content_type = str(info.get("content_type") or info.get("content-type") or "").lower()
         return path.endswith("/") or content_type == "httpd/unix-directory"
 
@@ -526,7 +556,7 @@ class WebDAVClient(TransferClient):
         name = str(
             info.get("name") or PurePosixPath(path.rstrip("/")).name or path.strip("/") or "/"
         )
-        is_dir = self._is_dir_info(info)
+        is_dir = self._is_dir_info(info, fallback_path=fallback_path)
         try:
             size = 0 if is_dir else int(info.get("size") or info.get("content_length") or 0)
         except (TypeError, ValueError):
@@ -534,17 +564,22 @@ class WebDAVClient(TransferClient):
         modified = self._parse_modified(
             info.get("modified") or info.get("modified_at") or info.get("lastmodified")
         )
-        if path and not path.startswith("/"):
-            path = f"/{path}"
+        path = self._to_app_path(path)
         return RemoteFile(name=name, path=path, size=size, is_dir=is_dir, modified=modified)
 
     def list_dir(self, path: str = ".") -> list[RemoteFile]:
         client = self._ensure_connected()
         target = self._resolve_path(path)
         items = client.list(target, get_info=True)
-        return [self._remote_file_from_info(item) for item in items if isinstance(item, dict)]
+        files = [self._remote_file_from_info(item) for item in items if isinstance(item, dict)]
+        return [
+            item for item in files if not (item.is_dir and self._same_collection(item.path, target))
+        ]
 
     def chdir(self, path: str) -> str:
+        if self._same_collection(self._resolve_path(path), "/"):
+            self._cwd = "/"
+            return self._cwd
         remote = self.stat(self._resolve_path(path))
         if not remote.is_dir:
             raise NotADirectoryError(path)

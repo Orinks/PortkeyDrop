@@ -11,14 +11,19 @@ Two side-by-side file browsers:
 - **Right pane**: Remote files (connected server)
 
 Each pane is a labeled standard list control, so screen readers announce "Local Files" or "Remote Files" when you Tab between them.
+Use Shift+Arrow or Ctrl+Arrow/Space in a file pane to select multiple items for batch transfers.
+
+## Sound Packs
+
+Portkey Drop includes a built-in default sound pack with short cues for transfers, connections, file operations, and general app events. Sound packs live under a pack folder with section subfolders, such as `default/transfers/transfer_complete.ogg`, and a `pack.json` manifest maps each event to its sound file.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+T | Transfer: uploads from local pane, downloads from remote pane |
-| Ctrl+U | Upload selected local file to remote |
-| Ctrl+D | Download selected remote file to local |
+| Ctrl+T | Transfer selected items: uploads from local pane, downloads from remote pane |
+| Ctrl+U | Upload selected local items to remote |
+| Ctrl+D | Download selected remote items to local |
 | Ctrl+N | Quick Connect |
 | Ctrl+S | Site Manager |
 | Ctrl+R | Refresh active pane |
@@ -79,6 +84,17 @@ uv sync --all-extras --group dev
 uv run pytest
 uv run ruff check
 ```
+
+## Build
+
+Release-style local builds use Nuitka, matching the GitHub Actions build path:
+
+```bash
+uv sync --extra build --group dev
+uv run python installer/build_nuitka.py
+```
+
+On Windows, install Inno Setup 6 before building the installer.
 
 ## License
 

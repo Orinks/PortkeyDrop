@@ -128,6 +128,7 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.LC_REPORT = 64
     fake_wx.LC_SINGLE_SEL = 128
     fake_wx.LB_SINGLE = 0x0020
+    fake_wx.LB_EXTENDED = 0x0800
     fake_wx.TE_PASSWORD = 256
     fake_wx.TE_PROCESS_ENTER = 512
     fake_wx.TE_MULTILINE = 1024

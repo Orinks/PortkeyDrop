@@ -31,6 +31,18 @@ from portkeydrop.protocols import (
 )
 
 
+def _make_mock_asyncssh_connection() -> tuple[AsyncMock, AsyncMock]:
+    mock_conn = AsyncMock()
+    mock_conn.close = MagicMock()
+    mock_sftp = AsyncMock()
+    mock_sftp.exit = MagicMock()
+    mock_sftp.compose_path = MagicMock(side_effect=lambda p: p)
+    mock_sftp.decode = MagicMock(side_effect=lambda b: b.decode("utf-8"))
+    mock_sftp.realpath.return_value = "/"
+    mock_conn.start_sftp_client.return_value = mock_sftp
+    return mock_conn, mock_sftp
+
+
 def _pack_ppk_string(value: bytes) -> bytes:
     return len(value).to_bytes(4, "big") + value
 
@@ -272,6 +284,23 @@ class TestWebDAVClient:
         assert client.connected
         assert client.cwd == "/"
 
+    def test_connect_sets_session_auth_for_blank_webdav_password(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        client_class = self._install_fake_webdav(monkeypatch, webdav)
+        info = ConnectionInfo(
+            protocol=Protocol.WEBDAV,
+            host="dav.example.com",
+            username="share-token",
+            password="",
+        )
+
+        client = WebDAVClient(info)
+        client.connect()
+
+        client_class.assert_called_once()
+        assert webdav.session.auth == ("share-token", "")
+
     def test_connect_preserves_explicit_webdav_url_and_port(self, monkeypatch):
         webdav = MagicMock()
         webdav.list.return_value = []
@@ -325,6 +354,52 @@ class TestWebDAVClient:
         assert files[1].size == 12
         assert files[1].is_dir is False
 
+    def test_list_dir_strips_webdav_url_base_path_and_skips_current_collection(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = [
+            {
+                "path": "/webdav/",
+                "name": "webdav",
+                "isdir": True,
+            },
+            {
+                "path": "/webdav/docs/",
+                "name": "docs",
+                "isdir": True,
+            },
+            {
+                "path": "/webdav/readme.txt",
+                "name": "readme.txt",
+                "isdir": False,
+                "size": "12",
+            },
+        ]
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(
+            ConnectionInfo(protocol=Protocol.WEBDAV, host="https://dav.example.com/webdav/")
+        )
+        client.connect()
+
+        files = client.list_dir("/")
+
+        assert files == [
+            RemoteFile(name="docs", path="/docs/", size=0, is_dir=True),
+            RemoteFile(name="readme.txt", path="/readme.txt", size=12, is_dir=False),
+        ]
+
+    def test_chdir_webdav_root_does_not_require_stat(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(
+            ConnectionInfo(protocol=Protocol.WEBDAV, host="https://dav.example.com/webdav/")
+        )
+        client.connect()
+
+        assert client.chdir("/") == "/"
+        assert client.cwd == "/"
+        webdav.info.assert_not_called()
+
     def test_stat_maps_webdav_info(self, monkeypatch):
         webdav = MagicMock()
         webdav.list.return_value = []
@@ -356,6 +431,24 @@ class TestWebDAVClient:
 
         assert client.chdir("docs") == "/docs/"
         assert client.cwd == "/docs/"
+
+    def test_chdir_treats_trailing_slash_fallback_path_as_webdav_directory(self, monkeypatch):
+        webdav = MagicMock()
+        webdav.list.return_value = []
+        webdav.info.return_value = {
+            "created": None,
+            "name": None,
+            "size": None,
+            "modified": "Thu, 18 Sep 2025 17:39:08 GMT",
+            "etag": '"68cc43bcc684e"',
+            "content_type": None,
+        }
+        self._install_fake_webdav(monkeypatch, webdav)
+        client = WebDAVClient(ConnectionInfo(protocol=Protocol.WEBDAV, host="dav.example.com"))
+        client.connect()
+
+        assert client.chdir("/11 ai/") == "/11 ai/"
+        assert client.cwd == "/11 ai/"
 
     def test_file_operations_delegate_to_webdavclient(self, monkeypatch, tmp_path):
         webdav = MagicMock()
@@ -794,8 +887,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_connect_success(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -1169,8 +1261,7 @@ class TestSFTPClient:
         mock_import_private_key,
         _mock_exists,
     ):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -1766,8 +1857,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_disconnect(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -1795,8 +1885,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_list_dir_maps_file_attributes(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/home/user"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -1846,8 +1935,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_chdir_download_upload_and_file_ops(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = ["/", "/uploads", "/remote.bin"]
         # chdir now validates with stat — return directory attributes
         chdir_stat_attrs = MagicMock()
@@ -1944,8 +2032,7 @@ class TestSFTPClient:
     @patch("asyncssh.read_private_key", return_value=object())
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_connect_with_key_and_stat(self, mock_connect, mock_read_private_key, _mock_exists):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -1980,8 +2067,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_raises_when_remote_size_mismatch(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2006,8 +2092,7 @@ class TestSFTPClient:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_bytesio_creates_remote_dir_on_file_not_found(self, mock_connect):
         """BytesIO upload retries after makedirs when parent directory is missing."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2043,8 +2128,7 @@ class TestSFTPClient:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_native_creates_remote_dir_on_file_not_found(self, mock_connect, _mock_getsize):
         """Native put() upload retries after makedirs when parent directory is missing."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2076,8 +2160,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_mkdir_raises_when_created_path_is_not_directory(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2096,8 +2179,7 @@ class TestSFTPClient:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_mkdir_succeeds_when_type_indicates_directory_without_permissions(self, mock_connect):
         """mkdir verification accepts SFTP v4+ servers that return type=dir but no permissions."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2116,8 +2198,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_delete_raises_when_remote_stat_succeeds(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2132,8 +2213,7 @@ class TestSFTPClient:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_rmdir_raises_when_remote_stat_succeeds(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2179,8 +2259,7 @@ class TestSFTPClientNativeTransfer:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_uses_native_get_with_progress(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2219,8 +2298,7 @@ class TestSFTPClientNativeTransfer:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_no_callback_still_uses_native_get(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2242,8 +2320,7 @@ class TestSFTPClientNativeTransfer:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_bytesio_uses_chunked_fallback(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = lambda p: "/" if p == "." else p
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2276,8 +2353,7 @@ class TestSFTPClientNativeTransfer:
     @patch("os.path.getsize", return_value=4)
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_uses_native_put_with_progress(self, mock_connect, _mock_getsize):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2320,8 +2396,7 @@ class TestSFTPClientNativeTransfer:
     @patch("os.path.getsize", return_value=4)
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_verifies_remote_size(self, mock_connect, _mock_getsize):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2341,8 +2416,7 @@ class TestSFTPClientNativeTransfer:
 
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_upload_bytesio_uses_chunked_fallback(self, mock_connect):
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.return_value = "/"
         mock_conn.start_sftp_client.return_value = mock_sftp
         mock_connect.return_value = mock_conn
@@ -2377,8 +2451,7 @@ class TestSFTPDownloadSymlinkResolution:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_resolves_symlink_via_realpath(self, mock_connect):
         """Native get() path uses the resolved path for symlinked files."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = [
             "/",  # connect
             "/real/file.bin",  # download resolves symlink
@@ -2416,8 +2489,7 @@ class TestSFTPDownloadSymlinkResolution:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_fallback_resolves_symlink_via_realpath(self, mock_connect):
         """BytesIO fallback path uses the resolved path for symlinked files."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = [
             "/",  # connect
             "/real/file.txt",  # download resolves symlink
@@ -2455,8 +2527,7 @@ class TestSFTPDownloadSymlinkResolution:
     @patch("asyncssh.connect", new_callable=AsyncMock)
     def test_download_falls_back_to_original_path_when_realpath_fails(self, mock_connect):
         """If realpath fails, download uses the original path."""
-        mock_conn = AsyncMock()
-        mock_sftp = AsyncMock()
+        mock_conn, mock_sftp = _make_mock_asyncssh_connection()
         mock_sftp.realpath.side_effect = [
             "/",  # connect
             OSError("realpath failed"),  # download fallback
