@@ -57,9 +57,7 @@ def test_windows_nuitka_command_uses_standalone_dir_and_pyproject_version() -> N
     assert "--mode=onefile" not in command
 
 
-def test_stage_nuitka_distribution_copies_sound_lib_native_libraries(
-    tmp_path, monkeypatch
-) -> None:
+def test_stage_nuitka_distribution_copies_sound_lib_native_libraries(tmp_path, monkeypatch) -> None:
     build_dir = tmp_path / "build" / "nuitka"
     nuitka_dist = build_dir / "__main__.dist"
     nuitka_dist.mkdir(parents=True)
