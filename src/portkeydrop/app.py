@@ -107,6 +107,11 @@ ID_FOCUS_REMOTE_PANE = wx.NewIdRef()
 ID_FOCUS_ACTIVITY_LOG_PANE = wx.NewIdRef()
 
 
+def _is_packaged_build() -> bool:
+    """Return True for PyInstaller-style or Nuitka-compiled app builds."""
+    return bool(getattr(sys, "frozen", False)) or "__compiled__" in globals()
+
+
 class MainFrame(wx.Frame):
     """Main application window with dual-pane file browser."""
 
@@ -2000,7 +2005,7 @@ class MainFrame(wx.Frame):
 
     def _check_for_updates_on_startup(self) -> None:
         """Check for updates at startup when running frozen builds."""
-        if not getattr(sys, "frozen", False):
+        if not _is_packaged_build():
             logger.debug("Running from source, skipping startup update check")
             return
 
@@ -2056,7 +2061,7 @@ class MainFrame(wx.Frame):
         parent: wx.Window | None = None,
     ) -> None:
         """Manually check for updates from the Help menu."""
-        if not getattr(sys, "frozen", False):
+        if not _is_packaged_build():
             wx.MessageBox(
                 "Update checking is only available in installed builds.\n"
                 "You're running from source - use git pull to update.",

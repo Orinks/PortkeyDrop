@@ -47,13 +47,7 @@ def _packaged_default_soundpack():
 
     executable = Path(sys.executable).resolve()
     for parent in executable.parents:
-        candidate = (
-            parent
-            / "Resources"
-            / "portkeydrop"
-            / "default_soundpacks"
-            / "default"
-        )
+        candidate = parent / "Resources" / "portkeydrop" / "default_soundpacks" / "default"
         if candidate.is_dir():
             return candidate
     return packaged_default

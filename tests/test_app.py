@@ -1997,6 +1997,36 @@ def test_on_check_updates_from_source_shows_info_message(app_module, monkeypatch
     assert fake_wx.MessageBox.call_args.args[1] == "Running from Source"
 
 
+def test_on_check_updates_allows_nuitka_compiled_builds(app_module, monkeypatch):
+    app, fake_wx = app_module
+    frame = object.__new__(app.MainFrame)
+    frame._settings = SimpleNamespace(app=SimpleNamespace(update_channel="stable"))
+    frame.version = "1.0.0"
+    frame.build_tag = "nightly-20260305"
+    monkeypatch.setattr(app.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(app, "__compiled__", object(), raising=False)
+    monkeypatch.setattr(app.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(fake_wx, "CallAfter", lambda fn, *a, **kw: fn(*a, **kw))
+
+    called: dict[str, object] = {}
+
+    class _FakeService:
+        def __init__(self, _name):
+            pass
+
+        def check_for_updates(self, **kwargs):
+            called["current_nightly_date"] = kwargs["current_nightly_date"]
+            called["channel"] = kwargs["channel"]
+            return None
+
+    monkeypatch.setattr(app, "UpdateService", _FakeService)
+
+    frame._on_check_updates(None)
+
+    assert called == {"current_nightly_date": "20260305", "channel": "stable"}
+    assert fake_wx.MessageBox.call_args.args[1] == "No Updates Available"
+
+
 def test_startup_update_check_uses_update_dialog_and_respects_cancel(app_module, monkeypatch):
     app, fake_wx = app_module
     frame = object.__new__(app.MainFrame)
