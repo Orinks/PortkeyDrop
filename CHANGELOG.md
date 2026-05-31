@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.5.0] - 2026-05-31
+
 ### Fixed
 - Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
 - Nuitka-packaged nightly builds now recognize they are installed builds when checking for updates.
