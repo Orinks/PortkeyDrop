@@ -7,10 +7,10 @@ All notable changes to this project will be documented in this file.
 ## [0.5.0] - 2026-05-31
 
 ### Fixed
-- Changelog CI now enforces curated user-facing entries and uses them for nightly and stable release notes.
-- Nuitka-packaged nightly builds now recognize they are installed builds when checking for updates.
+- Release notes now use curated user-facing changelog entries instead of raw commit or PR text.
+- Packaged builds now correctly recognize installed copies when checking for updates.
 - Starting Portkey Drop again on Windows now restores the running window instead of showing a stale lock-file prompt.
-- Windows nightly builds can connect to SFTP servers again instead of failing with a missing `win32timezone` module.
+- Windows packaged builds can connect to SFTP servers again instead of failing with a missing `win32timezone` module.
 - Windows packaged builds now include the native audio libraries needed for built-in sound events.
 - Windows installers now close running Portkey Drop copies before replacing app files.
 - WebDAV shares that use a username with no password now connect and open folders correctly.
