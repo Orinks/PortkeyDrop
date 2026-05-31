@@ -3,4 +3,4 @@
 try:
     from portkeydrop._build_meta import __version__  # type: ignore[import]
 except ImportError:
-    __version__ = "0.5.1.dev0"
+    __version__ = "0.5.1"
