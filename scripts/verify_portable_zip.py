@@ -65,17 +65,23 @@ def verify_portable_zip(zip_path: Path) -> tuple[bool, list[str]]:
 
     errors: list[str] = []
 
+    if "PortkeyDrop/PortkeyDrop.exe" not in entries:
+        errors.append("missing PortkeyDrop/PortkeyDrop.exe")
+
+    if "PortkeyDrop/.portable" not in entries:
+        errors.append("missing PortkeyDrop/.portable marker")
+
     has_portable_data_dir = any(
-        name == "data/" or name.startswith("data/") or "/data/" in name for name in entries
+        name == "PortkeyDrop/data/" or name.startswith("PortkeyDrop/data/") for name in entries
     )
     if not has_portable_data_dir:
-        errors.append("missing required data/ directory contents")
+        errors.append("missing required PortkeyDrop/data/ directory contents")
 
     if errors:
         return False, errors
 
     print(f"Validated portable zip: {zip_path}")
-    print("Found data/ directory contents for portable mode")
+    print("Found PortkeyDrop/data/ directory contents for portable mode")
     return True, []
 
 
