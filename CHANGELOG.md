@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+- Windows portable ZIPs now keep Portkey Drop data alongside the extracted app folder so settings, sites, sounds, and portable credentials stay with the portable copy.
+
+### Changed
+- Development builds now report the next 0.5.1 development version after the 0.5.0 stable release.
+
 ## [0.5.0] - 2026-05-31
 
 ### Fixed

@@ -9,11 +9,15 @@ from pathlib import Path
 def is_portable_mode() -> bool:
     """Return True if the app is running in portable mode.
 
-    Portable mode is active when a ``data/`` directory or a ``portable.txt``
-    file exists alongside ``sys.executable``.
+    Portable mode is active when a ``.portable`` marker, ``data/`` directory,
+    or legacy ``portable.txt`` file exists alongside ``sys.executable``.
     """
     exe_dir = Path(sys.executable).parent
-    return (exe_dir / "data").is_dir() or (exe_dir / "portable.txt").is_file()
+    return (
+        (exe_dir / ".portable").is_file()
+        or (exe_dir / "data").is_dir()
+        or (exe_dir / "portable.txt").is_file()
+    )
 
 
 def get_config_dir() -> Path:

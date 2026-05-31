@@ -9,6 +9,14 @@ from portkeydrop.portable import get_config_dir, is_portable_mode
 
 
 class TestIsPortableMode:
+    def test_true_when_dot_portable_marker_exists(self, tmp_path: Path):
+        (tmp_path / ".portable").write_text("1")
+        fake_exe = tmp_path / "portkeydrop.exe"
+        fake_exe.touch()
+        with patch("portkeydrop.portable.sys") as mock_sys:
+            mock_sys.executable = str(fake_exe)
+            assert is_portable_mode() is True
+
     def test_true_when_data_dir_exists(self, tmp_path: Path):
         (tmp_path / "data").mkdir()
         fake_exe = tmp_path / "portkeydrop.exe"

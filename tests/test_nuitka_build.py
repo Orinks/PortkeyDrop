@@ -276,5 +276,39 @@ def test_windows_portable_zip_uses_separate_staging_dir(tmp_path, monkeypatch) -
     with zipfile.ZipFile(zip_path) as archive:
         names = set(archive.namelist())
 
-    assert "PortkeyDrop_portable/PortkeyDrop.exe" in names
-    assert "PortkeyDrop_portable/data/" in names
+    assert "PortkeyDrop/PortkeyDrop.exe" in names
+    assert "PortkeyDrop/.portable" in names
+    assert "PortkeyDrop/data/" in names
+
+
+def test_windows_portable_zip_stages_accessiweather_style_layout(tmp_path, monkeypatch) -> None:
+    dist_dir = tmp_path / "dist"
+    installer_stage = dist_dir / "PortkeyDrop_dir"
+    packaged_default = installer_stage / "portkeydrop" / "default_soundpacks" / "default"
+    packaged_default.mkdir(parents=True)
+    (installer_stage / "PortkeyDrop.exe").write_bytes(b"fake-exe")
+    (packaged_default / "pack.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(build, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build, "IS_WINDOWS", True)
+    monkeypatch.setattr(build, "IS_MACOS", False)
+    monkeypatch.setattr(build, "IS_LINUX", False)
+
+    assert build.create_portable_zip() is True
+
+    portable_stage = dist_dir / "PortkeyDrop"
+    zip_path = dist_dir / f"PortkeyDrop_Portable_v{build.get_version()}.zip"
+    assert portable_stage.is_dir()
+    assert (portable_stage / ".portable").is_file()
+    assert (portable_stage / "data").is_dir()
+    assert (portable_stage / "data" / "soundpacks" / "default" / "pack.json").is_file()
+
+    assert not (installer_stage / ".portable").exists()
+    assert not (installer_stage / "data").exists()
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+
+    assert "PortkeyDrop/PortkeyDrop.exe" in names
+    assert "PortkeyDrop/.portable" in names
+    assert "PortkeyDrop/data/soundpacks/default/pack.json" in names

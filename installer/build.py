@@ -38,6 +38,9 @@ SRC_DIR = ROOT / "src"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 RESOURCES_DIR = SRC_DIR / "portkeydrop" / "resources"
+DEFAULT_SOUNDPACKS_DIR = SRC_DIR / "portkeydrop" / "default_soundpacks"
+PORTABLE_DEFAULT_SOUNDPACK_DIR = Path("data") / "soundpacks" / "default"
+PORTABLE_DEFAULT_SOUNDPACK_MANIFEST = PORTABLE_DEFAULT_SOUNDPACK_DIR / "pack.json"
 
 # Platform detection
 IS_WINDOWS = platform.system() == "Windows"
@@ -396,29 +399,23 @@ def create_portable_zip() -> bool:
 
     version = get_version()
 
-    staging_dir: Path | None = None
-
     if IS_WINDOWS:
         # Look for directory distribution first, then single exe
-        source_dir = DIST_DIR / "PortkeyDrop_dir"
-        if not source_dir.exists():
+        app_source_dir = DIST_DIR / "PortkeyDrop_dir"
+        source_dir = DIST_DIR / "PortkeyDrop"
+        if source_dir.exists():
+            shutil.rmtree(source_dir)
+        if app_source_dir.exists():
+            shutil.copytree(app_source_dir, source_dir)
+        else:
             # Single exe - create a directory for it
             exe_path = DIST_DIR / "PortkeyDrop.exe"
             if exe_path.exists():
-                source_dir = DIST_DIR / "PortkeyDrop_portable"
                 source_dir.mkdir(exist_ok=True)
                 shutil.copy2(exe_path, source_dir / "PortkeyDrop.exe")
-                staging_dir = source_dir
             else:
                 print("Error: No build output found")
                 return False
-        else:
-            # Keep installer input untouched; stage a separate portable tree.
-            staging_dir = DIST_DIR / "PortkeyDrop_portable"
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-            shutil.copytree(source_dir, staging_dir)
-            source_dir = staging_dir
 
         zip_name = f"PortkeyDrop_Portable_v{version}"
     elif IS_MACOS:
@@ -440,19 +437,54 @@ def create_portable_zip() -> bool:
     if Path(f"{zip_path}.zip").exists():
         Path(f"{zip_path}.zip").unlink()
 
-    try:
-        # Create data/ directory to activate portable mode after extraction.
-        data_dir = source_dir / "data"
-        data_dir.mkdir(exist_ok=True)
+    if IS_WINDOWS:
+        (source_dir / ".portable").write_text("1\n", encoding="utf-8")
+        (source_dir / "data").mkdir(exist_ok=True)
+        try:
+            _stage_default_soundpack_for_portable(source_dir)
+            _assert_portable_soundpack_staged(source_dir)
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
+            return False
 
-        # Create zip
-        shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
-    finally:
-        if staging_dir and staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
+    shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
 
     print(f"\n✓ Portable ZIP created: {zip_path}.zip")
     return True
+
+
+def _candidate_default_soundpack_dirs(portable_root: Path) -> list[Path]:
+    return [
+        portable_root / PORTABLE_DEFAULT_SOUNDPACK_DIR,
+        portable_root / "portkeydrop" / "default_soundpacks" / "default",
+        DEFAULT_SOUNDPACKS_DIR / "default",
+    ]
+
+
+def _stage_default_soundpack_for_portable(portable_root: Path) -> Path:
+    """Ensure the portable layout contains data/soundpacks/default/pack.json."""
+    target_dir = portable_root / PORTABLE_DEFAULT_SOUNDPACK_DIR
+    for candidate in _candidate_default_soundpack_dirs(portable_root):
+        if candidate == target_dir or not (candidate / "pack.json").is_file():
+            continue
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(candidate, target_dir)
+        return target_dir
+    return target_dir
+
+
+def _assert_portable_soundpack_staged(portable_root: Path) -> Path:
+    """Fail loudly when the staged portable tree lacks the default sound pack manifest."""
+    manifest_path = portable_root / PORTABLE_DEFAULT_SOUNDPACK_MANIFEST
+    if not manifest_path.is_file():
+        searched = ", ".join(str(path) for path in _candidate_default_soundpack_dirs(portable_root))
+        raise RuntimeError(
+            "Portable ZIP is missing default/pack.json at the expected portable path "
+            f"{manifest_path}. Searched: {searched}"
+        )
+    return manifest_path
 
 
 def clean_build() -> None:
