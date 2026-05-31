@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- Development builds now report the next 0.5.1 development version after the 0.5.0 stable release.
+
 ## [0.5.0] - 2026-05-31
 
 ### Fixed
