@@ -67,6 +67,7 @@ def _hydrate_frame(module):
     app, _ = module
     frame = object.__new__(app.MainFrame)
     frame._connecting = False
+    frame._focus_before_quick_connect = None
     frame._announce = MagicMock()
     frame._status = MagicMock()
     frame._update_status = MagicMock()
@@ -154,6 +155,7 @@ def test_bind_events_hooks_transfer_update(app_module):
     frame.Bind = MagicMock()
     frame.tb_connect_btn = MagicMock(Bind=MagicMock())
     frame.tb_protocol = MagicMock(Bind=MagicMock())
+    frame._toolbar_panel = MagicMock(Bind=MagicMock())
     frame.remote_file_list = MagicMock(Bind=MagicMock())
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
@@ -176,6 +178,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
     frame.SetAcceleratorTable = MagicMock()
     frame.tb_connect_btn = MagicMock(Bind=MagicMock())
     frame.tb_protocol = MagicMock(Bind=MagicMock())
+    frame._toolbar_panel = MagicMock(Bind=MagicMock())
     frame.remote_file_list = MagicMock(Bind=MagicMock())
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
@@ -1212,6 +1215,65 @@ def test_connect_toolbar_sftp_without_password_still_connects(app_module):
     assert info.host == "example.com"
     assert info.username == "alice"
     frame._announce.assert_not_called()
+
+
+def test_quick_connect_reveal_remembers_previous_focus(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+    previous = MagicMock()
+    frame.FindFocus = MagicMock(return_value=previous)
+
+    frame._on_quick_connect(None)
+
+    assert frame._focus_before_quick_connect is previous
+
+
+def test_escape_dismisses_quick_connect_bar_while_connected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True)
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    previous = MagicMock(IsShown=MagicMock(return_value=True))
+    frame._focus_before_quick_connect = previous
+    event = MagicMock(GetKeyCode=MagicMock(return_value=app.wx.WXK_ESCAPE))
+
+    frame._on_quick_connect_bar_key(event)
+
+    frame._toolbar_panel.Hide.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    previous.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect cancelled")
+    event.Skip.assert_not_called()
+    assert frame._focus_before_quick_connect is None
+
+
+def test_escape_keeps_quick_connect_bar_while_disconnected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+    event = MagicMock(GetKeyCode=MagicMock(return_value=app.wx.WXK_ESCAPE))
+
+    frame._on_quick_connect_bar_key(event)
+
+    frame._toolbar_panel.Hide.assert_not_called()
+    event.Skip.assert_called_once()
+
+
+def test_dismiss_quick_connect_falls_back_to_local_file_list(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._focus_before_quick_connect = None
+
+    frame._dismiss_quick_connect_bar()
+
+    frame.local_file_list.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect cancelled")
 
 
 def test_do_connect_ignores_repeat_submit_while_connecting(app_module):

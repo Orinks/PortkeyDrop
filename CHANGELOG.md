@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Repeated connect presses while a connection attempt is in progress no longer start duplicate attempts (and duplicate error dialogs). Starting a connection is now announced for screen readers.
 
 ### Changed
+- Pressing Escape in the quick connect bar while connected now hides the bar and returns focus to where you were.
 - Choosing Connect with an empty host, username, or required password now moves focus to the field that needs input and announces it, instead of showing a dead-end error dialog.
 - Quick Connect (Ctrl+N) now focuses the quick connect bar (revealing it while connected) instead of opening a separate dialog with the same fields.
 - Pressing Enter in any quick connect field now starts the connection, matching the old dialog behavior.

@@ -119,6 +119,7 @@ class MainFrame(wx.Frame):
 
         self._client = None
         self._connecting = False
+        self._focus_before_quick_connect: wx.Window | None = None
         self._remote_home = "/"
         self._remote_files: list[RemoteFile] = []
         self._local_files: list[RemoteFile] = []
@@ -515,6 +516,7 @@ class MainFrame(wx.Frame):
 
         # Toolbar connect button
         self.tb_connect_btn.Bind(wx.EVT_BUTTON, self._on_connect_toolbar)
+        self._toolbar_panel.Bind(wx.EVT_CHAR_HOOK, self._on_quick_connect_bar_key)
 
         # File list events - remote
         self.remote_file_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._on_remote_item_activated)
@@ -565,6 +567,8 @@ class MainFrame(wx.Frame):
     def _focus_quick_connect_field(self, field: wx.Window, message: str) -> None:
         """Reveal the quick connect bar and move focus to a field that needs input."""
         if not self._toolbar_panel.IsShown():
+            # Remember where the user was so Esc can take them back.
+            self._focus_before_quick_connect = self.FindFocus()
             self._toolbar_panel.Show()
             self.GetSizer().Layout()
         field.SetFocus()
@@ -609,6 +613,29 @@ class MainFrame(wx.Frame):
     def _on_quick_connect(self, event: wx.CommandEvent) -> None:
         """Route to the quick connect bar so the user can type a new destination."""
         self._focus_quick_connect_field(self.tb_host, "Quick connect bar")
+
+    def _on_quick_connect_bar_key(self, event: wx.KeyEvent) -> None:
+        # Esc dismisses the bar only when it overlays an active connection;
+        # while disconnected it is the primary UI and stays put.
+        if event.GetKeyCode() == wx.WXK_ESCAPE and self._client is not None:
+            self._dismiss_quick_connect_bar()
+            return
+        event.Skip()
+
+    def _dismiss_quick_connect_bar(self) -> None:
+        self._toolbar_panel.Hide()
+        self.GetSizer().Layout()
+        target = self._focus_before_quick_connect
+        self._focus_before_quick_connect = None
+        try:
+            if target is not None and target.IsShown():
+                target.SetFocus()
+            else:
+                self.local_file_list.SetFocus()
+        except RuntimeError:
+            # The remembered control was destroyed in the meantime.
+            self.local_file_list.SetFocus()
+        self._announce("Quick connect cancelled")
 
     def _on_site_manager(self, event: wx.CommandEvent) -> None:
         dlg = SiteManagerDialog(self, self._site_manager)
