@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 ### Changed
+- Choosing Connect with an empty host, username, or required password now moves focus to the field that needs input and announces it, instead of showing a dead-end error dialog.
+- Quick Connect (Ctrl+N) now focuses the quick connect bar (revealing it while connected) instead of opening a separate dialog with the same fields.
+- Pressing Enter in any quick connect field now starts the connection, matching the old dialog behavior.
+- An invalid port in the quick connect bar now focuses the port field with an announcement instead of crashing the connect action.
 - Development builds now report the next 0.5.2 development version after the 0.5.1 hotfix release.
 
 ## [0.5.1] - 2026-05-31

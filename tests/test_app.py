@@ -326,7 +326,7 @@ def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
     frame._on_focus_address_bar(None)
 
     frame.tb_host.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Address bar")
+    frame._announce.assert_called_once_with("Quick connect bar")
 
 
 def test_on_upload_directory_updates_status(app_module):
@@ -1092,24 +1092,149 @@ def test_do_connect_still_requires_ftp_password(app_module):
     create_client.assert_not_called()
 
 
-def test_quick_connect_applies_connection_defaults(app_module):
+def _hydrate_toolbar_fields(frame, *, proto="sftp", host="", port="22", username="", password=""):
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value=proto))
+    frame.tb_host = MagicMock(GetValue=MagicMock(return_value=host))
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value=port))
+    frame.tb_username = MagicMock(GetValue=MagicMock(return_value=username))
+    frame.tb_password = MagicMock(GetValue=MagicMock(return_value=password))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=False))
+
+
+def test_connect_toolbar_empty_host_focuses_host_field(app_module):
     app, fake_wx = app_module
     frame = _hydrate_frame(app_module)
     frame._do_connect = MagicMock()
-    info = app.ConnectionInfo(protocol=app.Protocol.FTP, host="example.com", username="alice")
-    dialog = MagicMock(
-        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
-        get_connection_info=MagicMock(return_value=info),
-        Destroy=MagicMock(),
-    )
+    _hydrate_toolbar_fields(frame, host="   ")
 
-    with patch.object(app, "QuickConnectDialog", return_value=dialog):
-        frame._on_quick_connect(None)
+    frame._on_connect_toolbar(None)
 
-    frame._do_connect.assert_called_once_with(info)
-    assert info.timeout == 45
-    assert info.passive_mode is False
-    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+    frame.tb_host.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a host to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_empty_host_reveals_hidden_quick_connect_bar(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+    _hydrate_toolbar_fields(frame)
+
+    frame._on_connect_toolbar(None)
+
+    frame._toolbar_panel.Show.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    frame.tb_host.SetFocus.assert_called_once()
+
+
+def test_connect_toolbar_empty_username_focuses_username_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_username.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a username to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_ftp_without_password_focuses_password_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, proto="ftp", host="example.com", port="21", username="alice")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_password.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a password to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_non_numeric_port_focuses_port_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="abc")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_port.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a port number between 1 and 65535.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_out_of_range_port_focuses_port_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="70000")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_port.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a port number between 1 and 65535.")
+    frame._do_connect.assert_not_called()
+
+
+def test_connect_toolbar_empty_port_uses_protocol_default(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="")
+
+    frame._on_connect_toolbar(None)
+
+    frame._do_connect.assert_called_once()
+    assert frame._do_connect.call_args.args[0].port == 0
+
+
+def test_connect_toolbar_sftp_without_password_still_connects(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice")
+
+    frame._on_connect_toolbar(None)
+
+    frame._do_connect.assert_called_once()
+    info = frame._do_connect.call_args.args[0]
+    assert info.host == "example.com"
+    assert info.username == "alice"
+    frame._announce.assert_not_called()
+
+
+def test_quick_connect_focuses_host_field(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+
+    frame._on_quick_connect(None)
+
+    frame.tb_host.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect bar")
+
+
+def test_quick_connect_reveals_hidden_bar_while_connected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+
+    frame._on_quick_connect(None)
+
+    frame._toolbar_panel.Show.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    frame.tb_host.SetFocus.assert_called_once()
 
 
 def test_site_manager_connect_applies_connection_defaults(app_module):

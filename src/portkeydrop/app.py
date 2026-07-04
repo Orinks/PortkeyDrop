@@ -16,7 +16,6 @@ import wx
 from portkeydrop import __version__
 from portkeydrop.accessible_list import AccessibleReportList, create_report_list, file_row_text
 from portkeydrop.dialogs.properties import PropertiesDialog
-from portkeydrop.dialogs.quick_connect import QuickConnectDialog
 from portkeydrop.dialogs.settings import SettingsDialog
 from portkeydrop.dialogs.import_connections import ImportConnectionsDialog
 from portkeydrop.dialogs.site_manager import SiteManagerDialog
@@ -238,7 +237,7 @@ class MainFrame(wx.Frame):
         # Sites menu
         sites_menu = wx.Menu()
         sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
-        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect...\tCtrl+N", "Quick connect to server")
+        sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect\tCtrl+N", "Focus the quick connect bar")
         sites_menu.AppendSeparator()
         sites_menu.Append(
             ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
@@ -282,25 +281,29 @@ class MainFrame(wx.Frame):
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         host_lbl = wx.StaticText(toolbar_panel, label="&Host:")
-        self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1))
+        self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1), style=wx.TE_PROCESS_ENTER)
         _bind_label(host_lbl, self.tb_host)
         sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         port_lbl = wx.StaticText(toolbar_panel, label="P&ort:")
-        self.tb_port = wx.TextCtrl(toolbar_panel, value="22", size=(50, -1))
+        self.tb_port = wx.TextCtrl(
+            toolbar_panel, value="22", size=(50, -1), style=wx.TE_PROCESS_ENTER
+        )
         _bind_label(port_lbl, self.tb_port)
         sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         username_lbl = wx.StaticText(toolbar_panel, label="&Username:")
-        self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1))
+        self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PROCESS_ENTER)
         _bind_label(username_lbl, self.tb_username)
         sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         password_lbl = wx.StaticText(toolbar_panel, label="Pass&word:")
-        self.tb_password = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD)
+        self.tb_password = wx.TextCtrl(
+            toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD | wx.TE_PROCESS_ENTER
+        )
         _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
@@ -318,6 +321,10 @@ class MainFrame(wx.Frame):
 
         # Update port on protocol change
         self.tb_protocol.Bind(wx.EVT_CHOICE, self._on_toolbar_protocol_change)
+
+        # Enter in any quick connect field submits, matching form muscle memory.
+        for ctrl in (self.tb_host, self.tb_port, self.tb_username, self.tb_password):
+            ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_connect_toolbar)
 
     def _build_dual_pane(self) -> None:
         pane_container = wx.Panel(self, style=wx.TAB_TRAVERSAL)
@@ -554,15 +561,43 @@ class MainFrame(wx.Frame):
 
     # --- Connection ---
 
+    def _focus_quick_connect_field(self, field: wx.Window, message: str) -> None:
+        """Reveal the quick connect bar and move focus to a field that needs input."""
+        if not self._toolbar_panel.IsShown():
+            self._toolbar_panel.Show()
+            self.GetSizer().Layout()
+        field.SetFocus()
+        # Defer past the focus event so screen readers don't cancel the
+        # message while speaking the newly focused field.
+        wx.CallAfter(self._announce, message)
+
     def _on_connect_toolbar(self, event: wx.CommandEvent) -> None:
         proto_str = self.tb_protocol.GetStringSelection()
+        if not self.tb_host.GetValue().strip():
+            self._focus_quick_connect_field(self.tb_host, "Enter a host to connect.")
+            return
+        if not self.tb_username.GetValue().strip():
+            self._focus_quick_connect_field(self.tb_username, "Enter a username to connect.")
+            return
+        if proto_str in {"ftp", "ftps"} and not self.tb_password.GetValue():
+            self._focus_quick_connect_field(self.tb_password, "Enter a password to connect.")
+            return
         port_str = self.tb_port.GetValue().strip()
+        try:
+            port = int(port_str) if port_str else 0
+        except ValueError:
+            port = -1
+        if port_str and not (1 <= port <= 65535):
+            self._focus_quick_connect_field(
+                self.tb_port, "Enter a port number between 1 and 65535."
+            )
+            return
         info = ConnectionInfo(
             protocol=Protocol(proto_str)
             if proto_str in SUPPORTED_PROTOCOL_VALUES
             else Protocol.SFTP,
             host=self.tb_host.GetValue().strip(),
-            port=int(port_str) if port_str else 0,
+            port=port,
             username=self.tb_username.GetValue().strip(),
             password=self.tb_password.GetValue(),
             ftp_explicit_ssl=bool(self.tb_ftp_ssl.GetValue()) if proto_str == "ftp" else False,
@@ -571,14 +606,8 @@ class MainFrame(wx.Frame):
         self._do_connect(info)
 
     def _on_quick_connect(self, event: wx.CommandEvent) -> None:
-        dlg = QuickConnectDialog(self)
-        info = None
-        if dlg.ShowModal() == wx.ID_OK:
-            info = dlg.get_connection_info()
-            self._apply_connection_defaults(info)
-        dlg.Destroy()
-        if info:
-            self._do_connect(info)
+        """Route to the quick connect bar so the user can type a new destination."""
+        self._focus_quick_connect_field(self.tb_host, "Quick connect bar")
 
     def _on_site_manager(self, event: wx.CommandEvent) -> None:
         dlg = SiteManagerDialog(self, self._site_manager)
@@ -881,7 +910,7 @@ class MainFrame(wx.Frame):
     def _on_focus_address_bar(self, event: wx.CommandEvent) -> None:
         if self._toolbar_panel.IsShown():
             self.tb_host.SetFocus()
-            self._announce("Address bar")
+            self._announce("Quick connect bar")
         else:
             # When connected the toolbar is hidden; route to whichever path bar
             # matches the currently active pane so the user can edit the path
