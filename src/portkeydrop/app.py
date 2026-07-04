@@ -172,7 +172,6 @@ class MainFrame(wx.Frame):
 
         # File menu
         file_menu = wx.Menu()
-        file_menu.Append(ID_CONNECT, "&Connect\tCtrl+Enter", "Connect to server")
         file_menu.Append(ID_DISCONNECT, "&Disconnect", "Disconnect from server")
         file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
@@ -536,6 +535,8 @@ class MainFrame(wx.Frame):
         # Global accelerators for pane navigation and toolbar focus
         entries = [
             wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F6, ID_SWITCH_PANE_FOCUS),
+            # Connect no longer has a menu item; keep Ctrl+Enter for muscle memory.
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, wx.WXK_RETURN, ID_CONNECT),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("T"), ID_TRANSFER),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("U"), ID_UPLOAD),
             wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("D"), ID_DOWNLOAD),

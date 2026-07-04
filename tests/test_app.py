@@ -192,6 +192,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
         app.ID_SWITCH_PANE_FOCUS,
     ) in table_entries
     assert (fake_wx.ACCEL_CTRL, ord("L"), app.ID_FOCUS_ADDRESS_BAR) in table_entries
+    assert (fake_wx.ACCEL_CTRL, fake_wx.WXK_RETURN, app.ID_CONNECT) in table_entries
 
 
 def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
