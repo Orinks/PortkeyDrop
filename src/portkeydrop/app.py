@@ -76,6 +76,44 @@ ID_CONNECT = wx.NewIdRef()
 ID_DISCONNECT = wx.NewIdRef()
 ID_SITE_MANAGER = wx.NewIdRef()
 ID_QUICK_CONNECT = wx.NewIdRef()
+ID_KEYBOARD_SHORTCUTS = wx.NewIdRef()
+
+KEYBOARD_SHORTCUTS_TEXT = """\
+Connection
+  Ctrl+N          Focus the quick connect bar
+  Enter           Connect (from any quick connect field)
+  Ctrl+Enter      Connect using the quick connect bar (from anywhere)
+  Escape          Hide the quick connect bar (while connected)
+
+Navigation
+  F6              Cycle between panes (local, remote, activity log)
+  Ctrl+1          Focus local files
+  Ctrl+2          Focus remote files
+  Ctrl+3          Focus activity log
+  Ctrl+L          Focus the quick connect bar or path bar
+  Enter           Open selected directory
+  Backspace       Go to parent directory
+  Ctrl+H          Go to home directory
+
+Transfers
+  Ctrl+T          Transfer selection (upload from local, download from remote)
+  Ctrl+U          Upload selected local items
+  Ctrl+D          Download selected remote items
+  Ctrl+V          Paste files from clipboard into the focused pane
+  Ctrl+Shift+T    Show transfer queue
+
+File operations (in a file pane)
+  Delete          Delete selected
+  F2              Rename selected
+  Ctrl+Shift+N    New directory
+  Ctrl+I          File properties
+  Ctrl+R          Refresh
+  Ctrl+F          Filter file list
+  Shift+F10       Context menu
+
+Sites
+  Ctrl+S          Site Manager
+"""
 ID_UPLOAD = wx.NewIdRef()
 ID_DOWNLOAD = wx.NewIdRef()
 ID_REFRESH = wx.NewIdRef()
@@ -145,6 +183,14 @@ class MainFrame(wx.Frame):
         self._last_failed_transfer: str | None = None
         self._exit_sound_played = False
         self._announcer = ScreenReaderAnnouncer()
+        if not self._announcer.is_available():
+            # Deferred so the activity log exists when this runs.
+            wx.CallAfter(
+                self.log_event,
+                "Speech output is unavailable; announcements will appear in the "
+                "status bar and this log only. Install the 'prismatoid' package "
+                "to enable speech.",
+            )
         self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
         audio_settings = getattr(self._settings, "audio", None)
         self._sound_player = SoundPlayer(
@@ -183,18 +229,21 @@ class MainFrame(wx.Frame):
 
         # Edit menu (for file operations)
         edit_menu = wx.Menu()
-        edit_menu.Append(ID_DELETE, "De&lete\tDelete", "Delete selected file")
-        edit_menu.Append(ID_RENAME, "&Rename\tF2", "Rename selected file")
-        edit_menu.Append(ID_MKDIR, "&New Directory...\tCtrl+Shift+N", "Create new directory")
+        # No \tDelete / \tF2 here: menubar accelerators are frame-wide on
+        # Windows and would hijack those keys inside every text field. The
+        # file lists handle Delete and F2 themselves via EVT_KEY_DOWN.
+        edit_menu.Append(ID_DELETE, "De&lete", "Delete selected file (Delete key in a file pane)")
+        edit_menu.Append(ID_RENAME, "&Rename", "Rename selected file (F2 in a file pane)")
+        edit_menu.Append(ID_MKDIR, "Ne&w Directory...\tCtrl+Shift+N", "Create new directory")
         edit_menu.AppendSeparator()
-        edit_menu.Append(ID_PROPERTIES, "P&roperties...\tCtrl+I", "File properties")
+        edit_menu.Append(ID_PROPERTIES, "Propert&ies...\tCtrl+I", "File properties")
         menubar.Append(edit_menu, "&Edit")
 
         # View menu
         view_menu = wx.Menu()
         view_menu.Append(ID_REFRESH, "&Refresh\tCtrl+R", "Refresh file list")
         view_menu.Append(ID_HOME_DIR, "&Home Directory\tCtrl+H", "Go to home directory")
-        view_menu.AppendCheckItem(ID_SHOW_HIDDEN, "Show &Hidden Files", "Toggle hidden files")
+        view_menu.AppendCheckItem(ID_SHOW_HIDDEN, "Show Hi&dden Files", "Toggle hidden files")
         view_menu.Check(ID_SHOW_HIDDEN, self._settings.display.show_hidden_files)
         view_menu.AppendSeparator()
         sort_menu = wx.Menu()
@@ -258,6 +307,9 @@ class MainFrame(wx.Frame):
             f"Check for &Updates ({channel.title()})...",
             "Check for application updates",
         )
+        help_menu.Append(
+            ID_KEYBOARD_SHORTCUTS, "&Keyboard Shortcuts...", "List all keyboard shortcuts"
+        )
         help_menu.AppendSeparator()
         help_menu.Append(wx.ID_ABOUT, "&About", "About Portkey Drop")
         menubar.Append(help_menu, "&Help")
@@ -281,35 +333,42 @@ class MainFrame(wx.Frame):
         sizer.Add(self.tb_protocol, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         host_lbl = wx.StaticText(toolbar_panel, label="&Host:")
-        self.tb_host = wx.TextCtrl(toolbar_panel, size=(150, -1), style=wx.TE_PROCESS_ENTER)
+        self.tb_host = wx.TextCtrl(
+            toolbar_panel, size=self.FromDIP(wx.Size(150, -1)), style=wx.TE_PROCESS_ENTER
+        )
         _bind_label(host_lbl, self.tb_host)
         sizer.Add(host_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_host, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         port_lbl = wx.StaticText(toolbar_panel, label="P&ort:")
         self.tb_port = wx.TextCtrl(
-            toolbar_panel, value="22", size=(50, -1), style=wx.TE_PROCESS_ENTER
+            toolbar_panel, value="22", size=self.FromDIP(wx.Size(50, -1)), style=wx.TE_PROCESS_ENTER
         )
         _bind_label(port_lbl, self.tb_port)
         sizer.Add(port_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_port, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         username_lbl = wx.StaticText(toolbar_panel, label="&Username:")
-        self.tb_username = wx.TextCtrl(toolbar_panel, size=(100, -1), style=wx.TE_PROCESS_ENTER)
+        self.tb_username = wx.TextCtrl(
+            toolbar_panel, size=self.FromDIP(wx.Size(100, -1)), style=wx.TE_PROCESS_ENTER
+        )
         _bind_label(username_lbl, self.tb_username)
         sizer.Add(username_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_username, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         password_lbl = wx.StaticText(toolbar_panel, label="Pass&word:")
         self.tb_password = wx.TextCtrl(
-            toolbar_panel, size=(100, -1), style=wx.TE_PASSWORD | wx.TE_PROCESS_ENTER
+            toolbar_panel,
+            size=self.FromDIP(wx.Size(100, -1)),
+            style=wx.TE_PASSWORD | wx.TE_PROCESS_ENTER,
         )
         _bind_label(password_lbl, self.tb_password)
         sizer.Add(password_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(self.tb_password, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 4)
 
         self.tb_ftp_ssl = wx.CheckBox(toolbar_panel, label="Use SSL (AUTH SSL)")
-        self.tb_ftp_ssl.SetName("Use SSL with FTP")
+        # Accessible name must start with the visible label for voice control.
+        self.tb_ftp_ssl.SetName("Use SSL (AUTH SSL) with FTP")
         self.tb_ftp_ssl.Enable(False)
         sizer.Add(self.tb_ftp_ssl, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
 
@@ -344,13 +403,14 @@ class MainFrame(wx.Frame):
 
         # StaticText immediately before the list so NVDA associates "Local files"
         # as the accessible name via HWND sibling order.
-        local_list_label = wx.StaticText(local_panel, label="Local:")
-        local_sizer.Add(local_list_label, 0, wx.LEFT, 4)
+        self._local_list_label = wx.StaticText(local_panel, label="Local files:")
+        local_sizer.Add(self._local_list_label, 0, wx.LEFT, 4)
 
         self.local_file_list = create_report_list(
             local_panel,
             style=wx.LC_REPORT,
             row_formatter=file_row_text,
+            name="Local files",
         )
         self.local_file_list.InsertColumn(0, "Name", width=200)
         self.local_file_list.InsertColumn(1, "Size", width=80)
@@ -373,13 +433,14 @@ class MainFrame(wx.Frame):
 
         # StaticText immediately before the list so NVDA associates "Remote files"
         # as the accessible name via HWND sibling order.
-        remote_list_label = wx.StaticText(remote_panel, label="Remote:")
-        remote_sizer.Add(remote_list_label, 0, wx.LEFT, 4)
+        self._remote_list_label = wx.StaticText(remote_panel, label="Remote files:")
+        remote_sizer.Add(self._remote_list_label, 0, wx.LEFT, 4)
 
         self.remote_file_list = create_report_list(
             remote_panel,
             style=wx.LC_REPORT,
             row_formatter=file_row_text,
+            name="Remote files",
         )
         self.remote_file_list.InsertColumn(0, "Name", width=200)
         self.remote_file_list.InsertColumn(1, "Size", width=80)
@@ -451,6 +512,13 @@ class MainFrame(wx.Frame):
         except Exception:
             logger.debug("Failed to set initial focus", exc_info=True)
 
+    def focus_default_pane(self) -> None:
+        """Move keyboard focus to a concrete control after a window restore."""
+        try:
+            self.local_file_list.SetFocus()
+        except Exception:
+            logger.debug("Failed to focus default pane", exc_info=True)
+
     def _is_local_focused(self) -> bool:
         """Return True if the local pane currently has focus."""
         return self._is_list_focused(self.local_file_list)
@@ -510,6 +578,7 @@ class MainFrame(wx.Frame):
             self._on_focus_activity_log_pane,
             id=ID_FOCUS_ACTIVITY_LOG_PANE,
         )
+        self.Bind(wx.EVT_MENU, self._on_keyboard_shortcuts, id=ID_KEYBOARD_SHORTCUTS)
         self.Bind(wx.EVT_MENU, self._on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(get_transfer_event_binder(), self._on_transfer_update)
@@ -557,10 +626,20 @@ class MainFrame(wx.Frame):
             "ftps": "990",
             "webdav": "443",
         }
-        self.tb_port.SetValue(defaults.get(proto, "22"))
+        previous_default = defaults.get(getattr(self, "_tb_last_protocol", "sftp"), "22")
+        self._tb_last_protocol = proto
+        new_default = defaults.get(proto, "22")
+        current_port = self.tb_port.GetValue().strip()
+        # A hand-typed custom port survives a protocol switch; only defaults
+        # follow the protocol, and the rewrite is announced.
+        if not current_port or current_port == previous_default:
+            self.tb_port.SetValue(new_default)
+            if current_port != new_default:
+                wx.CallAfter(self._announce, f"Port set to {new_default}")
         self.tb_ftp_ssl.Enable(proto == "ftp")
-        if proto != "ftp":
+        if proto != "ftp" and self.tb_ftp_ssl.GetValue():
             self.tb_ftp_ssl.SetValue(False)
+            wx.CallAfter(self._announce, "Use SSL turned off")
 
     # --- Connection ---
 
@@ -977,6 +1056,8 @@ class MainFrame(wx.Frame):
 
     def _on_remote_files_loaded(self, files: list[RemoteFile], cwd: str) -> None:
         restore_focus = self._is_remote_focused()
+        same_dir = getattr(self, "_remote_populated_cwd", None) == cwd
+        name, index = self._capture_list_position(self.remote_file_list) if same_dir else (None, 0)
         self._apply_sort(files)
         # Insert ".." entry at the top to navigate to parent
         if cwd != "/":
@@ -988,18 +1069,22 @@ class MainFrame(wx.Frame):
             self.remote_file_list,
             self._get_visible_files(self._remote_files, self._remote_filter_text),
         )
+        self._remote_populated_cwd = cwd
         self._update_status("Connected", cwd)
         self.remote_path_bar.SetValue(cwd)
         self._update_title()
-        # Select first item so screen readers announce the new directory
-        if self.remote_file_list.GetItemCount() > 0:
-            self.remote_file_list.Select(0)
-            self.remote_file_list.Focus(0)
+        count = self.remote_file_list.GetItemCount()
+        if count > 0:
+            # A background refresh keeps the user's row; entering a new
+            # directory selects the top so screen readers announce it.
+            self._restore_list_position(self.remote_file_list, name, index)
             if restore_focus:
                 self.remote_file_list.SetFocus()
-        count = len(self._get_visible_files(self._remote_files, self._remote_filter_text))
-        if self._settings.display.announce_file_count:
-            self._status(f"{cwd}: {count} items")
+        elif not same_dir or restore_focus:
+            wx.CallAfter(self._announce, "Empty folder")
+        if not same_dir and count > 0 and self._settings.display.announce_file_count:
+            wx.CallAfter(self._announce, f"{count} item{'s' if count != 1 else ''}")
+        self._status(f"{cwd}: {count} items")
 
     def _on_remote_files_error(self, e: Exception, cwd: str) -> None:
         if isinstance(e, PermissionError):
@@ -1012,6 +1097,8 @@ class MainFrame(wx.Frame):
 
     def _refresh_local_files(self) -> None:
         restore_focus = self._is_local_focused()
+        same_dir = getattr(self, "_local_populated_cwd", None) == self._local_cwd
+        name, index = self._capture_list_position(self.local_file_list) if same_dir else (None, 0)
         try:
             self._local_files = list_local_dir(self._local_cwd)
             self._apply_sort(self._local_files)
@@ -1024,16 +1111,20 @@ class MainFrame(wx.Frame):
                 self.local_file_list,
                 self._get_visible_files(self._local_files, self._local_filter_text),
             )
+            self._local_populated_cwd = self._local_cwd
             self.local_path_bar.SetValue(self._local_cwd)
-            # Select first item so screen readers announce the new directory
-            if self.local_file_list.GetItemCount() > 0:
-                self.local_file_list.Select(0)
-                self.local_file_list.Focus(0)
+            count = self.local_file_list.GetItemCount()
+            if count > 0:
+                # A background refresh keeps the user's row; entering a new
+                # directory selects the top so screen readers announce it.
+                self._restore_list_position(self.local_file_list, name, index)
                 if restore_focus:
                     self.local_file_list.SetFocus()
-            count = len(self._get_visible_files(self._local_files, self._local_filter_text))
-            if self._settings.display.announce_file_count:
-                self._status(f"{self._local_cwd}: {count} items")
+            elif not same_dir or restore_focus:
+                wx.CallAfter(self._announce, "Empty folder")
+            if not same_dir and count > 0 and self._settings.display.announce_file_count:
+                wx.CallAfter(self._announce, f"{count} item{'s' if count != 1 else ''}")
+            self._status(f"{self._local_cwd}: {count} items")
         except Exception as e:
             wx.MessageBox(
                 f"Failed to list local directory: {e}", "Error", wx.OK | wx.ICON_ERROR, self
@@ -1069,6 +1160,41 @@ class MainFrame(wx.Frame):
         key_fn = key_map.get(self._settings.display.sort_by, key_map["name"])
         files.sort(key=key_fn, reverse=not self._settings.display.sort_ascending)
 
+    def _capture_list_position(self, list_ctrl: AccessibleReportList) -> tuple[str | None, int]:
+        """Remember the focused row (name, index) before a repopulation."""
+        index = list_ctrl.GetFocusedItem()
+        if index == wx.NOT_FOUND:
+            index = list_ctrl.GetFirstSelected()
+        if index == wx.NOT_FOUND or index >= list_ctrl.GetItemCount():
+            return None, 0
+        return list_ctrl.GetItemText(index), index
+
+    def _restore_list_position(
+        self, list_ctrl: AccessibleReportList, name: str | None, index: int
+    ) -> None:
+        """Re-select the row named `name`, or the nearest surviving neighbour."""
+        count = list_ctrl.GetItemCount()
+        if count == 0:
+            return
+        target = None
+        if name is not None:
+            for i in range(count):
+                if list_ctrl.GetItemText(i) == name:
+                    target = i
+                    break
+        if target is None:
+            target = min(max(index, 0), count - 1)
+        list_ctrl.Select(target)
+        list_ctrl.Focus(target)
+
+    def _repopulate_preserving_position(
+        self, list_ctrl: AccessibleReportList, files: list[RemoteFile]
+    ) -> None:
+        """Repopulate a list without losing the user's current row."""
+        name, index = self._capture_list_position(list_ctrl)
+        self._populate_file_list(list_ctrl, files)
+        self._restore_list_position(list_ctrl, name, index)
+
     def _populate_file_list(self, list_ctrl: AccessibleReportList, files: list[RemoteFile]) -> None:
         list_ctrl.DeleteAllItems()
         for f in files:
@@ -1080,11 +1206,11 @@ class MainFrame(wx.Frame):
 
     def _on_toggle_hidden(self, event: wx.CommandEvent) -> None:
         self._settings.display.show_hidden_files = event.IsChecked()
-        self._populate_file_list(
+        self._repopulate_preserving_position(
             self.remote_file_list,
             self._get_visible_files(self._remote_files, self._remote_filter_text),
         )
-        self._populate_file_list(
+        self._repopulate_preserving_position(
             self.local_file_list,
             self._get_visible_files(self._local_files, self._local_filter_text),
         )
@@ -1093,11 +1219,11 @@ class MainFrame(wx.Frame):
         self._settings.display.sort_by = field
         self._apply_sort(self._remote_files)
         self._apply_sort(self._local_files)
-        self._populate_file_list(
+        self._repopulate_preserving_position(
             self.remote_file_list,
             self._get_visible_files(self._remote_files, self._remote_filter_text),
         )
-        self._populate_file_list(
+        self._repopulate_preserving_position(
             self.local_file_list,
             self._get_visible_files(self._local_files, self._local_filter_text),
         )
@@ -1112,6 +1238,12 @@ class MainFrame(wx.Frame):
                     self.local_file_list,
                     self._get_visible_files(self._local_files, self._local_filter_text),
                 )
+                self._report_filter_result(
+                    self.local_file_list,
+                    self._local_list_label,
+                    "Local files",
+                    self._local_filter_text,
+                )
             dlg.Destroy()
         else:
             dlg = wx.TextEntryDialog(
@@ -1124,7 +1256,35 @@ class MainFrame(wx.Frame):
                     self.remote_file_list,
                     self._get_visible_files(self._remote_files, self._remote_filter_text),
                 )
+                self._report_filter_result(
+                    self.remote_file_list,
+                    self._remote_list_label,
+                    "Remote files",
+                    self._remote_filter_text,
+                )
             dlg.Destroy()
+
+    def _report_filter_result(
+        self,
+        list_ctrl: AccessibleReportList,
+        label: wx.StaticText,
+        pane_name: str,
+        filter_text: str,
+    ) -> None:
+        """Announce filter results and mark the pane label while a filter is active."""
+        count = list_ctrl.GetItemCount()
+        if filter_text:
+            label.SetLabel(f"{pane_name} (filtered):")
+            if count:
+                message = f"Filter '{filter_text}': {count} item{'s' if count != 1 else ''}"
+            else:
+                message = f"No items match filter '{filter_text}'"
+        else:
+            label.SetLabel(f"{pane_name}:")
+            message = "Filter cleared"
+        if count:
+            self._restore_list_position(list_ctrl, None, 0)
+        wx.CallAfter(self._announce, message)
 
     # --- Selection helpers ---
 
@@ -1205,6 +1365,7 @@ class MainFrame(wx.Frame):
                         f"Failed to open directory: {e}",
                         "Error",
                         wx.OK | wx.ICON_ERROR,
+                        self,
                     )
 
             threading.Thread(target=_chdir_worker, daemon=True).start()
@@ -1309,7 +1470,7 @@ class MainFrame(wx.Frame):
         if not f or f.name == "..":
             item.Enable(False)
 
-        item = menu.Append(wx.ID_ANY, "&New Directory\tCtrl+Shift+N")
+        item = menu.Append(wx.ID_ANY, "Ne&w Directory\tCtrl+Shift+N")
         self.Bind(wx.EVT_MENU, self._on_mkdir, item)
 
         menu.AppendSeparator()
@@ -1317,13 +1478,34 @@ class MainFrame(wx.Frame):
         item = menu.Append(wx.ID_ANY, "&Refresh\tCtrl+R")
         self.Bind(wx.EVT_MENU, self._on_refresh, item)
 
-        item = menu.Append(wx.ID_ANY, "P&roperties\tCtrl+I")
+        item = menu.Append(wx.ID_ANY, "Propert&ies\tCtrl+I")
         self.Bind(wx.EVT_MENU, self._on_properties, item)
         if not f or f.name == "..":
             item.Enable(False)
 
-        self.PopupMenu(menu)
+        self._popup_list_menu(self.remote_file_list, menu, event)
         menu.Destroy()
+
+    def _popup_list_menu(
+        self, list_ctrl: AccessibleReportList, menu: wx.Menu, event: wx.ContextMenuEvent
+    ) -> None:
+        """Pop a context menu at the focused row for keyboard invocations."""
+        window = getattr(list_ctrl, "window", list_ctrl)
+        position = event.GetPosition() if event is not None else wx.DefaultPosition
+        if position == wx.DefaultPosition:
+            # Applications key / Shift+F10: anchor to the focused row so
+            # magnifier users aren't sent chasing the mouse pointer.
+            anchor = wx.Point(0, 0)
+            row = list_ctrl.GetFocusedItem()
+            if row != wx.NOT_FOUND and hasattr(window, "GetItemRect"):
+                try:
+                    rect = window.GetItemRect(row)
+                    anchor = wx.Point(rect.x + rect.width // 2, rect.y + rect.height // 2)
+                except Exception:
+                    logger.debug("Could not anchor context menu to row", exc_info=True)
+            window.PopupMenu(menu, anchor)
+        else:
+            self.PopupMenu(menu)
 
     def _on_local_context_menu(self, event: wx.ContextMenuEvent) -> None:
         """Show context menu for the local file list."""
@@ -1358,7 +1540,7 @@ class MainFrame(wx.Frame):
         if not f or f.name == "..":
             item.Enable(False)
 
-        item = menu.Append(wx.ID_ANY, "&New Directory\tCtrl+Shift+N")
+        item = menu.Append(wx.ID_ANY, "Ne&w Directory\tCtrl+Shift+N")
         self.Bind(wx.EVT_MENU, self._on_mkdir, item)
 
         menu.AppendSeparator()
@@ -1366,12 +1548,12 @@ class MainFrame(wx.Frame):
         item = menu.Append(wx.ID_ANY, "&Refresh\tCtrl+R")
         self.Bind(wx.EVT_MENU, self._on_refresh, item)
 
-        item = menu.Append(wx.ID_ANY, "P&roperties\tCtrl+I")
+        item = menu.Append(wx.ID_ANY, "Propert&ies\tCtrl+I")
         self.Bind(wx.EVT_MENU, self._on_properties, item)
         if not f or f.name == "..":
             item.Enable(False)
 
-        self.PopupMenu(menu)
+        self._popup_list_menu(self.local_file_list, menu, event)
         menu.Destroy()
 
     def _go_remote_parent_dir(self) -> None:
@@ -1397,13 +1579,18 @@ class MainFrame(wx.Frame):
 
     def _on_transfer(self, event) -> None:
         """Context-aware transfer: upload from local pane, download from remote pane."""
-        if self._is_local_focused():
+        target = self._get_focused_file_list()
+        if target is None:
+            self._announce("Focus a file pane first")
+            return
+        if target is self.local_file_list:
             self._on_upload(None)
         else:
             self._on_download(None)
 
     def _on_download(self, event) -> None:
         if not self._client:
+            self._announce("Not connected")
             return
         try:
             selected_files = self._get_selected_remote_files()
@@ -1412,6 +1599,10 @@ class MainFrame(wx.Frame):
         if not selected_files:
             f = self._get_selected_remote_file()
             selected_files = [f] if f else []
+        selected_files = [f for f in selected_files if f.name != ".."]
+        if not selected_files:
+            self._announce("Nothing selected to download")
+            return
         batch_mode = len(selected_files) > 1
         queued = 0
         for f in selected_files:
@@ -1454,6 +1645,7 @@ class MainFrame(wx.Frame):
 
     def _on_upload(self, event) -> None:
         if not self._client or not self._client.connected:
+            self._announce("Not connected")
             return
         try:
             selected_files = self._get_selected_local_files()
@@ -1462,11 +1654,13 @@ class MainFrame(wx.Frame):
         if not selected_files:
             f = self._get_selected_local_file()
             selected_files = [f] if f else []
+        selected_files = [f for f in selected_files if f.name != ".."]
+        if not selected_files:
+            self._announce("Nothing selected to upload")
+            return
         batch_mode = len(selected_files) > 1
         queued = 0
         for f in selected_files:
-            if f.name == "..":
-                continue
             if self._queue_upload(f, batch_mode=batch_mode):
                 queued += 1
         if queued:
@@ -1702,7 +1896,13 @@ class MainFrame(wx.Frame):
     # --- File operations (context-aware) ---
 
     def _on_delete(self, event) -> None:
-        if self._is_local_focused():
+        # Never guess the pane: acting on the remote list while the user is in
+        # a text field could destroy a server file they never touched.
+        target = self._get_focused_file_list()
+        if target is None:
+            self._announce("Focus a file pane first")
+            return
+        if target is self.local_file_list:
             self._delete_local()
         else:
             self._delete_remote()
@@ -1748,7 +1948,11 @@ class MainFrame(wx.Frame):
                 wx.MessageBox(f"Delete failed: {e}", "Error", wx.OK | wx.ICON_ERROR, self)
 
     def _on_rename(self, event) -> None:
-        if self._is_local_focused():
+        target = self._get_focused_file_list()
+        if target is None:
+            self._announce("Focus a file pane first")
+            return
+        if target is self.local_file_list:
             self._rename_local()
         else:
             self._rename_remote()
@@ -1797,7 +2001,11 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def _on_mkdir(self, event: wx.CommandEvent) -> None:
-        if self._is_local_focused():
+        target = self._get_focused_file_list()
+        if target is None:
+            self._announce("Focus a file pane first")
+            return
+        if target is self.local_file_list:
             self._mkdir_local()
         else:
             self._mkdir_remote()
@@ -2224,19 +2432,31 @@ class MainFrame(wx.Frame):
                 style=progress_style,
             )
 
+        cancel_requested = threading.Event()
+
+        class _DownloadCancelled(Exception):
+            pass
+
         def do_download() -> None:
             try:
                 dest_dir = Path(tempfile.gettempdir())
 
                 def progress_callback(downloaded: int, total: int) -> None:
+                    if cancel_requested.is_set():
+                        raise _DownloadCancelled()
                     if not progress_dlg or total <= 0:
                         return
                     percent = int((downloaded / total) * 100)
-                    wx.CallAfter(
-                        progress_dlg.Update,
-                        percent,
-                        f"Downloading... {downloaded // 1024} / {total // 1024} KB",
-                    )
+
+                    def update_ui() -> None:
+                        keep_going, _skip = progress_dlg.Update(
+                            percent,
+                            f"Downloading... {downloaded // 1024} / {total // 1024} KB",
+                        )
+                        if not keep_going:
+                            cancel_requested.set()
+
+                    wx.CallAfter(update_ui)
 
                 service = UpdateService("PortkeyDrop")
                 update_path = service.download_update(
@@ -2268,6 +2488,11 @@ class MainFrame(wx.Frame):
 
                 wx.CallAfter(confirm_apply)
 
+            except _DownloadCancelled:
+                logger.info("Update download cancelled by user")
+                if progress_dlg:
+                    wx.CallAfter(progress_dlg.Destroy)
+                wx.CallAfter(self._announce, "Update download cancelled")
             except ChecksumVerificationError as exc:
                 logger.error("Update checksum verification failed: %s", exc)
                 if progress_dlg:
@@ -2358,6 +2583,29 @@ class MainFrame(wx.Frame):
         if event is not None and hasattr(event, "Skip"):
             event.Skip()
 
+    def _on_keyboard_shortcuts(self, event: wx.CommandEvent) -> None:
+        """Show a read-only, screen-reader-friendly list of all shortcuts."""
+        dlg = wx.Dialog(
+            self,
+            title="Keyboard Shortcuts",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        text = wx.TextCtrl(
+            dlg,
+            value=KEYBOARD_SHORTCUTS_TEXT,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
+        )
+        text.SetName("Keyboard shortcuts")
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(text, 1, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(dlg.CreateStdDialogButtonSizer(wx.OK), 0, wx.EXPAND | wx.ALL, 8)
+        dlg.SetSizer(sizer)
+        dlg.SetSize(dlg.FromDIP(wx.Size(520, 440)))
+        text.SetFocus()
+        text.SetInsertionPoint(0)
+        dlg.ShowModal()
+        dlg.Destroy()
+
     def _on_about(self, event: wx.CommandEvent) -> None:
         info = wx.adv.AboutDialogInfo()
         info.SetName("Portkey Drop")
@@ -2373,7 +2621,13 @@ class MainFrame(wx.Frame):
         """Append a timestamped entry to the activity log and announce it."""
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {message}\n"
-        self.activity_log.AppendText(entry)
+        if self.FindFocus() is self.activity_log:
+            # Don't yank the review cursor while the user is reading the log.
+            position = self.activity_log.GetInsertionPoint()
+            self.activity_log.AppendText(entry)
+            self.activity_log.SetInsertionPoint(position)
+        else:
+            self.activity_log.AppendText(entry)
         self._announce(message)
 
     def _announce(self, message: str) -> None:

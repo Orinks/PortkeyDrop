@@ -29,6 +29,12 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
         self.Bind(wx.adv.EVT_TASKBAR_LEFT_DOWN, self._on_left_click)
         self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self._on_left_click)
         self.Bind(wx.adv.EVT_TASKBAR_RIGHT_DOWN, self._on_right_click)
+        # Keyboard activation (Win+B then Enter) surfaces as different events
+        # depending on the wx version; bind the extras when they exist.
+        for extra_event in ("EVT_TASKBAR_LEFT_UP", "EVT_TASKBAR_CLICK"):
+            binder = getattr(wx.adv, extra_event, None)
+            if binder is not None:
+                self.Bind(binder, self._on_left_click)
 
     def _setup_icon(self) -> None:
         icon = self._load_icon()
@@ -131,7 +137,9 @@ class SystemTrayIcon(wx.adv.TaskBarIcon):
             self.frame.RequestUserAttention()
         else:
             self.frame.Raise()
-            self.frame.SetFocus()
+        # Land on a concrete control; focusing the bare frame leaves keyboard
+        # and screen reader users stranded on the window title.
+        self.frame.focus_default_pane()
 
     def update_tooltip(self, text: str) -> None:
         if self._icon_set and self._cached_icon is not None and self._cached_icon.IsOk():

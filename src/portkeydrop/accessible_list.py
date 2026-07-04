@@ -60,6 +60,7 @@ class AccessibleReportList:
         *,
         style: int = 0,
         row_formatter: RowFormatter | None = None,
+        name: str | None = None,
     ) -> None:
         self._headers: list[str] = []
         self._rows: list[list[str]] = []
@@ -73,7 +74,12 @@ class AccessibleReportList:
             self._ctrl = self._wx.ListBox(parent, style=listbox_style)
         else:
             self._ctrl = self._wx.ListCtrl(parent, style=style)
-            for name in (
+        if name:
+            # Explicit accessible name; on macOS this is the only name
+            # VoiceOver gets (the NVDA label-sibling trick does not apply).
+            self._ctrl.SetName(name)
+        if not self._is_listbox:
+            for method_name in (
                 "Bind",
                 "DeleteAllItems",
                 "DeleteItem",
@@ -89,7 +95,7 @@ class AccessibleReportList:
                 "SetFocus",
                 "SetItem",
             ):
-                setattr(self, name, getattr(self._ctrl, name))
+                setattr(self, method_name, getattr(self._ctrl, method_name))
 
     @property
     def window(self) -> Any:
@@ -259,5 +265,6 @@ def create_report_list(
     *,
     style: int = 0,
     row_formatter: RowFormatter | None = None,
+    name: str | None = None,
 ) -> AccessibleReportList:
-    return AccessibleReportList(parent, style=style, row_formatter=row_formatter)
+    return AccessibleReportList(parent, style=style, row_formatter=row_formatter, name=name)

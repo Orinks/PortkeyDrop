@@ -482,7 +482,7 @@ def test_on_upload_empty_selection_does_not_enqueue(app_module):
     frame._on_upload(None)
 
     frame._transfer_service.submit_upload.assert_not_called()
-    frame._announce.assert_not_called()
+    frame._announce.assert_called_once_with("Nothing selected to upload")
     frame._show_transfer_queue.assert_not_called()
 
 
@@ -497,7 +497,7 @@ def test_on_download_empty_selection_does_not_enqueue(app_module):
     frame._on_download(None)
 
     frame._transfer_service.submit_download.assert_not_called()
-    frame._announce.assert_not_called()
+    frame._announce.assert_called_once_with("Nothing selected to download")
     frame._show_transfer_queue.assert_not_called()
 
 
@@ -1036,14 +1036,29 @@ def test_toolbar_protocol_change_uses_webdav_default_port(app_module):
     _app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="webdav"))
-    frame.tb_port = MagicMock()
-    frame.tb_ftp_ssl = MagicMock()
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value="22"))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=True))
 
     frame._on_toolbar_protocol_change(None)
 
     frame.tb_port.SetValue.assert_called_once_with("443")
     frame.tb_ftp_ssl.Enable.assert_called_once_with(False)
     frame.tb_ftp_ssl.SetValue.assert_called_once_with(False)
+    frame._announce.assert_any_call("Port set to 443")
+    frame._announce.assert_any_call("Use SSL turned off")
+
+
+def test_toolbar_protocol_change_keeps_custom_port(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="ftp"))
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value="2222"))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=False))
+
+    frame._on_toolbar_protocol_change(None)
+
+    frame.tb_port.SetValue.assert_not_called()
+    frame.tb_ftp_ssl.SetValue.assert_not_called()
 
 
 def test_effective_site_port_uses_webdav_default(app_module):
@@ -1637,6 +1652,7 @@ def test_build_toolbar_adds_mnemonics_and_label_associations(app_module):
             self._label_for = control
 
     frame = object.__new__(app.MainFrame)
+    frame.FromDIP = lambda size: size
     with patch.object(fake_wx, "StaticText", side_effect=_Label):
         app.MainFrame._build_toolbar(frame)
 
@@ -1849,7 +1865,7 @@ def test_on_remote_files_loaded_announces_count(app_module):
     frame._remote_filter_text = ""
     frame._settings = MagicMock()
     frame._settings.display.announce_file_count = True
-    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=1))
     frame.remote_path_bar = MagicMock()
     frame._update_title = MagicMock()
     frame._apply_sort = MagicMock()
@@ -1862,6 +1878,65 @@ def test_on_remote_files_loaded_announces_count(app_module):
 
     frame._status.assert_called_once()
     assert "/home/user" in frame._status.call_args[0][0]
+    # Entering a new directory speaks the item count when the setting is on.
+    frame._announce.assert_called_once_with("1 item")
+
+
+def test_on_remote_files_loaded_announces_empty_folder(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = True
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame._remote_files = []
+
+    app.MainFrame._on_remote_files_loaded(frame, [RemoteFile(name="..", path="/")], "/home/user")
+
+    frame._announce.assert_called_once_with("Empty folder")
+
+
+def test_on_remote_files_loaded_same_dir_preserves_focused_row(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = True
+    frame._remote_populated_cwd = "/home/user"
+    rows = ["..", "alpha", "beta"]
+    frame.remote_file_list = MagicMock(
+        GetItemCount=MagicMock(return_value=3),
+        GetFocusedItem=MagicMock(return_value=2),
+        GetItemText=MagicMock(side_effect=lambda i: rows[i]),
+    )
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[MagicMock()] * 3)
+    frame._remote_files = []
+
+    app.MainFrame._on_remote_files_loaded(
+        frame, [RemoteFile(name="beta", path="/home/user/beta")], "/home/user"
+    )
+
+    # Background refresh of the same directory keeps the user's row (beta, index 2).
+    frame.remote_file_list.Select.assert_called_once_with(2)
+    frame.remote_file_list.Focus.assert_called_once_with(2)
+    # Same-directory refreshes do not re-announce the item count.
     frame._announce.assert_not_called()
 
 
