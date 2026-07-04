@@ -173,8 +173,6 @@ class MainFrame(wx.Frame):
 
         # File menu
         file_menu = wx.Menu()
-        file_menu.Append(ID_DISCONNECT, "&Disconnect", "Disconnect from server")
-        file_menu.AppendSeparator()
         file_menu.Append(ID_SETTINGS, "Se&ttings...", "Application settings")
         file_menu.AppendSeparator()
         # wx maps Ctrl accelerators to Command on macOS; RawCtrl is the physical Ctrl key.
@@ -236,9 +234,10 @@ class MainFrame(wx.Frame):
 
         # Sites menu
         sites_menu = wx.Menu()
-        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
         sites_menu.Append(ID_QUICK_CONNECT, "&Quick Connect\tCtrl+N", "Focus the quick connect bar")
+        sites_menu.Append(ID_DISCONNECT, "&Disconnect", "Disconnect from server")
         sites_menu.AppendSeparator()
+        sites_menu.Append(ID_SITE_MANAGER, "&Site Manager...\tCtrl+S", "Manage saved sites")
         sites_menu.Append(
             ID_SAVE_CONNECTION, "Sa&ve Current Connection...", "Save active connection as a site"
         )

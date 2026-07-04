@@ -108,7 +108,7 @@ Planned:
 - `Ctrl+Shift+N`: New directory
 - `Backspace`: Parent directory
 - `Enter`: Open directory / download file
-- `Ctrl+Q`: Disconnect
+- `Ctrl+Enter`: Connect using the quick connect bar
 - `Ctrl+I`: File properties
 - `Ctrl+T`: Transfer queue
 - `/` or `Ctrl+F`: Filter/search files

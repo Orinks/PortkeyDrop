@@ -31,7 +31,7 @@ Portkey Drop includes a built-in default sound pack with short cues for transfer
 | Ctrl+I | File properties |
 | Ctrl+Shift+N | New directory |
 | Ctrl+Shift+T | Transfer queue |
-| Ctrl+Q | Disconnect |
+| Ctrl+Enter | Connect using the quick connect bar |
 | Enter | Open directory / download file |
 | Backspace | Parent directory |
 | Delete | Delete selected |
