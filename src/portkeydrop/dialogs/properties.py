@@ -46,6 +46,8 @@ class PropertiesDialog(wx.Dialog):
         sizer.Add(grid, 1, wx.ALL | wx.EXPAND, 12)
         btn = self.CreateStdDialogButtonSizer(wx.OK)
         sizer.Add(btn, 0, wx.ALL | wx.EXPAND, 8)
+        # With only an OK button, make sure Esc also closes the dialog.
+        self.SetEscapeId(wx.ID_OK)
         self.SetSizer(sizer)
         self.Fit()
         if self._first_value_ctrl:

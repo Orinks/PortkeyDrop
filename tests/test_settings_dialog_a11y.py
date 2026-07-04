@@ -156,11 +156,24 @@ class _StaticText(_Window):
 # -- Helpers -----------------------------------------------------------
 
 
+class _ScrolledWindow(_Panel):
+    def SetScrollRate(self, *_a, **_kw):
+        return None
+
+    def ScrollChildIntoView(self, *_a, **_kw):
+        return None
+
+    def Bind(self, _event, handler):
+        self._bound_handler = handler
+
+
 def _make_fake_wx():
     return types.SimpleNamespace(
         Dialog=_Dialog,
         Window=_Window,
         Panel=_Panel,
+        ScrolledWindow=_ScrolledWindow,
+        EVT_CHILD_FOCUS=object(),
         Notebook=_Notebook,
         BoxSizer=_BoxSizer,
         StaticText=_StaticText,

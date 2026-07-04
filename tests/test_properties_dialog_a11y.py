@@ -42,6 +42,9 @@ class _Dialog(_Window):
     def CreateStdDialogButtonSizer(self, _flags):
         return _BoxSizer()
 
+    def SetEscapeId(self, escape_id):
+        self._escape_id = escape_id
+
 
 class _BoxSizer:
     def __init__(self, *a, **kw):
@@ -86,6 +89,7 @@ def _make_fake_wx():
     wx.BoxSizer = _BoxSizer
     wx.FlexGridSizer = _FlexGridSizer
     wx.OK = 5100
+    wx.ID_OK = 5100
     wx.VERTICAL = 256
     wx.HORIZONTAL = 512
     wx.EXPAND = 64

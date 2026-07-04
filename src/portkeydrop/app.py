@@ -183,6 +183,7 @@ class MainFrame(wx.Frame):
         self._last_failed_transfer: str | None = None
         self._exit_sound_played = False
         self._announcer = ScreenReaderAnnouncer()
+        self._apply_speech_settings()
         if not self._announcer.is_available():
             # Deferred so the activity log exists when this runs.
             wx.CallAfter(
@@ -846,6 +847,32 @@ class MainFrame(wx.Frame):
                 info.ftp_explicit_ssl or getattr(defaults, "ftp_explicit_ssl", False)
             )
         info.host_key_policy = self._host_key_policy()
+        info.host_key_prompt = self._prompt_host_key
+
+    def _prompt_host_key(self, host: str, key_type: str, fingerprint: str) -> str:
+        """Show the host key dialog; called from the connect worker thread."""
+        decision: dict[str, str] = {}
+        done = threading.Event()
+
+        def ask() -> None:
+            try:
+                from portkeydrop.dialogs.host_key_dialog import HostKeyDialog
+
+                dlg = HostKeyDialog(self, hostname=host, key_type=key_type, fingerprint=fingerprint)
+                result = dlg.ShowModal()
+                dlg.Destroy()
+                decision["choice"] = {
+                    HostKeyDialog.ACCEPT_PERMANENT: "accept_permanent",
+                    HostKeyDialog.ACCEPT_ONCE: "accept_once",
+                }.get(result, "reject")
+            except Exception:
+                logger.exception("Host key prompt failed; rejecting key")
+            finally:
+                done.set()
+
+        wx.CallAfter(ask)
+        done.wait()
+        return decision.get("choice", "reject")
 
     def _do_connect(self, info: ConnectionInfo) -> None:
         if not info.host:
@@ -2158,8 +2185,14 @@ class MainFrame(wx.Frame):
 
     def _should_announce_transfer_progress(self, job) -> bool:
         settings = getattr(self, "_settings", None)
+        speech_settings = getattr(settings, "speech", None)
+        if getattr(speech_settings, "verbosity", "normal") == "minimal":
+            # Minimal verbosity: completion and failure only, no progress.
+            return False
         display_settings = getattr(settings, "display", None)
         interval = max(1, int(getattr(display_settings, "progress_interval", 25)))
+        if getattr(speech_settings, "verbosity", "normal") == "verbose":
+            interval = max(1, interval // 2)
         if job.progress <= 0:
             return False
         bucket = min(100, (int(job.progress) // interval) * interval)
@@ -2180,6 +2213,15 @@ class MainFrame(wx.Frame):
         if progress_by_id is not None:
             progress_by_id.pop(job_id, None)
 
+    def _apply_speech_settings(self) -> None:
+        """Push the Speech tab settings into the announcer backend."""
+        speech = getattr(self._settings, "speech", None)
+        if speech is not None:
+            self._announcer.apply_settings(
+                rate=getattr(speech, "rate", None),
+                volume=getattr(speech, "volume", None),
+            )
+
     def _on_settings(self, event: wx.CommandEvent) -> None:
         dlg = SettingsDialog(
             self,
@@ -2194,6 +2236,7 @@ class MainFrame(wx.Frame):
                 self._settings.transfer.concurrent_transfers,
             )
             self._refresh_sound_player()
+            self._apply_speech_settings()
             self.update_check_updates_menu_label()
             self._start_auto_update_checks()
             self._sync_tray_icon()

@@ -283,7 +283,7 @@ class SettingsDialog(wx.Dialog):
 
         self.sort_asc_check = self._add_checkbox_row(
             sizer,
-            wx.CheckBox(panel, label="Sort &ascending"),
+            wx.CheckBox(panel, label="Sort ascendin&g"),
             name="Sort ascending",
         )
 
@@ -370,7 +370,7 @@ class SettingsDialog(wx.Dialog):
 
         self.remember_local_folder_check = self._add_checkbox_row(
             sizer,
-            wx.CheckBox(panel, label="&Remember last local folder on startup"),
+            wx.CheckBox(panel, label="Remember last local &folder on startup"),
             name="Remember last local folder on startup",
         )
 
@@ -451,7 +451,14 @@ class SettingsDialog(wx.Dialog):
         self.notebook.AddPage(panel, "Speech")
 
     def _build_audio_tab(self) -> None:
-        panel, sizer = self._new_tab_panel()
+        # The muted-events list is taller than the dialog: a scrolled panel
+        # keeps every checkbox visible when it receives keyboard focus.
+        panel = wx.ScrolledWindow(self.notebook)
+        panel.SetScrollRate(0, 10)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        panel.SetSizer(sizer)
+        self._audio_panel = panel
+        panel.Bind(wx.EVT_CHILD_FOCUS, self._on_audio_child_focus)
 
         self.sound_enabled_check = self._add_checkbox_row(
             sizer,
@@ -471,7 +478,7 @@ class SettingsDialog(wx.Dialog):
             panel,
             sizer,
             label="",
-            make_control=lambda p: wx.Button(p, label="Manage Sound &Packs..."),
+            make_control=lambda p: wx.Button(p, label="Manage Sound Pac&ks..."),
             control_name="Manage sound packs",
         )
         self.manage_soundpacks_button.Bind(wx.EVT_BUTTON, self._on_manage_soundpacks)
@@ -492,6 +499,13 @@ class SettingsDialog(wx.Dialog):
 
         sizer.AddStretchSpacer(1)
         self.notebook.AddPage(panel, "Audio")
+
+    def _on_audio_child_focus(self, event: wx.ChildFocusEvent) -> None:
+        """Scroll the focused control into view; wx does not do this itself."""
+        window = event.GetWindow() if hasattr(event, "GetWindow") else None
+        if window is not None and hasattr(self._audio_panel, "ScrollChildIntoView"):
+            self._audio_panel.ScrollChildIntoView(window)
+        event.Skip()
 
     # -- Data binding --------------------------------------------------
 

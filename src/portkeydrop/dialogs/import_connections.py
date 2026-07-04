@@ -144,7 +144,7 @@ class ImportConnectionsDialog(wx.Dialog):
 
         self.autodetect_btn = wx.Button(panel, label="&Auto-Detect")
         self.browse_file_btn = wx.Button(panel, label="Browse &File...")
-        self.browse_folder_btn = wx.Button(panel, label="Browse &Folder...")
+        self.browse_folder_btn = wx.Button(panel, label="Browse F&older...")
         row.Add(self.autodetect_btn, 0, wx.RIGHT, 4)
         row.Add(self.browse_file_btn, 0, wx.RIGHT, 4)
         row.Add(self.browse_folder_btn, 0)
@@ -356,6 +356,10 @@ class ImportConnectionsDialog(wx.Dialog):
             self.path_text.SetFocus()
         elif self._step == 2:
             self.preview_list.SetFocus()
+        # Speak the step progress; the title label change is visual-only.
+        announce = getattr(self.GetParent(), "_announce", None)
+        if callable(announce):
+            wx.CallAfter(announce, titles[self._step])
 
     def _file_wildcard_for_source(self, source: str) -> str:
         if source == "filezilla":

@@ -15,12 +15,13 @@ import stat
 import tempfile
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, BinaryIO, Callable
+from typing import TYPE_CHECKING, BinaryIO
 from urllib.parse import urlsplit, urlunsplit
 
 if TYPE_CHECKING:
@@ -100,6 +101,12 @@ class ConnectionInfo:
     passive_mode: bool = True  # FTP only
     ftp_explicit_ssl: bool = False  # FTP AUTH SSL
     host_key_policy: HostKeyPolicy = HostKeyPolicy.AUTO_ADD
+    # Called from the connect worker when the PROMPT policy meets an unknown
+    # host key. Receives (host, key_type, fingerprint) and returns "reject",
+    # "accept_once", or "accept_permanent". None means reject.
+    host_key_prompt: Callable[[str, str, str], str] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def effective_port(self) -> int:
@@ -1198,6 +1205,30 @@ class SFTPClient(TransferClient):
                 "SFTP connection failed: " + self._format_key_import_error(str(exc), is_ppk=False)
             ) from exc
 
+    def _prompt_unknown_host_key(self, cause: Exception) -> tuple[str, str]:
+        """Fetch the server's host key and ask the user what to do.
+
+        Returns (choice, known_hosts_line); runs on the connect worker thread,
+        so blocking on the UI prompt is safe.
+        """
+        import asyncssh
+
+        async def _fetch():
+            return await asyncssh.get_server_host_key(self._info.host, self._info.effective_port)
+
+        key = self._run(_fetch())
+        if key is None:
+            raise ConnectionError(
+                f"SFTP connection failed: could not retrieve the host key for {self._info.host}."
+            ) from cause
+        key_type = key.get_algorithm()
+        fingerprint = key.get_fingerprint()
+        public_line = key.export_public_key().decode("ascii").strip()
+        port = self._info.effective_port
+        host_pattern = self._info.host if port == 22 else f"[{self._info.host}]:{port}"
+        choice = self._info.host_key_prompt(self._info.host, key_type, fingerprint)
+        return choice, f"{host_pattern} {public_line}"
+
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
@@ -1229,10 +1260,10 @@ class SFTPClient(TransferClient):
 
                 known_hosts = get_config_dir() / "known_hosts"
                 known_hosts.parent.mkdir(parents=True, exist_ok=True)
-                if known_hosts.exists():
-                    connect_kwargs["known_hosts"] = str(known_hosts)
-                else:
-                    connect_kwargs["known_hosts"] = None
+                if not known_hosts.exists():
+                    known_hosts.touch()
+                connect_kwargs["known_hosts"] = str(known_hosts)
+                prompt_known_hosts = known_hosts
                 logger.debug("SFTP host key policy: prompt (known_hosts=%s)", known_hosts)
             else:
                 raise ConnectionError(
@@ -1264,7 +1295,27 @@ class SFTPClient(TransferClient):
                 sftp = await conn.start_sftp_client()
                 return conn, sftp
 
-            self._conn, self._sftp = self._run(_connect())
+            try:
+                self._conn, self._sftp = self._run(_connect())
+            except asyncssh.HostKeyNotVerifiable as exc:
+                if (
+                    self._info.host_key_policy != HostKeyPolicy.PROMPT
+                    or self._info.host_key_prompt is None
+                ):
+                    raise
+                choice, known_hosts_line = self._prompt_unknown_host_key(exc)
+                if choice == "accept_permanent":
+                    with open(prompt_known_hosts, "a", encoding="utf-8") as handle:
+                        handle.write(known_hosts_line + "\n")
+                    logger.info("Host key for %s accepted permanently", self._info.host)
+                elif choice == "accept_once":
+                    connect_kwargs["known_hosts"] = None
+                    logger.info("Host key for %s accepted for this session", self._info.host)
+                else:
+                    raise ConnectionError(
+                        f"SFTP connection failed: host key for {self._info.host} was rejected."
+                    ) from exc
+                self._conn, self._sftp = self._run(_connect())
             if self._sftp is None:
                 raise ConnectionError("Failed to create SFTP session after SSH authentication")
 

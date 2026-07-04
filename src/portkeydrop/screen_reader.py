@@ -44,6 +44,7 @@ class ScreenReaderAnnouncer:
     def __init__(self) -> None:
         self._module, self._backend_name = _try_import_backend()
         self._speaker = None
+        self._backend = None
         self._available = False
 
         if self._module is None:
@@ -57,6 +58,7 @@ class ScreenReaderAnnouncer:
                 ctx = ctx_cls()
                 backend = ctx.acquire_best()
                 self._speaker = backend.speak
+                self._backend = backend
                 self._available = True
                 logger.info(
                     "%s backend active: %s",
@@ -95,3 +97,22 @@ class ScreenReaderAnnouncer:
 
     def is_available(self) -> bool:
         return self._available
+
+    def apply_settings(self, *, rate: int | None = None, volume: int | None = None) -> None:
+        """Apply 0-100 rate/volume settings to the backend, where supported.
+
+        Backends that don't support a property (e.g. NVDA controller clients,
+        which follow the reader's own settings) are silently left alone.
+        """
+        if self._backend is None:
+            return
+        if rate is not None:
+            try:
+                self._backend.rate = max(0, min(100, int(rate))) / 100.0
+            except Exception:
+                logger.debug("Backend does not accept a speech rate", exc_info=True)
+        if volume is not None:
+            try:
+                self._backend.volume = max(0, min(100, int(volume))) / 100.0
+            except Exception:
+                logger.debug("Backend does not accept a speech volume", exc_info=True)

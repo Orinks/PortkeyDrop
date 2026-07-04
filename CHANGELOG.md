@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 ### Fixed
+- Pressing Delete or F2 while editing a text field no longer triggers file delete or rename — those keys now act only inside the file panes, and file operations tell you to focus a pane first instead of guessing (and sometimes targeting a remote file you never touched).
+- Background transfer completions no longer jump your position in the file lists back to the top; deletes and renames keep you on the nearest neighbouring file, and sorting or toggling hidden files keeps your selection.
+- The "Announce file count" setting now actually speaks the count when entering a directory; empty folders and empty filter results are announced instead of silent.
+- The Speech settings tab (rate, volume, verbosity) now controls the built-in speech output instead of doing nothing; verbosity also controls transfer progress announcements.
+- The "Verify host keys: ask" setting now really asks: connecting to an unknown SSH host shows an accessible dialog to reject or accept the key once or permanently, instead of silently trusting it.
+- The Cancel button on the update download progress dialog now actually cancels the download.
+- Upload, download, and transfer with nothing selected or no connection announce why nothing happened instead of doing nothing silently.
+- Restoring the window from the notification area and closing the transfer queue now place keyboard focus in the file list rather than on the window frame.
+- Removing a site in the Site Manager now asks for confirmation, announces the removal, and clears the form after the last site is deleted.
 - Repeated connect presses while a connection attempt is in progress no longer start duplicate attempts (and duplicate error dialogs). Starting a connection is now announced for screen readers.
+
+### Changed
+- The transfer queue window no longer opens (and steals focus) automatically every time a transfer is queued; announcements cover the feedback and Ctrl+Shift+T opens it on demand. Queue buttons disable without a selection, and the selection follows the same transfer when rows are removed.
+- Added Help > Keyboard Shortcuts listing every binding, including the previously undocumented F6, Ctrl+L, and Ctrl+1/2/3 pane shortcuts.
+- Duplicate menu and dialog access keys (Alt+letter) were reassigned so each letter activates its control directly across the menus, Site Manager, Settings, transfer queue, sound pack, and import dialogs.
+- The Settings Audio tab now scrolls so all mute checkboxes stay visible when focused; the file lists have proper accessible names for VoiceOver; keyboard-opened context menus appear at the focused file instead of the mouse pointer; switching protocol keeps a hand-typed port; the activity log no longer moves your reading position when new entries arrive; and a startup notice appears when no speech backend is available.
 
 ### Changed
 - Pressing Escape in the quick connect bar while connected now hides the bar and returns focus to where you were.
