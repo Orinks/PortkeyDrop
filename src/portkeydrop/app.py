@@ -118,6 +118,7 @@ class MainFrame(wx.Frame):
         super().__init__(None, title="Portkey Drop", size=(1000, 600))
 
         self._client = None
+        self._connecting = False
         self._remote_home = "/"
         self._remote_files: list[RemoteFile] = []
         self._local_files: list[RemoteFile] = []
@@ -751,8 +752,16 @@ class MainFrame(wx.Frame):
         if not info.password and info.protocol in {Protocol.FTP, Protocol.FTPS}:
             wx.MessageBox("Please enter a password.", "Error", wx.OK | wx.ICON_ERROR, self)
             return
+        # Ignore repeat submissions (Enter key repeat, double presses) while a
+        # connection attempt is in flight; each one would spawn its own worker
+        # and its own error dialog.
+        if self._connecting:
+            self._announce("Still connecting, please wait.")
+            return
         self._on_disconnect(None)
+        self._connecting = True
         self._update_status(f"Connecting to {info.host}…", "")
+        self._announce(f"Connecting to {info.host}")
 
         def _connect_worker() -> None:
             try:
@@ -766,6 +775,7 @@ class MainFrame(wx.Frame):
 
     def _on_connect_success(self, client) -> None:
         """Called on the main thread when a background connection succeeds."""
+        self._connecting = False
         self._client = client
         self._remote_home = client.cwd
         self._update_status("Connected", client.cwd)
@@ -784,6 +794,7 @@ class MainFrame(wx.Frame):
 
     def _on_connect_failure(self, exc: Exception) -> None:
         """Called on the main thread when a background connection fails."""
+        self._connecting = False
         self._client = None
         self._update_status("Disconnected", "")
         self.log_event(f"Connection failed: {exc}")

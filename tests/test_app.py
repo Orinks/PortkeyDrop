@@ -66,6 +66,7 @@ def _build_frame(module, tmp_path):
 def _hydrate_frame(module):
     app, _ = module
     frame = object.__new__(app.MainFrame)
+    frame._connecting = False
     frame._announce = MagicMock()
     frame._status = MagicMock()
     frame._update_status = MagicMock()
@@ -1211,6 +1212,71 @@ def test_connect_toolbar_sftp_without_password_still_connects(app_module):
     assert info.host == "example.com"
     assert info.username == "alice"
     frame._announce.assert_not_called()
+
+
+def test_do_connect_ignores_repeat_submit_while_connecting(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    frame._connecting = True
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.SFTP, host="example.com", username="alice", password="pw"
+    )
+
+    with patch.object(app, "create_client") as create_client:
+        frame._do_connect(info)
+
+    create_client.assert_not_called()
+    frame._on_disconnect.assert_not_called()
+    frame._announce.assert_called_once_with("Still connecting, please wait.")
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_do_connect_announces_connection_start(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    frame._on_connect_success = MagicMock()
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.SFTP, host="example.com", username="alice", password="pw"
+    )
+
+    with (
+        patch.object(app, "create_client", return_value=MagicMock(cwd="/")),
+        patch.object(app.threading, "Thread", _ImmediateThread),
+    ):
+        frame._do_connect(info)
+
+    frame._announce.assert_called_once_with("Connecting to example.com")
+
+
+def test_connect_failure_resets_connecting_flag(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._connecting = True
+    frame._update_title = MagicMock()
+
+    frame._on_connect_failure(RuntimeError("boom"))
+
+    assert frame._connecting is False
+    fake_wx.MessageBox.assert_called_once()
+
+
+def test_connect_success_resets_connecting_flag(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._connecting = True
+    frame._update_title = MagicMock()
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    client = MagicMock(
+        cwd="/home",
+        _info=SimpleNamespace(protocol=SimpleNamespace(value="sftp"), host="example.com"),
+    )
+
+    frame._on_connect_success(client)
+
+    assert frame._connecting is False
 
 
 def test_quick_connect_focuses_host_field(app_module):
