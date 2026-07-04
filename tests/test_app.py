@@ -433,7 +433,8 @@ def test_on_upload_batch_mixed_files_and_folders_skips_parent(tmp_path, app_modu
         overwrite_existing=False,
     )
     frame._announce.assert_called_with("Queued 2 uploads")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_batch_mixed_files_and_folders_skips_parent(tmp_path, app_module):
@@ -468,7 +469,8 @@ def test_on_download_batch_mixed_files_and_folders_skips_parent(tmp_path, app_mo
         overwrite_existing=False,
     )
     frame._announce.assert_called_with("Queued 2 downloads")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_upload_empty_selection_does_not_enqueue(app_module):
@@ -536,7 +538,8 @@ def test_on_upload_batch_conflict_skip_continues_with_remaining_item(tmp_path, a
     )
     frame._announce.assert_any_call("Skipped upload; existing.txt already exists")
     frame._announce.assert_called_with("Queued 1 upload")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_batch_conflict_skip_continues_with_remaining_item(tmp_path, app_module):
@@ -565,7 +568,8 @@ def test_on_download_batch_conflict_skip_continues_with_remaining_item(tmp_path,
     )
     frame._announce.assert_any_call("Skipped download; existing.txt already exists")
     frame._announce.assert_called_with("Queued 1 download")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_skip_existing_file_does_not_enqueue(tmp_path, app_module):
@@ -791,7 +795,7 @@ def test_remote_conflict_helpers_cover_empty_and_ask_paths(app_module):
     frame._announce.assert_called_with("Skipped upload; report.txt already exists")
 
 
-def test_paste_upload_shows_queue(tmp_path, app_module):
+def test_paste_upload_queues_without_opening_dialog(tmp_path, app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
@@ -804,7 +808,8 @@ def test_paste_upload_shows_queue(tmp_path, app_module):
     frame._paste_upload()
 
     frame._transfer_service.submit_upload.assert_called_once()
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_paste_upload_skip_existing_remote_file(tmp_path, app_module):

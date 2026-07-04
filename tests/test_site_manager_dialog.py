@@ -16,7 +16,10 @@ import pytest
 
 class _Window:
     def __init__(self, parent=None, **_kw):
-        pass
+        self._parent = parent
+
+    def GetParent(self):
+        return getattr(self, "_parent", None)
 
     def Bind(self, *a, **kw):
         pass
@@ -54,7 +57,7 @@ class _Window:
 
 class _Dialog(_Window):
     def __init__(self, parent=None, title="", size=None, style=0, **_kw):
-        pass
+        self._parent = parent
 
     def EndModal(self, r):
         pass
@@ -277,7 +280,11 @@ def _make_fake_wx():
     wx.EVT_LISTBOX_DCLICK = object()
     wx.EVT_CHAR_HOOK = object()
     wx.WXK_RETURN = 13
-    wx.MessageBox = MagicMock(return_value=wx.OK)
+    wx.YES = 5103
+    wx.NO = 5104
+    wx.YES_NO = 0x0A
+    wx.ICON_WARNING = 0x40000
+    wx.MessageBox = MagicMock(return_value=wx.YES)
     wx.CallAfter = lambda fn, *a, **kw: fn(*a, **kw)
     return wx
 
@@ -321,7 +328,7 @@ class TestTogglePassword:
         # Value preserved
         assert dlg.password_text.GetValue() == "secret123"
         # Button updated
-        assert dlg.show_password_btn._label == "H&ide"
+        assert dlg.show_password_btn._label == "Hide passwor&d"
         assert dlg.show_password_btn._name == "Hide password"
         dlg.Layout.assert_called_once()
 
@@ -333,7 +340,7 @@ class TestTogglePassword:
         mod.SiteManagerDialog._on_toggle_password(dlg, MagicMock())
 
         assert dlg.password_text.GetWindowStyle() == fake_wx.TE_PASSWORD
-        assert dlg.show_password_btn._label == "S&how"
+        assert dlg.show_password_btn._label == "Show passwor&d"
         assert dlg.show_password_btn._name == "Show password"
 
     def test_value_preserved_on_toggle(self, dialog_module):
@@ -380,7 +387,7 @@ class TestSiteManagerDialogInit:
         dlg = mod.SiteManagerDialog(None, site_manager)
 
         assert hasattr(dlg, "show_password_btn")
-        assert dlg.show_password_btn._label == "S&how"
+        assert dlg.show_password_btn._label == "Show passwor&d"
         assert dlg.show_password_btn._name == "Show password"
         assert hasattr(dlg, "password_text")
 

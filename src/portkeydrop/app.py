@@ -1613,7 +1613,8 @@ class MainFrame(wx.Frame):
         if queued:
             if batch_mode:
                 self._announce(f"Queued {queued} download{'s' if queued != 1 else ''}")
-            self._show_transfer_queue()
+            # The queue dialog no longer opens automatically: it stole focus
+            # from the file list mid-workflow. Ctrl+Shift+T opens it on demand.
 
     def _queue_download(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = os.path.join(self._local_cwd, f.name)
@@ -1666,7 +1667,6 @@ class MainFrame(wx.Frame):
         if queued:
             if batch_mode:
                 self._announce(f"Queued {queued} upload{'s' if queued != 1 else ''}")
-            self._show_transfer_queue()
 
     def _queue_upload(self, f: RemoteFile, *, batch_mode: bool) -> bool:
         local_path = f.path
@@ -1852,7 +1852,6 @@ class MainFrame(wx.Frame):
             self._announce(
                 f"Added {count} item{'s' if count != 1 else ''} to transfer queue from clipboard"
             )
-            self._show_transfer_queue()
 
     def _paste_local(self) -> None:
         """Copy files from clipboard to the current local directory."""
@@ -2087,7 +2086,6 @@ class MainFrame(wx.Frame):
             self._update_status(msg, current_path)
             self._retry_last_failed_item.Enable(False)
             self._last_failed_transfer = None
-            self._show_transfer_queue()
 
     def _on_transfer_queue(self, event: wx.CommandEvent) -> None:
         self._show_transfer_queue()

@@ -99,7 +99,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             # StaticText label immediately before the list so NVDA resolves
             # "Transfer Queue" as the accessible name via HWND sibling order.
             wx.StaticText(self, label="Transfer Queue:")
-            self.transfer_list = create_report_list(self, style=wx.LC_REPORT)
+            self.transfer_list = create_report_list(self, style=wx.LC_REPORT, name="Transfer queue")
             self.transfer_list.InsertColumn(0, "File", width=200)
             self.transfer_list.InsertColumn(1, "Direction", width=80)
             self.transfer_list.InsertColumn(2, "Progress", width=80)
@@ -113,7 +113,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             self.retry_btn = wx.Button(self, label="&Retry Selected Transfer")
             self.retry_btn.Enable(False)
             self.cancel_btn = wx.Button(self, label="Cancel &Transfer")
-            self.remove_btn = wx.Button(self, label="&Remove Transfer")
+            self.remove_btn = wx.Button(self, label="Re&move Transfer")
             self.bg_btn = wx.Button(self, label="Send to &Background")
             self.close_btn = wx.Button(self, wx.ID_CLOSE, label="&Close")
             self.close_btn.SetDefault()
@@ -148,15 +148,28 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             if parent and hasattr(parent, "_transfer_dlg"):
                 parent._transfer_dlg = None
             self.Destroy()
+            self._focus_parent_control(parent)
 
         def _on_send_to_background(self, event):
             """Hide the dialog; transfer continues in background."""
             parent = self.GetParent()
             self.Hide()
-            # Return keyboard focus to the main window so the screen reader
-            # user does not lose their place after the dialog disappears.
-            if parent:
+            self._focus_parent_control(parent)
+
+        @staticmethod
+        def _focus_parent_control(parent):
+            # Land on a concrete control; focusing the bare frame strands
+            # keyboard users on the window title.
+            focus = getattr(parent, "focus_default_pane", None) if parent else None
+            if callable(focus):
+                focus()
+            elif parent:
                 parent.SetFocus()
+
+        def _announce_via_parent(self, message):
+            announce = getattr(self.GetParent(), "_announce", None)
+            if callable(announce):
+                announce(message)
 
         def _on_timer(self, event):
             self._refresh()
@@ -211,6 +224,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
         def _on_cancel(self, event):
             idx = self.transfer_list.GetFirstSelected()
             if idx == wx.NOT_FOUND:
+                self._announce_via_parent("No transfer selected")
                 return
             jobs = self._service.jobs
             if 0 <= idx < len(jobs):
@@ -238,6 +252,7 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
         def _on_remove(self, event):
             idx = self.transfer_list.GetFirstSelected()
             if idx == wx.NOT_FOUND:
+                self._announce_via_parent("No transfer selected")
                 return
             jobs = self._service.jobs
             if 0 <= idx < len(jobs):
@@ -252,12 +267,10 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
 
         def _refresh(self):
             jobs = self._service.jobs
-            selected = self.transfer_list.GetFirstSelected()
+            # Track the selection by job id: indexes drift when rows are
+            # removed, which would silently move the selection to another job.
+            selected_id = self._get_selected_job_id()
             focused = self.transfer_list.GetFocusedItem()
-            try:
-                selected = int(selected)
-            except (TypeError, ValueError):
-                selected = wx.NOT_FOUND
             try:
                 focused = int(focused)
             except (TypeError, ValueError):
@@ -291,27 +304,33 @@ def create_transfer_dialog(parent, transfer_service: TransferService, log_callba
             for i in range(current_count - 1, new_count - 1, -1):
                 self.transfer_list.DeleteItem(i)
 
-            if 0 <= selected < new_count:
-                self.transfer_list.Select(selected)
-            if 0 <= focused < new_count:
+            if selected_id is not None:
+                for i, job in enumerate(jobs):
+                    if job.id == selected_id:
+                        self.transfer_list.Select(i)
+                        self.transfer_list.Focus(i)
+                        break
+            elif 0 <= focused < new_count:
                 self.transfer_list.Focus(focused)
 
-            # Enable retry button only when a failed transfer is selected
-            self._update_retry_btn_state()
+            self._update_button_states()
 
-        def _update_retry_btn_state(self):
-            """Enable retry button only when a failed transfer is selected."""
+        def _update_button_states(self):
+            """Enable buttons to match the current selection."""
             idx = self.transfer_list.GetFirstSelected()
             try:
                 idx = int(idx)
             except (TypeError, ValueError):
                 idx = -1
             jobs = self._service.jobs
-            enable = False
-            if 0 <= idx < len(jobs):
+            has_selection = 0 <= idx < len(jobs)
+            retry = False
+            if has_selection:
                 status = getattr(jobs[idx], "status", None)
                 if status == TransferStatus.FAILED:
-                    enable = True
-            self.retry_btn.Enable(enable)
+                    retry = True
+            self.retry_btn.Enable(retry)
+            self.cancel_btn.Enable(has_selection)
+            self.remove_btn.Enable(has_selection)
 
     return TransferDialog(parent, transfer_service, log_cb=log_callback)

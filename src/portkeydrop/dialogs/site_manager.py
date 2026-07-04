@@ -45,7 +45,7 @@ class SiteManagerDialog(wx.Dialog):
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.add_btn = wx.Button(self, label="&Add")
-        self.remove_btn = wx.Button(self, label="&Remove")
+        self.remove_btn = wx.Button(self, label="Rem&ove")
         self.connect_btn = wx.Button(self, label="Co&nnect")
         btn_sizer.Add(self.add_btn, 0, wx.RIGHT, 4)
         btn_sizer.Add(self.remove_btn, 0, wx.RIGHT, 4)
@@ -87,7 +87,7 @@ class SiteManagerDialog(wx.Dialog):
             if attr_name == "password_text":
                 row = wx.BoxSizer(wx.HORIZONTAL)
                 row.Add(ctrl, 1, wx.EXPAND)
-                self.show_password_btn = wx.Button(self, label="S&how")
+                self.show_password_btn = wx.Button(self, label="Show passwor&d")
                 self.show_password_btn.SetName("Show password")
                 self.show_password_btn.Bind(wx.EVT_BUTTON, self._on_toggle_password)
                 row.Add(self.show_password_btn, 0, wx.LEFT, 4)
@@ -106,7 +106,7 @@ class SiteManagerDialog(wx.Dialog):
         right_sizer.Add(grid, 1, wx.EXPAND | wx.ALL, 4)
 
         action_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        save_btn = wx.Button(self, label="&Save")
+        save_btn = wx.Button(self, label="Sa&ve")
         self.close_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Close")
         action_sizer.Add(save_btn, 0, wx.RIGHT, 4)
         action_sizer.Add(self.close_btn, 0)
@@ -191,6 +191,16 @@ class SiteManagerDialog(wx.Dialog):
 
     def _on_remove(self, event: wx.CommandEvent) -> None:
         if self._selected_site:
+            site_name = self._selected_site.name or self._selected_site.host
+            # Removal is irreversible (stored password included) — confirm it.
+            result = wx.MessageBox(
+                f"Remove site '{site_name}'?",
+                "Confirm Remove",
+                wx.YES_NO | wx.ICON_WARNING,
+                self,
+            )
+            if result != wx.YES:
+                return
             idx = self.site_list.GetSelection()
             if idx == wx.NOT_FOUND:
                 # Fall back to the selected site's index when list selection is stale.
@@ -210,7 +220,32 @@ class SiteManagerDialog(wx.Dialog):
                 self.site_list.SetSelection(new_idx)
                 self._selected_site = self._site_manager.sites[new_idx]
                 self._populate_form(self._selected_site)
+            else:
+                self._clear_form()
+            self._announce_via_parent(f"Removed site '{site_name}'")
             wx.CallAfter(self.site_list.SetFocus)
+
+    def _clear_form(self) -> None:
+        """Empty the edit form so a deleted site's data does not linger."""
+        for ctrl in (
+            self.name_text,
+            self.host_text,
+            self.port_text,
+            self.username_text,
+            self.password_text,
+            self.key_path_text,
+            self.initial_dir_text,
+        ):
+            ctrl.SetValue("")
+        self.protocol_choice.SetSelection(0)
+        if hasattr(self, "ftp_ssl_check"):
+            self.ftp_ssl_check.SetValue(False)
+            self.ftp_ssl_check.Enable(False)
+
+    def _announce_via_parent(self, message: str) -> None:
+        announce = getattr(self.GetParent(), "_announce", None)
+        if callable(announce):
+            announce(message)
 
     def _on_toggle_password(self, event: wx.CommandEvent) -> None:
         """Toggle password field between masked and plain text."""
@@ -253,7 +288,7 @@ class SiteManagerDialog(wx.Dialog):
         self.password_text.Destroy()
         self.password_text = new_ctrl
         self._password_visible = show_password
-        self.show_password_btn.SetLabel("H&ide" if show_password else "S&how")
+        self.show_password_btn.SetLabel("Hide passwor&d" if show_password else "Show passwor&d")
         self.show_password_btn.SetName("Hide password" if show_password else "Show password")
 
         # Keep tab order stable: password field should stay before Show/Hide button.
@@ -267,6 +302,11 @@ class SiteManagerDialog(wx.Dialog):
         new_ctrl.SetFocus()
         if hasattr(new_ctrl, "SetInsertionPointEnd"):
             new_ctrl.SetInsertionPointEnd()
+        # Deferred past the SetFocus echo so the state change is spoken.
+        wx.CallAfter(
+            self._announce_via_parent,
+            "Password visible" if show_password else "Password hidden",
+        )
 
     def _on_save(self, event: wx.CommandEvent) -> None:
         if not self._selected_site:
@@ -282,6 +322,7 @@ class SiteManagerDialog(wx.Dialog):
             if self.site_list.GetClientData(i) == saved_id:
                 self.site_list.SetSelection(i)
                 break
+        self._announce_via_parent(f"Site '{self._selected_site.name}' saved")
 
     def _update_site_from_form(self, site: Site) -> bool:
         """Update site from form fields. Returns False if validation fails."""

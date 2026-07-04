@@ -461,7 +461,7 @@ class TestRetryButtonState:
         dialog._refresh()
 
         dialog.transfer_list.Select(0)
-        dialog._update_retry_btn_state()
+        dialog._update_button_states()
 
         dialog.retry_btn.Enable.assert_called_with(True)
 
@@ -488,7 +488,7 @@ class TestRetryButtonState:
         dialog._refresh()
 
         dialog.transfer_list.Select(0)
-        dialog._update_retry_btn_state()
+        dialog._update_button_states()
 
         dialog.retry_btn.Enable.assert_called_with(False)
 
@@ -505,7 +505,7 @@ class TestRetryButtonState:
         dialog.transfer_list = FakeListCtrl()
         dialog._refresh()
 
-        dialog._update_retry_btn_state()
+        dialog._update_button_states()
 
         dialog.retry_btn.Enable.assert_called_with(False)
 
@@ -649,8 +649,8 @@ class TestRetryLastFailedMenuItem:
 
         assert frame._last_failed_transfer is None
 
-    def test_retry_last_failed_shows_transfer_queue(self, transfer_module, monkeypatch):
-        """Retry should open the transfer queue dialog."""
+    def test_retry_last_failed_does_not_open_transfer_queue(self, transfer_module, monkeypatch):
+        """Retry announces but must not steal focus by opening the queue dialog."""
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)
         frame = _hydrate_frame(app_module)
 
@@ -671,7 +671,8 @@ class TestRetryLastFailedMenuItem:
 
         frame._on_retry_last_failed(None)
 
-        frame._show_transfer_queue.assert_called_once()
+        frame._show_transfer_queue.assert_not_called()
+        frame._announce.assert_called_once()
 
     def test_retry_last_failed_does_nothing_when_no_failure(self, transfer_module, monkeypatch):
         app_module, _ = load_module_with_fake_wx("portkeydrop.app", monkeypatch)

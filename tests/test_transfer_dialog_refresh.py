@@ -189,6 +189,7 @@ def test_refresh_restores_selection_and_focus(transfer_module):
 
     dialog._refresh()
 
+    # Selection follows the job id, so selection and focus stay on that job's row.
     transfer_list.Select.assert_called_once_with(1)
-    transfer_list.Focus.assert_called_once_with(0)
+    transfer_list.Focus.assert_called_once_with(1)
     transfer_list.DeleteAllItems.assert_not_called()
