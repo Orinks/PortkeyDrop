@@ -449,6 +449,7 @@ class WebDAVClient(TransferClient):
             self._client = Client(
                 {
                     "webdav_hostname": self._build_hostname(),
+                    "webdav_root": "",
                     "webdav_login": self._info.username,
                     "webdav_password": self._info.password,
                     "webdav_timeout": self._info.timeout,

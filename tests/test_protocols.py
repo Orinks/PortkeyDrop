@@ -276,6 +276,7 @@ class TestWebDAVClient:
         client_class.assert_called_once_with(
             {
                 "webdav_hostname": "https://dav.example.com",
+                "webdav_root": "",
                 "webdav_login": "alice",
                 "webdav_password": "secret",
                 "webdav_timeout": 12,
@@ -318,6 +319,7 @@ class TestWebDAVClient:
         assert (
             client_class.call_args.args[0]["webdav_hostname"] == "http://dav.example.com:8080/root"
         )
+        assert client_class.call_args.args[0]["webdav_root"] == ""
 
     def test_list_dir_maps_webdav_items(self, monkeypatch):
         webdav = MagicMock()
