@@ -149,6 +149,19 @@ def test_main_frame_init_sets_transfer_state(tmp_path, app_module):
     transfer_service_cls.assert_called_once_with(notify_window=frame, max_workers=2)
 
 
+def test_log_event_preserves_review_cursor_when_activity_log_has_focus(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.FindFocus = MagicMock(return_value=frame.activity_log)
+    frame.activity_log.GetInsertionPoint.return_value = 7
+
+    frame.log_event("Speech output is unavailable")
+
+    frame.activity_log.AppendText.assert_called_once()
+    frame.activity_log.SetInsertionPoint.assert_called_once_with(7)
+    frame._announce.assert_called_once_with("Speech output is unavailable")
+
+
 def test_bind_events_hooks_transfer_update(app_module):
     app, _ = app_module
     frame = object.__new__(app.MainFrame)
