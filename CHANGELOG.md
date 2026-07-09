@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Pressing Delete or F2 while editing a text field no longer triggers file delete or rename — those keys now act only inside the file panes, and file operations tell you to focus a pane first instead of guessing (and sometimes targeting a remote file you never touched).
+- WebDAV connections now force an empty library root so opening subfolders keeps valid URLs instead of accidentally generating malformed nested paths.
 - Background transfer completions no longer jump your position in the file lists back to the top; deletes and renames keep you on the nearest neighbouring file, and sorting or toggling hidden files keeps your selection.
 - The "Announce file count" setting now actually speaks the count when entering a directory; empty folders and empty filter results are announced instead of silent.
 - The Speech settings tab (rate, volume, verbosity) now controls the built-in speech output instead of doing nothing; verbosity also controls transfer progress announcements.

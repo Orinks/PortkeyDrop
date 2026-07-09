@@ -184,14 +184,6 @@ class MainFrame(wx.Frame):
         self._exit_sound_played = False
         self._announcer = ScreenReaderAnnouncer()
         self._apply_speech_settings()
-        if not self._announcer.is_available():
-            # Deferred so the activity log exists when this runs.
-            wx.CallAfter(
-                self.log_event,
-                "Speech output is unavailable; announcements will appear in the "
-                "status bar and this log only. Install the 'prismatoid' package "
-                "to enable speech.",
-            )
         self._soundpacks_dir = ensure_default_soundpack(get_soundpacks_dir())
         audio_settings = getattr(self._settings, "audio", None)
         self._sound_player = SoundPlayer(
@@ -208,6 +200,13 @@ class MainFrame(wx.Frame):
         self._build_toolbar()
         self._build_dual_pane()
         self._build_status_bar()
+        if not self._announcer.is_available():
+            wx.CallAfter(
+                self.log_event,
+                "Speech output is unavailable; announcements will appear in the "
+                "status bar and this log only. Install the 'prismatoid' package "
+                "to enable speech.",
+            )
         self._bind_events()
         self._update_title()
         self._refresh_local_files()
@@ -2662,13 +2661,15 @@ class MainFrame(wx.Frame):
         """Append a timestamped entry to the activity log and announce it."""
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {message}\n"
-        if self.FindFocus() is self.activity_log:
-            # Don't yank the review cursor while the user is reading the log.
-            position = self.activity_log.GetInsertionPoint()
-            self.activity_log.AppendText(entry)
-            self.activity_log.SetInsertionPoint(position)
-        else:
-            self.activity_log.AppendText(entry)
+        activity_log = getattr(self, "activity_log", None)
+        if activity_log is not None:
+            if self.FindFocus() is activity_log:
+                # Don't yank the review cursor while the user is reading the log.
+                position = activity_log.GetInsertionPoint()
+                activity_log.AppendText(entry)
+                activity_log.SetInsertionPoint(position)
+            else:
+                activity_log.AppendText(entry)
         self._announce(message)
 
     def _announce(self, message: str) -> None:
