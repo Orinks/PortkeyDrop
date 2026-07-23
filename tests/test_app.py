@@ -851,6 +851,38 @@ def test_delete_remote_updates_status_on_success(app_module):
     frame._play_sound_event.assert_called_with("delete_complete")
 
 
+def test_delete_remote_resolves_relative_path_against_cwd(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True, cwd="/remote")
+    remote = MagicMock(name="doc.txt")
+    remote.name = "doc.txt"
+    remote.path = "doc.txt"
+    remote.is_dir = False
+    frame._get_selected_remote_file.return_value = remote
+    fake_wx.MessageBox.return_value = fake_wx.YES
+
+    frame._delete_remote()
+
+    frame._client.delete.assert_called_once_with("/remote/doc.txt")
+
+
+def test_delete_local_resolves_relative_path_against_cwd(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._local_cwd = "/tmp/example"
+    local = MagicMock(name="doc.txt")
+    local.name = "doc.txt"
+    local.path = "doc.txt"
+    frame._get_selected_local_file.return_value = local
+    fake_wx.MessageBox.return_value = fake_wx.YES
+
+    with patch.object(app, "delete_local") as delete_local_mock:
+        frame._delete_local()
+
+    delete_local_mock.assert_called_once_with("/tmp/example/doc.txt")
+
+
 def test_delete_remote_reports_failure(app_module):
     app, fake_wx = app_module
     frame = _hydrate_frame(app_module)

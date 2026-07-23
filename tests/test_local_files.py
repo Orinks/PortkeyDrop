@@ -114,6 +114,19 @@ class TestDeleteLocal:
         delete_local(d)
         assert not d.exists()
 
+    def test_delete_directory_symlink_unlinks_link_only(self, tmp_path):
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "inner.txt").write_text("x")
+        link = tmp_path / "target-link"
+        link.symlink_to(target, target_is_directory=True)
+
+        delete_local(link)
+
+        assert not link.exists()
+        assert target.exists()
+        assert (target / "inner.txt").exists()
+
     def test_delete_nonexistent_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             delete_local(tmp_path / "nope.txt")

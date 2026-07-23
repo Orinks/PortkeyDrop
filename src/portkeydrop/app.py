@@ -1933,6 +1933,21 @@ class MainFrame(wx.Frame):
         else:
             self._delete_remote()
 
+    def _resolve_remote_file_path(self, remote_file: RemoteFile) -> str:
+        path = (remote_file.path or remote_file.name).strip()
+        if not path.startswith("/"):
+            base = self._client.cwd if self._client else "/"
+            path = f"{base.rstrip('/')}/{path}" if base != "/" else f"/{path.lstrip('/')}"
+        if remote_file.is_dir and remote_file.path.endswith("/") and not path.endswith("/"):
+            path += "/"
+        return path or "/"
+
+    def _resolve_local_file_path(self, remote_file: RemoteFile) -> str:
+        path = Path(remote_file.path or remote_file.name).expanduser()
+        if not path.is_absolute():
+            path = Path(self._local_cwd) / path
+        return str(path.resolve(strict=False))
+
     def _delete_remote(self) -> None:
         f = self._get_selected_remote_file()
         if not f or not self._client or f.name == "..":
@@ -1942,11 +1957,12 @@ class MainFrame(wx.Frame):
         )
         if result == wx.YES:
             try:
+                target_path = self._resolve_remote_file_path(f)
                 self._update_status(f"Deleting {f.name}...", self._client.cwd)
                 if f.is_dir:
-                    self._client.rmdir(f.path)
+                    self._client.rmdir(target_path)
                 else:
-                    self._client.delete(f.path)
+                    self._client.delete(target_path)
                 self._announce(f"Deleted {f.name}")
                 self._update_status("Delete complete.", self._client.cwd)
                 self._play_sound_event("delete_complete")
@@ -1965,7 +1981,7 @@ class MainFrame(wx.Frame):
         )
         if result == wx.YES:
             try:
-                delete_local(f.path)
+                delete_local(self._resolve_local_file_path(f))
                 self._announce(f"Deleted {f.name}")
                 self._play_sound_event("delete_complete")
                 self._refresh_local_files()

@@ -64,8 +64,10 @@ def parent_local(current: str | Path) -> Path:
 
 def delete_local(path: str | Path) -> None:
     """Delete a local file or directory."""
-    p = Path(path)
-    if p.is_dir():
+    p = Path(path).expanduser()
+    if p.is_symlink() or p.is_file():
+        p.unlink()
+    elif p.is_dir():
         shutil.rmtree(p)
     else:
         p.unlink()
