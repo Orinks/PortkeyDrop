@@ -57,7 +57,9 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
-Portkey Drop currently supports Python 3.11 and 3.12.
+Packaged builds for Windows (installer and portable ZIP), macOS, and Linux (tarball and AppImage) are published on the [releases page](https://github.com/Orinks/PortkeyDrop/releases). On Linux, download the AppImage, mark it executable (`chmod +x PortkeyDrop-*.AppImage`), and run it.
+
+To run from source instead, Portkey Drop currently supports Python 3.11 and 3.12.
 
 **Windows:**
 ```powershell

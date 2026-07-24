@@ -24,6 +24,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -433,10 +434,6 @@ def create_portable_zip() -> bool:
 
     zip_path = DIST_DIR / zip_name
 
-    # Remove existing zip
-    if Path(f"{zip_path}.zip").exists():
-        Path(f"{zip_path}.zip").unlink()
-
     if IS_WINDOWS:
         (source_dir / ".portable").write_text("1\n", encoding="utf-8")
         (source_dir / "data").mkdir(exist_ok=True)
@@ -447,9 +444,22 @@ def create_portable_zip() -> bool:
             print(f"Error: {exc}")
             return False
 
-    shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+    if IS_LINUX:
+        # tar.gz keeps the executable bit on the launcher, unlike zip.
+        archive_file = Path(f"{zip_path}.tar.gz")
+        if archive_file.exists():
+            archive_file.unlink()
 
-    print(f"\n✓ Portable ZIP created: {zip_path}.zip")
+        with tarfile.open(archive_file, "w:gz") as archive:
+            archive.add(source_dir, arcname=source_dir.name)
+    else:
+        archive_file = Path(f"{zip_path}.zip")
+        if archive_file.exists():
+            archive_file.unlink()
+
+        shutil.make_archive(str(zip_path), "zip", source_dir.parent, source_dir.name)
+
+    print(f"\n✓ Portable archive created: {archive_file}")
     return True
 
 

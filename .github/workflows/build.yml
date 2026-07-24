@@ -191,10 +191,160 @@ jobs:
           path: |
             dist/PortkeyDrop_macOS_*.zip
 
+  build-linux:
+    name: Linux
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Restore Nuitka cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .nuitka-cache
+          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-
+            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ccache \
+            libgtk-3-dev \
+            libnotify-dev \
+            libsdl2-dev \
+            libwebkit2gtk-4.1-dev \
+            freeglut3-dev \
+            xvfb
+
+      - name: Install dependencies
+        run: |
+          WX_PYTHON_VERSION=4.2.5
+          PY_TAG=$(python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+          pip install \
+            "https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04/wxpython-${WX_PYTHON_VERSION}-${PY_TAG}-${PY_TAG}-linux_x86_64.whl"
+          pip install -e .[dev,build]
+
+      - name: Build
+        timeout-minutes: 55
+        run: |
+          python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
+          python installer/build_nuitka.py --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
+
+      - name: Smoke test packaged app
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/portkeydrop-data
+          XDG_CONFIG_HOME: ${{ runner.temp }}/portkeydrop-config
+        run: |
+          set +e
+          timeout 25s xvfb-run -a dist/PortkeyDrop/PortkeyDrop > linux-smoke.log 2>&1
+          status=$?
+          set -e
+          cat linux-smoke.log
+          if grep -E "cannot register existing type 'G(Task|AsyncResult|InputStream|Seekable|PollableInputStream)'|GLib-GObject-CRITICAL" linux-smoke.log; then
+            echo "Packaged Linux app hit the GLib/GIO duplicate type-registration crash."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "Packaged Linux app exited unexpectedly with status $status."
+            exit "$status"
+          fi
+
+      - name: Package AppImage
+        timeout-minutes: 15
+        run: python installer/build_appimage.py
+
+      - name: Smoke test AppImage on Fedora
+        timeout-minutes: 15
+        run: |
+          cat > fedora-smoke.sh <<'EOF'
+          set -e
+          dnf install -y -q gtk3 libnotify alsa-lib xorg-x11-server-Xvfb dejavu-sans-fonts >/dev/null
+          cd /work
+          appimage=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.AppImage' -print -quit)
+          if [ -z "$appimage" ]; then
+            echo "AppImage was not created."
+            exit 1
+          fi
+          chmod +x "$appimage"
+          export XDG_DATA_HOME=/tmp/pkd-data XDG_CONFIG_HOME=/tmp/pkd-config
+          set +e
+          timeout 25s xvfb-run -a "$appimage" --appimage-extract-and-run > fedora-smoke.log 2>&1
+          status=$?
+          set -e
+          cat fedora-smoke.log
+          if grep -E "error while loading shared libraries|cannot open shared object file" fedora-smoke.log; then
+            echo "AppImage is missing a shared library on Fedora."
+            exit 1
+          fi
+          if grep -E "cannot register existing type 'G(Task|AsyncResult|InputStream|Seekable|PollableInputStream)'|GLib-GObject-CRITICAL" fedora-smoke.log; then
+            echo "AppImage hit the GLib/GIO duplicate type-registration crash on Fedora."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            echo "AppImage exited unexpectedly with status $status on Fedora."
+            exit "$status"
+          fi
+          echo "Fedora smoke test passed."
+          EOF
+          docker run --rm -v "$PWD:/work" fedora:43 bash /work/fedora-smoke.sh
+
+      - name: Verify Linux tarball avoids bundled OpenSSL
+        run: |
+          tarball=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.tar.gz' -print -quit)
+          if [ -z "$tarball" ]; then
+            echo "Linux tarball was not created."
+            exit 1
+          fi
+          if tar -tzf "$tarball" | grep -E '(^|/)lib(ssl|crypto)\.so'; then
+            echo "Linux tarball must not bundle OpenSSL libraries; use the target system OpenSSL instead."
+            exit 1
+          fi
+
+      - name: Verify Linux tarball includes sound_lib x64 libraries
+        run: |
+          tarball=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.tar.gz' -print -quit)
+          if [ -z "$tarball" ]; then
+            echo "Linux tarball was not created."
+            exit 1
+          fi
+          for lib in libbass.so libbassmix.so libbassopus.so libtags.so; do
+            if ! tar -tzf "$tarball" | grep -qx "PortkeyDrop/sound_lib/lib/x64/$lib"; then
+              echo "Linux tarball is missing sound_lib/lib/x64/$lib."
+              exit 1
+            fi
+          done
+
+      - name: Save Nuitka cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: .nuitka-cache
+          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/PortkeyDrop_Linux_*.tar.gz
+            dist/PortkeyDrop_Linux_*.AppImage
+
   release:
     name: Release
-    needs: [prepare, build-windows, build-macos]
-    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success')
+    needs: [prepare, build-windows, build-macos, build-linux]
+    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-linux.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -220,7 +370,7 @@ jobs:
           TIMESTAMP=$(date -u +%Y%m%d)
 
           # Rename assets based on release type
-          for f in dist/*.exe dist/*.zip; do
+          for f in dist/*.exe dist/*.zip dist/*.tar.gz dist/*.AppImage; do
             [ -f "$f" ] || continue
             name=$(basename "$f")
             if [ "$IS_NIGHTLY" = "true" ]; then
@@ -228,12 +378,16 @@ jobs:
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-portable.zip" ;;
                 *macOS*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-macOS.zip" ;;
+                *Linux*.tar.gz) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-linux.tar.gz" ;;
+                *Linux*.AppImage) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-linux-x86_64.AppImage" ;;
               esac
             else
               case "$name" in
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-portable.zip" ;;
                 *macOS*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-macOS.zip" ;;
+                *Linux*.tar.gz) mv "$f" "assets/PortkeyDrop-${VERSION}-linux.tar.gz" ;;
+                *Linux*.AppImage) mv "$f" "assets/PortkeyDrop-${VERSION}-linux-x86_64.AppImage" ;;
               esac
             fi
           done

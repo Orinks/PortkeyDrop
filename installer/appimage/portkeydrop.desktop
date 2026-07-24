@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PortkeyDrop
+Comment=Keyboard-first file transfer client for SFTP, FTP, FTPS, and WebDAV
+Exec=PortkeyDrop
+Icon=portkeydrop
+Categories=Network;FileTransfer;
+Terminal=false

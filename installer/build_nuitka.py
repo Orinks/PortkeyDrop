@@ -59,13 +59,14 @@ def find_sound_lib_data_dir() -> Path | None:
     if package_dir is None:
         return None
     lib_dir = package_dir / "lib"
-    if (lib_dir / "bass.dll").exists() or any(lib_dir.glob("**/bass.dll")):
-        return lib_dir
+    for native_name in ("bass.dll", "libbass.so"):
+        if (lib_dir / native_name).exists() or any(lib_dir.glob(f"**/{native_name}")):
+            return lib_dir
     return None
 
 
 def stage_sound_lib_native_libraries(target_dir: Path) -> None:
-    """Copy sound_lib's native BASS DLLs into the staged app tree."""
+    """Copy sound_lib's native BASS libraries into the staged app tree."""
     source_dir = find_sound_lib_data_dir()
     if source_dir is None:
         return
@@ -75,6 +76,20 @@ def stage_sound_lib_native_libraries(target_dir: Path) -> None:
         shutil.rmtree(target_lib_dir)
     target_lib_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, target_lib_dir)
+    if platform.system() == "Linux":
+        _mirror_sound_lib_flat_files_to_arch_dir(target_lib_dir)
+
+
+def _mirror_sound_lib_flat_files_to_arch_dir(target_dir: Path) -> None:
+    """Support sound_lib loaders that still search sound_lib/lib/x64 in frozen apps."""
+    flat_files = [path for path in target_dir.iterdir() if path.is_file()]
+    if not flat_files:
+        return
+
+    arch_dir = target_dir / "x64"
+    arch_dir.mkdir(exist_ok=True)
+    for path in flat_files:
+        shutil.copy2(path, arch_dir / path.name)
 
 
 def get_version() -> str:
@@ -134,7 +149,7 @@ def stage_nuitka_distribution() -> Path:
     shutil.copytree(source_dir, target_dir)
     if output_kind == "app":
         stage_macos_default_soundpacks(target_dir)
-    elif platform.system() == "Windows":
+    elif platform.system() in ("Windows", "Linux"):
         stage_sound_lib_native_libraries(target_dir)
     return target_dir
 

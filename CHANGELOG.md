@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+- Linux builds: releases and nightlies now include a Linux tarball and an AppImage. The AppImage bundles the libraries missing on non-Ubuntu systems, so it runs on Fedora, Arch, and openSUSE too, while screen reader support, themes, and TLS keep using your distro's own libraries.
+
 ### Fixed
 - Pressing Delete or F2 while editing a text field no longer triggers file delete or rename — those keys now act only inside the file panes, and file operations tell you to focus a pane first instead of guessing (and sometimes targeting a remote file you never touched).
 - Background transfer completions no longer jump your position in the file lists back to the top; deletes and renames keep you on the nearest neighbouring file, and sorting or toggling hidden files keeps your selection.
