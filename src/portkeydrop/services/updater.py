@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -308,11 +309,59 @@ def build_macos_update_script(update_path: Path, app_path: Path) -> str:
     ).strip()
 
 
+def build_appimage_update_script(
+    update_path: Path,
+    appimage_path: Path,
+) -> str:
+    """
+    Build a shell script that swaps a running AppImage for its update.
+
+    The script waits for the current process to exit, stages the downloaded
+    AppImage next to the existing one (so the final rename is atomic on the
+    same filesystem), then relaunches. Paths are shell-quoted so spaces or
+    metacharacters in the install location cannot break the script.
+    """
+    q_update = shlex.quote(str(update_path))
+    q_appimage = shlex.quote(str(appimage_path))
+    return textwrap.dedent(
+        f"""
+        #!/bin/bash
+        PID={os.getpid()}
+        UPDATE_PATH={q_update}
+        APPIMAGE_PATH={q_appimage}
+        while kill -0 "$PID" 2>/dev/null; do sleep 1; done
+        STAGED="$APPIMAGE_PATH.update-new"
+        cp "$UPDATE_PATH" "$STAGED" || exit 1
+        chmod +x "$STAGED"
+        mv -f "$STAGED" "$APPIMAGE_PATH" || exit 1
+        rm -f "$UPDATE_PATH"
+        cd "$HOME" || true
+        nohup "$APPIMAGE_PATH" --updated >/dev/null 2>&1 &
+        rm -f "$0"
+        """
+    ).strip()
+
+
+def running_appimage_path(appimage_path: str | None = None) -> Path | None:
+    """
+    Return the path of the AppImage this process is running from, if any.
+
+    The AppImage runtime exports ``APPIMAGE`` with the absolute path of the
+    mounted .AppImage file; when absent we are not an AppImage deployment.
+    """
+    raw = appimage_path or os.environ.get("APPIMAGE")
+    if not raw:
+        return None
+    path = Path(raw)
+    return path if path.is_file() else None
+
+
 def plan_restart(
     update_path: Path,
     *,
     portable: bool,
     platform_system: str | None = None,
+    appimage_path: str | None = None,
 ) -> RestartPlan:
     """Return restart plan for platform/update artifact."""
     system = (platform_system or platform.system()).lower()
@@ -327,7 +376,32 @@ def plan_restart(
         temp_dir = Path(tempfile.mkdtemp(prefix="portkeydrop_update_"))
         script_path = temp_dir / "portkeydrop_update.sh"
         return RestartPlan("macos_script", ["bash", str(script_path)], script_path=script_path)
+    if "linux" in system:
+        running_from = running_appimage_path(appimage_path)
+        if running_from and str(update_path).lower().endswith(".appimage"):
+            temp_dir = Path(tempfile.mkdtemp(prefix="portkeydrop_update_"))
+            script_path = temp_dir / "portkeydrop_appimage_update.sh"
+            return RestartPlan(
+                "appimage_script", ["bash", str(script_path)], script_path=script_path
+            )
     return RestartPlan("unsupported", [str(update_path)])
+
+
+def can_auto_apply(
+    update_path: Path,
+    *,
+    portable: bool,
+    platform_system: str | None = None,
+) -> bool:
+    """
+    Check whether apply_update() can install this update automatically.
+
+    Callers should check this before tearing down UI: when it returns False
+    the update file must be installed manually (e.g. a Linux tarball run,
+    where there is no self-update mechanism).
+    """
+    plan = plan_restart(update_path, portable=portable, platform_system=platform_system)
+    return plan.kind != "unsupported"
 
 
 def apply_update(
@@ -335,8 +409,14 @@ def apply_update(
     *,
     portable: bool,
     platform_system: str | None = None,
-) -> None:
-    """Launch update installer/script and exit current process."""
+) -> bool:
+    """
+    Launch update installer/script and exit current process.
+
+    This function does not return on success - it exits after launching
+    the update process. It returns False when the platform has no
+    auto-apply mechanism and the update requires manual installation.
+    """
     plan = plan_restart(update_path, portable=portable, platform_system=platform_system)
 
     if plan.kind == "portable" and plan.script_path:
@@ -359,7 +439,17 @@ def apply_update(
         subprocess.Popen(plan.command, shell=False)
         os._exit(0)
 
+    if plan.kind == "appimage_script" and plan.script_path:
+        appimage_path = running_appimage_path()
+        if appimage_path is not None:
+            script_content = build_appimage_update_script(update_path, appimage_path)
+            plan.script_path.write_text(script_content, encoding="utf-8")
+            plan.script_path.chmod(0o700)
+            subprocess.Popen(["bash", str(plan.script_path)], shell=False)
+            os._exit(0)
+
     logger.warning("Manual update required: %s", update_path)
+    return False
 
 
 class UpdateService:

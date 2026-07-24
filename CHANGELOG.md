@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Linux builds: releases and nightlies now include a Linux tarball and an AppImage. The AppImage bundles the libraries missing on non-Ubuntu systems, so it runs on Fedora, Arch, and openSUSE too, while screen reader support, themes, and TLS keep using your distro's own libraries.
+- Linux AppImage installs can update themselves: the updater downloads the new AppImage, verifies its checksum, swaps it in place, and relaunches. Tarball runs get told where the verified download was saved instead of hitting a dead end.
 
 ### Fixed
 - Pressing Delete or F2 while editing a text field no longer triggers file delete or rename — those keys now act only inside the file panes, and file operations tell you to focus a pane first instead of guessing (and sometimes targeting a remote file you never touched).

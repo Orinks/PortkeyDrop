@@ -64,6 +64,7 @@ from portkeydrop.services.updater import (
     ChecksumVerificationError,
     UpdateService,
     apply_update,
+    can_auto_apply,
     parse_nightly_date,
 )
 from portkeydrop.ui.dialogs.migration_dialog import MigrationDialog
@@ -2511,6 +2512,22 @@ class MainFrame(wx.Frame):
                     wx.CallAfter(progress_dlg.Destroy)
 
                 def confirm_apply() -> None:
+                    portable = is_portable_mode()
+
+                    # Platforms without a self-update mechanism (e.g. a Linux
+                    # tarball run) get the file location instead of a dead end.
+                    if not can_auto_apply(update_path, portable=portable):
+                        wx.MessageBox(
+                            "The update was downloaded, but this type of "
+                            "install can't update itself automatically.\n\n"
+                            f"The new version was saved to:\n{update_path}\n\n"
+                            "Install it manually, then restart Portkey Drop.",
+                            "Manual Update Required",
+                            wx.OK | wx.ICON_INFORMATION,
+                            self,
+                        )
+                        return
+
                     result_code = wx.MessageBox(
                         "Download complete. Portkey Drop will now restart to apply the update.\n\n"
                         "Continue?",
@@ -2525,7 +2542,7 @@ class MainFrame(wx.Frame):
                             except Exception:
                                 pass
                         wx.SafeYield()
-                        apply_update(update_path, portable=is_portable_mode())
+                        apply_update(update_path, portable=portable)
 
                 wx.CallAfter(confirm_apply)
 
