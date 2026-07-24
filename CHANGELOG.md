@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.6.0] - 2026-07-24
+
 ### Added
 - Linux builds: releases and nightlies now include a Linux tarball and an AppImage. The AppImage bundles the libraries missing on non-Ubuntu systems, so it runs on Fedora, Arch, and openSUSE too, while screen reader support, themes, and TLS keep using your distro's own libraries.
 - Linux AppImage installs can update themselves: the updater downloads the new AppImage, verifies its checksum, swaps it in place, and relaunches. Tarball runs get told where the verified download was saved instead of hitting a dead end.
@@ -25,8 +27,6 @@ All notable changes to this project will be documented in this file.
 - Added Help > Keyboard Shortcuts listing every binding, including the previously undocumented F6, Ctrl+L, and Ctrl+1/2/3 pane shortcuts.
 - Duplicate menu and dialog access keys (Alt+letter) were reassigned so each letter activates its control directly across the menus, Site Manager, Settings, transfer queue, sound pack, and import dialogs.
 - The Settings Audio tab now scrolls so all mute checkboxes stay visible when focused; the file lists have proper accessible names for VoiceOver; keyboard-opened context menus appear at the focused file instead of the mouse pointer; switching protocol keeps a hand-typed port; the activity log no longer moves your reading position when new entries arrive; and a startup notice appears when no speech backend is available.
-
-### Changed
 - Pressing Escape in the quick connect bar while connected now hides the bar and returns focus to where you were.
 - Choosing Connect with an empty host, username, or required password now moves focus to the field that needs input and announces it, instead of showing a dead-end error dialog.
 - Quick Connect (Ctrl+N) now focuses the quick connect bar (revealing it while connected) instead of opening a separate dialog with the same fields.
@@ -34,7 +34,6 @@ All notable changes to this project will be documented in this file.
 - Removed the redundant File > Connect menu item; connecting lives in the quick connect bar and the Sites menu. Ctrl+Enter still connects.
 - Moved Disconnect from the File menu to the Sites menu, so connecting, disconnecting, and site management share one menu.
 - An invalid port in the quick connect bar now focuses the port field with an announcement instead of crashing the connect action.
-- Development builds now report the next 0.5.2 development version after the 0.5.1 hotfix release.
 
 ## [0.5.1] - 2026-05-31
 
