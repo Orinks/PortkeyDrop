@@ -213,7 +213,9 @@ def test_system_tray_show_main_window_restores_frame(monkeypatch):
     frame.Show.assert_called_once_with(True)
     frame.Iconize.assert_called_once_with(False)
     frame.Raise.assert_called_once()
-    frame.SetFocus.assert_called_once()
+    # Focus lands on a concrete control, not the bare frame.
+    frame.focus_default_pane.assert_called_once()
+    frame.SetFocus.assert_not_called()
 
 
 def test_system_tray_show_main_window_requests_attention_on_macos(monkeypatch):

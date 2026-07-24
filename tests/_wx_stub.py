@@ -142,6 +142,8 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.WXK_F2 = 515
     fake_wx.WXK_F6 = 516
     fake_wx.WXK_TAB = 9
+    fake_wx.WXK_RETURN = 13
+    fake_wx.WXK_ESCAPE = 27
     fake_wx.ACCEL_NORMAL = 1
     fake_wx.ACCEL_CTRL = 2
     fake_wx.ID_OK = 100
@@ -176,6 +178,9 @@ def _create_fake_wx() -> tuple[types.ModuleType, types.ModuleType]:
     fake_wx.Yield = lambda *args, **kwargs: None
     fake_wx.NotFound = -1
     fake_wx.NOT_FOUND = -1
+    fake_wx.Size = lambda w=-1, h=-1: (w, h)
+    fake_wx.Point = lambda x=0, y=0: (x, y)
+    fake_wx.DefaultPosition = (-1, -1)
 
     def _new_event_type() -> str:
         return f"event-{_new_id_ref()}"

@@ -31,7 +31,7 @@ Portkey Drop includes a built-in default sound pack with short cues for transfer
 | Ctrl+I | File properties |
 | Ctrl+Shift+N | New directory |
 | Ctrl+Shift+T | Transfer queue |
-| Ctrl+Q | Disconnect |
+| Ctrl+Enter | Connect using the quick connect bar |
 | Enter | Open directory / download file |
 | Backspace | Parent directory |
 | Delete | Delete selected |
@@ -57,7 +57,9 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
-Portkey Drop currently supports Python 3.11 and 3.12.
+Packaged builds for Windows (installer and portable ZIP), macOS, and Linux (tarball and AppImage) are published on the [releases page](https://github.com/Orinks/PortkeyDrop/releases). On Linux, download the AppImage, mark it executable (`chmod +x PortkeyDrop-*.AppImage`), and run it.
+
+To run from source instead, Portkey Drop currently supports Python 3.11 and 3.12.
 
 **Windows:**
 ```powershell

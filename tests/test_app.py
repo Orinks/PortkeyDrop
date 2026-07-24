@@ -66,6 +66,8 @@ def _build_frame(module, tmp_path):
 def _hydrate_frame(module):
     app, _ = module
     frame = object.__new__(app.MainFrame)
+    frame._connecting = False
+    frame._focus_before_quick_connect = None
     frame._announce = MagicMock()
     frame._status = MagicMock()
     frame._update_status = MagicMock()
@@ -153,6 +155,7 @@ def test_bind_events_hooks_transfer_update(app_module):
     frame.Bind = MagicMock()
     frame.tb_connect_btn = MagicMock(Bind=MagicMock())
     frame.tb_protocol = MagicMock(Bind=MagicMock())
+    frame._toolbar_panel = MagicMock(Bind=MagicMock())
     frame.remote_file_list = MagicMock(Bind=MagicMock())
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
@@ -175,6 +178,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
     frame.SetAcceleratorTable = MagicMock()
     frame.tb_connect_btn = MagicMock(Bind=MagicMock())
     frame.tb_protocol = MagicMock(Bind=MagicMock())
+    frame._toolbar_panel = MagicMock(Bind=MagicMock())
     frame.remote_file_list = MagicMock(Bind=MagicMock())
     frame.local_file_list = MagicMock(Bind=MagicMock())
     frame.local_path_bar = MagicMock(Bind=MagicMock())
@@ -192,6 +196,7 @@ def test_bind_events_sets_f6_and_ctrl_l_accelerators(app_module):
         app.ID_SWITCH_PANE_FOCUS,
     ) in table_entries
     assert (fake_wx.ACCEL_CTRL, ord("L"), app.ID_FOCUS_ADDRESS_BAR) in table_entries
+    assert (fake_wx.ACCEL_CTRL, fake_wx.WXK_RETURN, app.ID_CONNECT) in table_entries
 
 
 def test_macos_menu_uses_command_q_for_exit_not_disconnect(app_module):
@@ -326,7 +331,7 @@ def test_focus_address_bar_sets_toolbar_host_focus_and_announces(app_module):
     frame._on_focus_address_bar(None)
 
     frame.tb_host.SetFocus.assert_called_once()
-    frame._announce.assert_called_once_with("Address bar")
+    frame._announce.assert_called_once_with("Quick connect bar")
 
 
 def test_on_upload_directory_updates_status(app_module):
@@ -428,7 +433,8 @@ def test_on_upload_batch_mixed_files_and_folders_skips_parent(tmp_path, app_modu
         overwrite_existing=False,
     )
     frame._announce.assert_called_with("Queued 2 uploads")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_batch_mixed_files_and_folders_skips_parent(tmp_path, app_module):
@@ -463,7 +469,8 @@ def test_on_download_batch_mixed_files_and_folders_skips_parent(tmp_path, app_mo
         overwrite_existing=False,
     )
     frame._announce.assert_called_with("Queued 2 downloads")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_upload_empty_selection_does_not_enqueue(app_module):
@@ -477,7 +484,7 @@ def test_on_upload_empty_selection_does_not_enqueue(app_module):
     frame._on_upload(None)
 
     frame._transfer_service.submit_upload.assert_not_called()
-    frame._announce.assert_not_called()
+    frame._announce.assert_called_once_with("Nothing selected to upload")
     frame._show_transfer_queue.assert_not_called()
 
 
@@ -492,7 +499,7 @@ def test_on_download_empty_selection_does_not_enqueue(app_module):
     frame._on_download(None)
 
     frame._transfer_service.submit_download.assert_not_called()
-    frame._announce.assert_not_called()
+    frame._announce.assert_called_once_with("Nothing selected to download")
     frame._show_transfer_queue.assert_not_called()
 
 
@@ -531,7 +538,8 @@ def test_on_upload_batch_conflict_skip_continues_with_remaining_item(tmp_path, a
     )
     frame._announce.assert_any_call("Skipped upload; existing.txt already exists")
     frame._announce.assert_called_with("Queued 1 upload")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_batch_conflict_skip_continues_with_remaining_item(tmp_path, app_module):
@@ -560,7 +568,8 @@ def test_on_download_batch_conflict_skip_continues_with_remaining_item(tmp_path,
     )
     frame._announce.assert_any_call("Skipped download; existing.txt already exists")
     frame._announce.assert_called_with("Queued 1 download")
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_on_download_skip_existing_file_does_not_enqueue(tmp_path, app_module):
@@ -786,7 +795,7 @@ def test_remote_conflict_helpers_cover_empty_and_ask_paths(app_module):
     frame._announce.assert_called_with("Skipped upload; report.txt already exists")
 
 
-def test_paste_upload_shows_queue(tmp_path, app_module):
+def test_paste_upload_queues_without_opening_dialog(tmp_path, app_module):
     app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame._client = MagicMock(connected=True, cwd="/remote")
@@ -799,7 +808,8 @@ def test_paste_upload_shows_queue(tmp_path, app_module):
     frame._paste_upload()
 
     frame._transfer_service.submit_upload.assert_called_once()
-    frame._show_transfer_queue.assert_called_once()
+    # The queue dialog must not steal focus by auto-opening.
+    frame._show_transfer_queue.assert_not_called()
 
 
 def test_paste_upload_skip_existing_remote_file(tmp_path, app_module):
@@ -1031,14 +1041,29 @@ def test_toolbar_protocol_change_uses_webdav_default_port(app_module):
     _app, _ = app_module
     frame = _hydrate_frame(app_module)
     frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="webdav"))
-    frame.tb_port = MagicMock()
-    frame.tb_ftp_ssl = MagicMock()
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value="22"))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=True))
 
     frame._on_toolbar_protocol_change(None)
 
     frame.tb_port.SetValue.assert_called_once_with("443")
     frame.tb_ftp_ssl.Enable.assert_called_once_with(False)
     frame.tb_ftp_ssl.SetValue.assert_called_once_with(False)
+    frame._announce.assert_any_call("Port set to 443")
+    frame._announce.assert_any_call("Use SSL turned off")
+
+
+def test_toolbar_protocol_change_keeps_custom_port(app_module):
+    _app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value="ftp"))
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value="2222"))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=False))
+
+    frame._on_toolbar_protocol_change(None)
+
+    frame.tb_port.SetValue.assert_not_called()
+    frame.tb_ftp_ssl.SetValue.assert_not_called()
 
 
 def test_effective_site_port_uses_webdav_default(app_module):
@@ -1092,24 +1117,273 @@ def test_do_connect_still_requires_ftp_password(app_module):
     create_client.assert_not_called()
 
 
-def test_quick_connect_applies_connection_defaults(app_module):
+def _hydrate_toolbar_fields(frame, *, proto="sftp", host="", port="22", username="", password=""):
+    frame.tb_protocol = MagicMock(GetStringSelection=MagicMock(return_value=proto))
+    frame.tb_host = MagicMock(GetValue=MagicMock(return_value=host))
+    frame.tb_port = MagicMock(GetValue=MagicMock(return_value=port))
+    frame.tb_username = MagicMock(GetValue=MagicMock(return_value=username))
+    frame.tb_password = MagicMock(GetValue=MagicMock(return_value=password))
+    frame.tb_ftp_ssl = MagicMock(GetValue=MagicMock(return_value=False))
+
+
+def test_connect_toolbar_empty_host_focuses_host_field(app_module):
     app, fake_wx = app_module
     frame = _hydrate_frame(app_module)
     frame._do_connect = MagicMock()
-    info = app.ConnectionInfo(protocol=app.Protocol.FTP, host="example.com", username="alice")
-    dialog = MagicMock(
-        ShowModal=MagicMock(return_value=fake_wx.ID_OK),
-        get_connection_info=MagicMock(return_value=info),
-        Destroy=MagicMock(),
+    _hydrate_toolbar_fields(frame, host="   ")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_host.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a host to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_empty_host_reveals_hidden_quick_connect_bar(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+    _hydrate_toolbar_fields(frame)
+
+    frame._on_connect_toolbar(None)
+
+    frame._toolbar_panel.Show.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    frame.tb_host.SetFocus.assert_called_once()
+
+
+def test_connect_toolbar_empty_username_focuses_username_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_username.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a username to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_ftp_without_password_focuses_password_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, proto="ftp", host="example.com", port="21", username="alice")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_password.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a password to connect.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_non_numeric_port_focuses_port_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="abc")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_port.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a port number between 1 and 65535.")
+    frame._do_connect.assert_not_called()
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_connect_toolbar_out_of_range_port_focuses_port_field(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="70000")
+
+    frame._on_connect_toolbar(None)
+
+    frame.tb_port.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Enter a port number between 1 and 65535.")
+    frame._do_connect.assert_not_called()
+
+
+def test_connect_toolbar_empty_port_uses_protocol_default(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice", port="")
+
+    frame._on_connect_toolbar(None)
+
+    frame._do_connect.assert_called_once()
+    assert frame._do_connect.call_args.args[0].port == 0
+
+
+def test_connect_toolbar_sftp_without_password_still_connects(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._do_connect = MagicMock()
+    _hydrate_toolbar_fields(frame, host="example.com", username="alice")
+
+    frame._on_connect_toolbar(None)
+
+    frame._do_connect.assert_called_once()
+    info = frame._do_connect.call_args.args[0]
+    assert info.host == "example.com"
+    assert info.username == "alice"
+    frame._announce.assert_not_called()
+
+
+def test_quick_connect_reveal_remembers_previous_focus(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+    previous = MagicMock()
+    frame.FindFocus = MagicMock(return_value=previous)
+
+    frame._on_quick_connect(None)
+
+    assert frame._focus_before_quick_connect is previous
+
+
+def test_escape_dismisses_quick_connect_bar_while_connected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = MagicMock(connected=True)
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    previous = MagicMock(IsShown=MagicMock(return_value=True))
+    frame._focus_before_quick_connect = previous
+    event = MagicMock(GetKeyCode=MagicMock(return_value=app.wx.WXK_ESCAPE))
+
+    frame._on_quick_connect_bar_key(event)
+
+    frame._toolbar_panel.Hide.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    previous.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect cancelled")
+    event.Skip.assert_not_called()
+    assert frame._focus_before_quick_connect is None
+
+
+def test_escape_keeps_quick_connect_bar_while_disconnected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._client = None
+    event = MagicMock(GetKeyCode=MagicMock(return_value=app.wx.WXK_ESCAPE))
+
+    frame._on_quick_connect_bar_key(event)
+
+    frame._toolbar_panel.Hide.assert_not_called()
+    event.Skip.assert_called_once()
+
+
+def test_dismiss_quick_connect_falls_back_to_local_file_list(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    frame._focus_before_quick_connect = None
+
+    frame._dismiss_quick_connect_bar()
+
+    frame.local_file_list.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect cancelled")
+
+
+def test_do_connect_ignores_repeat_submit_while_connecting(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    frame._connecting = True
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.SFTP, host="example.com", username="alice", password="pw"
     )
 
-    with patch.object(app, "QuickConnectDialog", return_value=dialog):
-        frame._on_quick_connect(None)
+    with patch.object(app, "create_client") as create_client:
+        frame._do_connect(info)
 
-    frame._do_connect.assert_called_once_with(info)
-    assert info.timeout == 45
-    assert info.passive_mode is False
-    assert info.host_key_policy == app.HostKeyPolicy.STRICT
+    create_client.assert_not_called()
+    frame._on_disconnect.assert_not_called()
+    frame._announce.assert_called_once_with("Still connecting, please wait.")
+    fake_wx.MessageBox.assert_not_called()
+
+
+def test_do_connect_announces_connection_start(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._on_disconnect = MagicMock()
+    frame._on_connect_success = MagicMock()
+    info = app.ConnectionInfo(
+        protocol=app.Protocol.SFTP, host="example.com", username="alice", password="pw"
+    )
+
+    with (
+        patch.object(app, "create_client", return_value=MagicMock(cwd="/")),
+        patch.object(app.threading, "Thread", _ImmediateThread),
+    ):
+        frame._do_connect(info)
+
+    frame._announce.assert_called_once_with("Connecting to example.com")
+
+
+def test_connect_failure_resets_connecting_flag(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+    frame._connecting = True
+    frame._update_title = MagicMock()
+
+    frame._on_connect_failure(RuntimeError("boom"))
+
+    assert frame._connecting is False
+    fake_wx.MessageBox.assert_called_once()
+
+
+def test_connect_success_resets_connecting_flag(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame._connecting = True
+    frame._update_title = MagicMock()
+    frame.GetSizer = MagicMock()
+    frame.local_file_list = MagicMock()
+    client = MagicMock(
+        cwd="/home",
+        _info=SimpleNamespace(protocol=SimpleNamespace(value="sftp"), host="example.com"),
+    )
+
+    frame._on_connect_success(client)
+
+    assert frame._connecting is False
+
+
+def test_quick_connect_focuses_host_field(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+
+    frame._on_quick_connect(None)
+
+    frame.tb_host.SetFocus.assert_called_once()
+    frame._announce.assert_called_once_with("Quick connect bar")
+
+
+def test_quick_connect_reveals_hidden_bar_while_connected(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+    frame.tb_host = MagicMock(SetFocus=MagicMock())
+    frame._toolbar_panel.IsShown.return_value = False
+    frame.GetSizer = MagicMock()
+
+    frame._on_quick_connect(None)
+
+    frame._toolbar_panel.Show.assert_called_once()
+    frame.GetSizer.return_value.Layout.assert_called_once()
+    frame.tb_host.SetFocus.assert_called_once()
 
 
 def test_site_manager_connect_applies_connection_defaults(app_module):
@@ -1383,6 +1657,7 @@ def test_build_toolbar_adds_mnemonics_and_label_associations(app_module):
             self._label_for = control
 
     frame = object.__new__(app.MainFrame)
+    frame.FromDIP = lambda size: size
     with patch.object(fake_wx, "StaticText", side_effect=_Label):
         app.MainFrame._build_toolbar(frame)
 
@@ -1595,7 +1870,7 @@ def test_on_remote_files_loaded_announces_count(app_module):
     frame._remote_filter_text = ""
     frame._settings = MagicMock()
     frame._settings.display.announce_file_count = True
-    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=1))
     frame.remote_path_bar = MagicMock()
     frame._update_title = MagicMock()
     frame._apply_sort = MagicMock()
@@ -1608,6 +1883,65 @@ def test_on_remote_files_loaded_announces_count(app_module):
 
     frame._status.assert_called_once()
     assert "/home/user" in frame._status.call_args[0][0]
+    # Entering a new directory speaks the item count when the setting is on.
+    frame._announce.assert_called_once_with("1 item")
+
+
+def test_on_remote_files_loaded_announces_empty_folder(app_module):
+    app, _ = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = True
+    frame.remote_file_list = MagicMock(GetItemCount=MagicMock(return_value=0))
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[])
+    frame._remote_files = []
+
+    app.MainFrame._on_remote_files_loaded(frame, [RemoteFile(name="..", path="/")], "/home/user")
+
+    frame._announce.assert_called_once_with("Empty folder")
+
+
+def test_on_remote_files_loaded_same_dir_preserves_focused_row(app_module):
+    app, fake_wx = app_module
+    frame = _hydrate_frame(app_module)
+
+    from portkeydrop.protocols import RemoteFile
+
+    frame._client = MagicMock(cwd="/home/user")
+    frame._remote_filter_text = ""
+    frame._settings = MagicMock()
+    frame._settings.display.announce_file_count = True
+    frame._remote_populated_cwd = "/home/user"
+    rows = ["..", "alpha", "beta"]
+    frame.remote_file_list = MagicMock(
+        GetItemCount=MagicMock(return_value=3),
+        GetFocusedItem=MagicMock(return_value=2),
+        GetItemText=MagicMock(side_effect=lambda i: rows[i]),
+    )
+    frame.remote_path_bar = MagicMock()
+    frame._update_title = MagicMock()
+    frame._apply_sort = MagicMock()
+    frame._populate_file_list = MagicMock()
+    frame._get_visible_files = MagicMock(return_value=[MagicMock()] * 3)
+    frame._remote_files = []
+
+    app.MainFrame._on_remote_files_loaded(
+        frame, [RemoteFile(name="beta", path="/home/user/beta")], "/home/user"
+    )
+
+    # Background refresh of the same directory keeps the user's row (beta, index 2).
+    frame.remote_file_list.Select.assert_called_once_with(2)
+    frame.remote_file_list.Focus.assert_called_once_with(2)
+    # Same-directory refreshes do not re-announce the item count.
     frame._announce.assert_not_called()
 
 

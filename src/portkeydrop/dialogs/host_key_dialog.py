@@ -30,6 +30,7 @@ class HostKeyDialog(sc.SizedDialog):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(450, 90),
         )
+        self.security_details.SetName("Host key details")
         wx.StaticText(pane, label="Do you want to connect?")
 
         btn_pane = sc.SizedPanel(pane)

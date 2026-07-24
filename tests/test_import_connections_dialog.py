@@ -21,6 +21,9 @@ class _Window:
         if parent is not None and hasattr(parent, "children"):
             parent.children.append(self)
 
+    def GetParent(self):
+        return self.parent
+
     def Bind(self, event, handler):
         self._bound.append((event, handler))
 

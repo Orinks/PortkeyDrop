@@ -6,7 +6,7 @@ asyncssh known_hosts parameter and affect connection behavior.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncssh
 import pytest
@@ -123,6 +123,102 @@ class TestPromptPolicy:
         call_kwargs = mock_connect.call_args[1]
         # known_hosts is set (either to the file path or None if file doesn't exist)
         assert "known_hosts" in call_kwargs
+
+
+class TestPromptPolicyUnknownKey:
+    """PROMPT policy: unknown host keys ask the user instead of silently trusting."""
+
+    @pytest.fixture
+    def config_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("portkeydrop.portable.get_config_dir", lambda: tmp_path)
+        return tmp_path
+
+    @staticmethod
+    def _mock_key():
+        key = MagicMock()
+        key.get_algorithm.return_value = "ssh-ed25519"
+        key.get_fingerprint.return_value = "SHA256:abcdef"
+        key.export_public_key.return_value = b"ssh-ed25519 AAAAC3NzTEST comment\n"
+        return key
+
+    @staticmethod
+    def _mock_conn():
+        conn = AsyncMock()
+        sftp = AsyncMock()
+        sftp.realpath.return_value = "/"
+        conn.start_sftp_client.return_value = sftp
+        return conn
+
+    def test_reject_aborts_connection(self, sftp_info, config_dir):
+        prompt = MagicMock(return_value="reject")
+        info = sftp_info(host_key_policy=HostKeyPolicy.PROMPT, host_key_prompt=prompt)
+        with (
+            patch("asyncssh.connect", new_callable=AsyncMock) as mock_connect,
+            patch("asyncssh.get_server_host_key", new_callable=AsyncMock) as mock_get_key,
+        ):
+            mock_connect.side_effect = asyncssh.HostKeyNotVerifiable("unknown key")
+            mock_get_key.return_value = self._mock_key()
+            client = SFTPClient(info)
+
+            with pytest.raises(ConnectionError, match="rejected"):
+                client.connect()
+
+        prompt.assert_called_once_with("testhost.example.com", "ssh-ed25519", "SHA256:abcdef")
+        assert mock_connect.call_count == 1
+        assert (config_dir / "known_hosts").read_text(encoding="utf-8") == ""
+
+    def test_accept_once_retries_without_persisting(self, sftp_info, config_dir):
+        prompt = MagicMock(return_value="accept_once")
+        info = sftp_info(host_key_policy=HostKeyPolicy.PROMPT, host_key_prompt=prompt)
+        with (
+            patch("asyncssh.connect", new_callable=AsyncMock) as mock_connect,
+            patch("asyncssh.get_server_host_key", new_callable=AsyncMock) as mock_get_key,
+        ):
+            mock_connect.side_effect = [
+                asyncssh.HostKeyNotVerifiable("unknown key"),
+                self._mock_conn(),
+            ]
+            mock_get_key.return_value = self._mock_key()
+            client = SFTPClient(info)
+            client.connect()
+
+            assert client.connected
+            retry_kwargs = mock_connect.call_args[1]
+            assert retry_kwargs["known_hosts"] is None
+
+        assert (config_dir / "known_hosts").read_text(encoding="utf-8") == ""
+
+    def test_accept_permanent_appends_key_and_retries(self, sftp_info, config_dir):
+        prompt = MagicMock(return_value="accept_permanent")
+        info = sftp_info(host_key_policy=HostKeyPolicy.PROMPT, host_key_prompt=prompt)
+        with (
+            patch("asyncssh.connect", new_callable=AsyncMock) as mock_connect,
+            patch("asyncssh.get_server_host_key", new_callable=AsyncMock) as mock_get_key,
+        ):
+            mock_connect.side_effect = [
+                asyncssh.HostKeyNotVerifiable("unknown key"),
+                self._mock_conn(),
+            ]
+            mock_get_key.return_value = self._mock_key()
+            client = SFTPClient(info)
+            client.connect()
+
+            assert client.connected
+            retry_kwargs = mock_connect.call_args[1]
+            assert retry_kwargs["known_hosts"] == str(config_dir / "known_hosts")
+
+        saved = (config_dir / "known_hosts").read_text(encoding="utf-8")
+        assert saved == "testhost.example.com ssh-ed25519 AAAAC3NzTEST comment\n"
+
+    def test_no_prompt_callback_keeps_failure(self, sftp_info, config_dir):
+        info = sftp_info(host_key_policy=HostKeyPolicy.PROMPT)
+        with patch("asyncssh.connect", new_callable=AsyncMock) as mock_connect:
+            mock_connect.side_effect = asyncssh.HostKeyNotVerifiable("unknown key")
+            client = SFTPClient(info)
+
+            with pytest.raises(ConnectionError):
+                client.connect()
+        assert mock_connect.call_count == 1
 
 
 class TestHostKeyPolicyAppliedDuringConnect:
