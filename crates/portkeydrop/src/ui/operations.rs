@@ -8,6 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use wxdragon::data_object::{FileDataObject, TextDataObject};
@@ -18,14 +20,19 @@ use portkeydrop_core::protocols::{self, RemoteFile};
 
 use portkeydrop_core::sites::Site;
 
+use portkeydrop_core::updater::{
+    apply_update, can_auto_apply, ApplyContext, UpdateError, UpdateInfo,
+};
 use portkeydrop_core::{local_files, VERSION};
 
-use super::events::{self, AppEvent, UpdateOutcome};
+use super::events::{self, AppEvent, DownloadOutcome, UpdateOutcome};
 
 use super::ids;
 
 use super::main_frame::{MainFrame, Side};
 
+use super::format;
+use super::main_frame::Download;
 use super::prompts;
 
 use super::dialogs;
@@ -824,13 +831,7 @@ impl MainFrame {
                     portable,
                     portkeydrop_core::updater::current_system(),
                 ) {
-                    Ok(Some(update)) => UpdateOutcome::Available {
-                        version: update.version,
-
-                        notes: update.release_notes,
-
-                        artifact: update.artifact_name,
-                    },
+                    Ok(Some(update)) => UpdateOutcome::Available(Box::new(update)),
 
                     Ok(None) => UpdateOutcome::UpToDate,
 
@@ -847,20 +848,16 @@ impl MainFrame {
     /// Report the result of an update check.
     pub(super) fn on_update_check(&self, outcome: UpdateOutcome) {
         match outcome {
-            UpdateOutcome::Available {
-                version,
-                notes,
-                artifact,
-            } => {
-                self.log(&format!("Update {version} is available ({artifact})."));
-
+            UpdateOutcome::Available(update) => {
+                self.log(&format!(
+                    "Update {} is available ({}).",
+                    update.version, update.artifact_name
+                ));
                 self.state.borrow_mut().play_sound("notify");
 
-                let message = format!(
-                    "Portkey Drop {version} is available.\n\nYou are running {VERSION}.\n\n{notes}"
-                );
-
-                dialogs::show_text_window(&self.frame, "Update available", &message);
+                if dialogs::update::show_offer(&self.frame, VERSION, &update) {
+                    self.download_update(*update);
+                }
             }
 
             UpdateOutcome::UpToDate => {
@@ -875,6 +872,196 @@ impl MainFrame {
                 prompts::error(&self.frame, "Update check failed", &message);
             }
         }
+    }
+
+    /// Fetch an update the user has accepted, on a worker thread.
+    ///
+    /// The progress window is app-modal: this replaces the running binary, so
+    /// letting the user start a transfer underneath it would be inviting a
+    /// half-finished job to be killed by the restart.
+    pub(super) fn download_update(&self, update: UpdateInfo) {
+        if self.download.borrow().is_some() {
+            self.announce("An update is already downloading");
+            return;
+        }
+
+        let dialog = ProgressDialog::builder(
+            &self.frame,
+            dialogs::update::DOWNLOAD_TITLE,
+            &dialogs::update::progress_status(&update.artifact_name, 0, 0),
+            100,
+        )
+        .with_style(
+            ProgressDialogStyle::AppModal
+                | ProgressDialogStyle::CanAbort
+                | ProgressDialogStyle::Smooth
+                | ProgressDialogStyle::RemainingTime,
+        )
+        .build();
+
+        // Cancel is raised on the UI thread and read by the worker, which is
+        // the only way to stop a download parked in a blocking read.
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.download.borrow_mut() = Some(Download {
+            dialog: Rc::new(dialog),
+            artifact: update.artifact_name.clone(),
+            cancel: Arc::clone(&cancel),
+            announced: None,
+        });
+
+        self.log(&format!("Downloading {}...", update.artifact_name));
+        self.announce("Downloading update");
+
+        let sender = self.sender.clone();
+        let progress_sender = sender.clone();
+        let destination = std::env::temp_dir().join("portkeydrop-update");
+
+        std::thread::spawn(move || {
+            let outcome = (|| -> DownloadOutcome {
+                let service = match portkeydrop_core::updater::UpdateService::new() {
+                    Ok(service) => service,
+                    Err(err) => {
+                        return DownloadOutcome::Failed {
+                            message: err.to_string(),
+                        }
+                    }
+                };
+
+                let mut report = |downloaded: u64, total: u64| {
+                    events::post(
+                        &progress_sender,
+                        AppEvent::UpdateDownloadProgress { downloaded, total },
+                    );
+                    !cancel.load(Ordering::Relaxed)
+                };
+
+                match service.download_update(&update, &destination, Some(&mut report)) {
+                    Ok(path) => DownloadOutcome::Ready {
+                        path,
+                        version: update.version.clone(),
+                    },
+                    Err(UpdateError::Cancelled) => DownloadOutcome::Cancelled,
+                    Err(err) => DownloadOutcome::Failed {
+                        message: err.to_string(),
+                    },
+                }
+            })();
+
+            events::post(&sender, AppEvent::UpdateDownloadDone(Box::new(outcome)));
+        });
+    }
+
+    /// Move the download's progress bar, and pick up a press of its Cancel.
+    pub(super) fn on_download_progress(&self, downloaded: u64, total: u64) {
+        let Some((dialog, artifact, cancel, announced)) =
+            self.download.borrow().as_ref().map(|download| {
+                (
+                    Rc::clone(&download.dialog),
+                    download.artifact.clone(),
+                    Arc::clone(&download.cancel),
+                    download.announced,
+                )
+            })
+        else {
+            return;
+        };
+
+        let status = dialogs::update::progress_status(&artifact, downloaded, total);
+        let percent = dialogs::update::percent_done(downloaded, total);
+
+        // The borrow above is released before this runs: updating a
+        // wxProgressDialog pumps UI events, and re-entering here with it still
+        // held would panic rather than merely redraw twice.
+        let keep_going = match percent {
+            Some(value) => dialog.update(i32::from(value), Some(&status)),
+            None => dialog.pulse(Some(&status)),
+        };
+
+        if !keep_going {
+            cancel.store(true, Ordering::Relaxed);
+            return;
+        }
+
+        // Speaking every chunk would bury the user, so the same interval that
+        // governs transfer progress governs this.
+        let Some(value) = percent else { return };
+        let interval = self.state.borrow().settings.display.progress_interval;
+        if !format::should_announce_progress(announced, value, interval) {
+            return;
+        }
+        if let Some(download) = self.download.borrow_mut().as_mut() {
+            download.announced = Some(value);
+        }
+        self.announce_only(&dialogs::update::progress_announcement(value));
+    }
+
+    /// Close the progress window and act on how the download ended.
+    pub(super) fn on_download_done(&self, outcome: DownloadOutcome) {
+        // Dropping the entry destroys the progress window, so it is gone
+        // before any message box tries to open in front of it.
+        self.download.borrow_mut().take();
+
+        match outcome {
+            DownloadOutcome::Ready { path, version } => self.install_update(&path, &version),
+            DownloadOutcome::Cancelled => {
+                self.log("The update download was cancelled.");
+                self.announce("Update download cancelled");
+            }
+            DownloadOutcome::Failed { message } => {
+                self.log(&format!("The update download failed: {message}"));
+                prompts::error(&self.frame, "Download failed", &message);
+            }
+        }
+    }
+
+    /// Install a verified download, restarting into it.
+    fn install_update(&self, path: &Path, version: &str) {
+        self.log(&format!("Downloaded {}.", path.display()));
+
+        let context = ApplyContext::current(self.state.borrow().portable);
+
+        // A tarball install has nothing to run: say where the file is rather
+        // than tearing the window down and leaving the user on the old build.
+        if !can_auto_apply(path, &context) {
+            self.announce("This update has to be installed by hand");
+            prompts::info(
+                &self.frame,
+                "Install this update by hand",
+                &dialogs::update::manual_install_message(path),
+            );
+            return;
+        }
+
+        if !prompts::confirm(
+            &self.frame,
+            "Install the update",
+            &dialogs::update::restart_question(version),
+        ) {
+            self.log("The update was downloaded but not installed.");
+            self.announce("The update was not installed");
+            return;
+        }
+
+        // The helper waits for this process to exit before it touches
+        // anything, so it is started first and the shutdown follows.
+        match apply_update(path, &context) {
+            Ok(true) => {
+                self.log("Restarting to install the update.");
+                self.force_exit();
+            }
+            Ok(false) => self.report_apply_failure(path, "this install cannot update itself"),
+            Err(err) => self.report_apply_failure(path, &err.to_string()),
+        }
+    }
+
+    /// Tell the user the download is on disk when it could not be started.
+    fn report_apply_failure(&self, path: &Path, error: &str) {
+        self.log(&format!("The update could not be started: {error}"));
+        prompts::error(
+            &self.frame,
+            "Could not install the update",
+            &dialogs::update::apply_failed_message(path, error),
+        );
     }
 }
 

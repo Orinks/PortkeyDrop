@@ -10,6 +10,7 @@ pub mod settings;
 pub mod site_manager;
 pub mod soundpacks;
 pub mod transfer_queue;
+pub mod update;
 
 use wxdragon::prelude::*;
 
@@ -103,6 +104,7 @@ mod tests {
             let _ = super::site_manager::TITLE;
             let _ = super::soundpacks::TITLE;
             let _ = super::transfer_queue::TITLE;
+            let _ = super::update::TITLE;
         }
     }
 }

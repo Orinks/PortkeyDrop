@@ -12,6 +12,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use wxdragon::prelude::*;
@@ -61,6 +62,8 @@ pub struct MainFrame {
     /// Set once a real exit is under way, so the close handler stops
     /// diverting to the notification area.
     pub(super) exiting: Rc<RefCell<bool>>,
+    /// The update download in flight, if there is one.
+    pub(super) download: Rc<RefCell<Option<Download>>>,
 }
 
 /// The quick connect bar's fields.
@@ -163,6 +166,7 @@ impl MainFrame {
             log_visible: Rc::new(RefCell::new(true)),
             tray: Rc::new(RefCell::new(None)),
             exiting: Rc::new(RefCell::new(false)),
+            download: Rc::new(RefCell::new(None)),
         };
 
         main_frame.build_menu();
@@ -698,6 +702,10 @@ impl MainFrame {
                 prompts::error(&self.frame, "Operation failed", &message);
             }
             AppEvent::UpdateCheckDone(outcome) => self.on_update_check(*outcome),
+            AppEvent::UpdateDownloadProgress { downloaded, total } => {
+                self.on_download_progress(downloaded, total)
+            }
+            AppEvent::UpdateDownloadDone(outcome) => self.on_download_done(*outcome),
             AppEvent::TrayCommand(id) => self.handle_tray_command(id),
             AppEvent::Log { message } => self.log(&message),
         }
@@ -1508,7 +1516,7 @@ impl MainFrame {
     }
 
     /// Shut down for real, bypassing minimise-to-tray.
-    fn force_exit(&self) {
+    pub(super) fn force_exit(&self) {
         *self.exiting.borrow_mut() = true;
         self.on_close();
         self.frame.close(true);
@@ -1541,6 +1549,24 @@ impl MainFrame {
         }
         state.clear_client();
     }
+}
+
+/// An update download in flight.
+///
+/// Held on the frame rather than in the worker so a Cancel raised on the UI
+/// thread reaches the thread doing the reading, and so the progress window is
+/// closed on whichever path the download ends by.
+pub(super) struct Download {
+    /// The progress window. Behind an `Rc` because `ProgressDialog` destroys
+    /// its window on drop: handing out clones of the value would destroy it
+    /// at the first one and leave the rest dangling.
+    pub(super) dialog: Rc<ProgressDialog>,
+    /// The file being fetched, named in the status line.
+    pub(super) artifact: String,
+    /// Raised when the user presses Cancel; the worker checks it per chunk.
+    pub(super) cancel: Arc<AtomicBool>,
+    /// The last percentage spoken, so a screen reader is not flooded.
+    pub(super) announced: Option<u8>,
 }
 
 /// A hand-off slot for a connected client.

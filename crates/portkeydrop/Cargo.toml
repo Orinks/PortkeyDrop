@@ -24,6 +24,8 @@ anyhow.workspace = true
 log.workspace = true
 env_logger = "0.11"
 chrono.workspace = true
+# Release notes arrive as markdown and are shown in a plain text box.
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true

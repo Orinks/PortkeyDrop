@@ -6,9 +6,11 @@
 //! background work posts one of these values down a channel and a timer on the
 //! frame drains it.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
 use portkeydrop_core::protocols::RemoteFile;
+use portkeydrop_core::updater::UpdateInfo;
 
 /// Something that happened away from the UI thread.
 #[derive(Debug)]
@@ -40,6 +42,11 @@ pub enum AppEvent {
     },
     /// An update check finished.
     UpdateCheckDone(Box<UpdateOutcome>),
+    /// Bytes fetched so far for an update download; `total` is 0 when the
+    /// server did not say how big the file is.
+    UpdateDownloadProgress { downloaded: u64, total: u64 },
+    /// An update download has stopped, one way or another.
+    UpdateDownloadDone(Box<DownloadOutcome>),
     /// A command chosen from the notification area menu.
     ///
     /// Routed through the channel rather than run where it was raised: acting
@@ -53,15 +60,23 @@ pub enum AppEvent {
 /// The result of an update check.
 #[derive(Debug)]
 pub enum UpdateOutcome {
-    /// An update is available.
-    Available {
-        version: String,
-        notes: String,
-        artifact: String,
-    },
+    /// An update is available. Carries everything needed to fetch it, so the
+    /// offer can lead straight into a download instead of a dead end.
+    Available(Box<UpdateInfo>),
     /// Nothing newer than the running build.
     UpToDate,
     /// The check could not be completed.
+    Failed { message: String },
+}
+
+/// The result of downloading an update.
+#[derive(Debug)]
+pub enum DownloadOutcome {
+    /// The file arrived and matched its published checksum.
+    Ready { path: PathBuf, version: String },
+    /// The user pressed Cancel.
+    Cancelled,
+    /// The download failed; the partial file has already been removed.
     Failed { message: String },
 }
 
