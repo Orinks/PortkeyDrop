@@ -5,3 +5,10 @@
 # AppImage launcher runs on Linux; a CRLF checkout would break its shebang.
 installer/appimage/AppRun text eol=lf
 installer/appimage/*.desktop text eol=lf
+
+# Vendored native libraries. Left to the text=auto heuristic, a misdetection
+# would rewrite line endings inside a binary and ship a corrupt library.
+crates/prism-sys/vendor/**/*.dll binary
+crates/prism-sys/vendor/**/*.dylib binary
+crates/prism-sys/vendor/**/*.so binary
+crates/prism-sys/vendor/**/*.lib binary

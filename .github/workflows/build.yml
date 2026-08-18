@@ -200,7 +200,10 @@ jobs:
             installer/macos/Info.plist > "$APP/Contents/Info.plist"
           plutil -lint "$APP/Contents/Info.plist"
 
-          cp crates/prism-sys/vendor/licenses/LICENSE "$APP/Contents/Resources-LICENSE" 2>/dev/null || true
+          # Prism is MPL-2.0; its licence ships inside the bundle.
+          mkdir -p "$APP/Contents/Resources"
+          cp crates/prism-sys/vendor/licenses/LICENSE "$APP/Contents/Resources/PRISM-LICENSE"
+          cp crates/prism-sys/vendor/licenses/NOTICE "$APP/Contents/Resources/PRISM-NOTICE"
 
           # An unsigned bundle copied out of a DMG is quarantined; ad-hoc
           # signing at least keeps it launchable without Gatekeeper refusing
