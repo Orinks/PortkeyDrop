@@ -22,6 +22,14 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Windows runners default to PowerShell, where a trailing backslash is a parse
+# error rather than a line continuation. The Python jobs this replaced were
+# single `python ...` calls that ran the same under either shell, so nothing
+# here needed a default before.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   prepare:
     name: Prepare
