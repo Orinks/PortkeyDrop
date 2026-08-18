@@ -54,6 +54,11 @@ pub fn show(frame: &MainFrame) {
     list.set_name("Installed sound packs");
     sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 6);
 
+    let details_label = StaticText::builder(&dialog)
+        .with_label("Pack details:")
+        .build();
+    sizer.add(&details_label, 0, SizerFlag::Left | SizerFlag::All, 6);
+
     let details = TextCtrl::builder(&dialog)
         .with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
         .build();

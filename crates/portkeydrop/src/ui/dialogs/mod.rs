@@ -47,19 +47,26 @@ pub fn show_text_window(parent: &dyn WxWidget, caption: &str, body: &str) {
 
 /// Add a labelled control to a sizer, wiring the label to the control's name.
 ///
-/// The label is added immediately before the control so assistive technology
-/// that reads the preceding sibling picks up the right text.
+/// The control is built by the closure rather than passed in, so its label is
+/// always created first. On Windows a screen reader takes a control's name from
+/// the preceding sibling in creation order, so building the control first pairs
+/// it with the *previous* field's label -- and leaves the first control in a
+/// dialog with no label at all. Taking a closure makes that ordering impossible
+/// to get wrong. It is also what makes the Alt+letter mnemonic in `label` reach
+/// the right control.
 pub fn add_labelled<W: WxWidget>(
     parent: &Dialog,
     sizer: &BoxSizer,
     label: &str,
-    control: &W,
     accessible_name: &str,
-) {
+    build: impl FnOnce(&Dialog) -> W,
+) -> W {
     let static_text = StaticText::builder(parent).with_label(label).build();
     sizer.add(&static_text, 0, SizerFlag::Left | SizerFlag::Top, 8);
+    let control = build(parent);
     control.set_name(accessible_name);
-    sizer.add(control, 0, SizerFlag::Expand | SizerFlag::All, 4);
+    sizer.add(&control, 0, SizerFlag::Expand | SizerFlag::All, 4);
+    control
 }
 
 /// A standard OK / Cancel row.

@@ -158,43 +158,46 @@ pub fn show(frame: &MainFrame) {
         .build();
     right.add(&details_label, 0, SizerFlag::Left | SizerFlag::All, 4);
 
-    let name = TextCtrl::builder(&dialog).build();
-    super::add_labelled(&dialog, &right, "Si&te name:", &name, "Site name");
+    let name = super::add_labelled(&dialog, &right, "Si&te name:", "Site name", |dialog| {
+        TextCtrl::builder(dialog).build()
+    });
 
-    let protocol = Choice::builder(&dialog).build();
+    let protocol = super::add_labelled(&dialog, &right, "&Protocol:", "Protocol", |dialog| {
+        Choice::builder(dialog).build()
+    });
     for value in SUPPORTED_PROTOCOL_VALUES {
         protocol.append(value);
     }
     protocol.set_selection(0);
-    super::add_labelled(&dialog, &right, "&Protocol:", &protocol, "Protocol");
 
-    let host = TextCtrl::builder(&dialog).build();
-    super::add_labelled(&dialog, &right, "&Host:", &host, "Host");
+    let host = super::add_labelled(&dialog, &right, "&Host:", "Host", |dialog| {
+        TextCtrl::builder(dialog).build()
+    });
 
-    let port = TextCtrl::builder(&dialog).build();
-    super::add_labelled(
+    let port = super::add_labelled(
         &dialog,
         &right,
         "P&ort (leave blank for the protocol default):",
-        &port,
         "Port",
+        |dialog| TextCtrl::builder(dialog).build(),
     );
 
-    let username = TextCtrl::builder(&dialog).build();
-    super::add_labelled(&dialog, &right, "&Username:", &username, "Username");
+    let username = super::add_labelled(&dialog, &right, "&Username:", "Username", |dialog| {
+        TextCtrl::builder(dialog).build()
+    });
 
-    let password = TextCtrl::builder(&dialog)
-        .with_style(TextCtrlStyle::Password)
-        .build();
-    super::add_labelled(&dialog, &right, "Pass&word:", &password, "Password");
+    let password = super::add_labelled(&dialog, &right, "Pass&word:", "Password", |dialog| {
+        TextCtrl::builder(dialog)
+            .with_style(TextCtrlStyle::Password)
+            .build()
+    });
 
-    let key_path = TextCtrl::builder(&dialog).build();
-    super::add_labelled(
+    let key_path = super::add_labelled(
         &dialog,
         &right,
         "Private &key file (SFTP only):",
-        &key_path,
         "Private key file",
+        |dialog| TextCtrl::builder(dialog).build(),
     );
 
     let explicit_ssl = CheckBox::builder(&dialog)
@@ -203,19 +206,19 @@ pub fn show(frame: &MainFrame) {
     explicit_ssl.set_name("Use SSL (AUTH SSL) with FTP");
     right.add(&explicit_ssl, 0, SizerFlag::Left | SizerFlag::All, 4);
 
-    let initial_dir = TextCtrl::builder(&dialog).build();
-    super::add_labelled(
+    let initial_dir = super::add_labelled(
         &dialog,
         &right,
         "&Initial directory:",
-        &initial_dir,
         "Initial directory",
+        |dialog| TextCtrl::builder(dialog).build(),
     );
 
-    let notes = TextCtrl::builder(&dialog)
-        .with_style(TextCtrlStyle::MultiLine)
-        .build();
-    super::add_labelled(&dialog, &right, "N&otes:", &notes, "Notes");
+    let notes = super::add_labelled(&dialog, &right, "N&otes:", "Notes", |dialog| {
+        TextCtrl::builder(dialog)
+            .with_style(TextCtrlStyle::MultiLine)
+            .build()
+    });
     right.add_spacer(4);
 
     columns.add_sizer(&right, 2, SizerFlag::Expand | SizerFlag::All, 4);

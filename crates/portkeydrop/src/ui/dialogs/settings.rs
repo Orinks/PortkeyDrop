@@ -134,12 +134,28 @@ fn page(notebook: &Notebook) -> (Panel, BoxSizer) {
     (panel, sizer)
 }
 
-/// Add a labelled control to a page.
-fn labelled<W: WxWidget>(panel: &Panel, sizer: &BoxSizer, label: &str, control: &W, name: &str) {
+/// Add a labelled control to a page, building the control in place.
+///
+/// The control is built by the closure rather than passed in, so its label is
+/// always created first. On Windows a screen reader takes a control's name from
+/// the preceding sibling in creation order, so building the control first pairs
+/// it with the *previous* field's label — and leaves the first control on a page
+/// with no label at all. Taking a closure makes that ordering impossible to get
+/// wrong. It is also what makes the Alt+letter mnemonic reach the right control.
+fn labelled<W: WxWidget>(
+    panel: &Panel,
+    sizer: &BoxSizer,
+    label: &str,
+    name: &str,
+    build: impl FnOnce(&Panel) -> W,
+) -> W {
     let text = StaticText::builder(panel).with_label(label).build();
     sizer.add(&text, 0, SizerFlag::Left | SizerFlag::All, 6);
+
+    let control = build(panel);
     control.set_name(name);
-    sizer.add(control, 0, SizerFlag::Expand | SizerFlag::All, 4);
+    sizer.add(&control, 0, SizerFlag::Expand | SizerFlag::All, 4);
+    control
 }
 
 /// Fill a picker and select the entry matching `current`.
@@ -166,28 +182,26 @@ fn choice_value(choice: &Choice, entries: &[(&str, &str)]) -> String {
 fn build_transfers_page(notebook: &Notebook, settings: &Settings) -> Page {
     let (panel, sizer) = page(notebook);
 
-    let concurrent = SpinCtrl::builder(&panel).with_range(1, 16).build();
-    concurrent.set_value(settings.transfer.concurrent_transfers as i32);
-    labelled(
+    let concurrent = labelled(
         &panel,
         &sizer,
         "&Simultaneous transfers:",
-        &concurrent,
         "Simultaneous transfers",
+        |panel| SpinCtrl::builder(panel).with_range(1, 16).build(),
     );
+    concurrent.set_value(settings.transfer.concurrent_transfers as i32);
 
-    let overwrite = Choice::builder(&panel).build();
+    let overwrite = labelled(
+        &panel,
+        &sizer,
+        "&When the destination file already exists:",
+        "When the destination file already exists",
+        |panel| Choice::builder(panel).build(),
+    );
     fill_choice(
         &overwrite,
         &OVERWRITE_CHOICES,
         &settings.transfer.overwrite_mode,
-    );
-    labelled(
-        &panel,
-        &sizer,
-        "&When the destination file already exists:",
-        &overwrite,
-        "When the destination file already exists",
     );
 
     let resume = CheckBox::builder(&panel)
@@ -208,15 +222,14 @@ fn build_transfers_page(notebook: &Notebook, settings: &Settings) -> Page {
     symlinks.set_value(settings.transfer.follow_symlinks);
     sizer.add(&symlinks, 0, SizerFlag::Left | SizerFlag::All, 6);
 
-    let download_dir = TextCtrl::builder(&panel).build();
-    download_dir.set_value(&settings.transfer.default_download_dir);
-    labelled(
+    let download_dir = labelled(
         &panel,
         &sizer,
         "&Default download folder:",
-        &download_dir,
         "Default download folder",
+        |panel| TextCtrl::builder(panel).build(),
     );
+    download_dir.set_value(&settings.transfer.default_download_dir);
 
     panel.set_sizer(sizer, true);
 
@@ -253,15 +266,14 @@ fn build_display_page(notebook: &Notebook, settings: &Settings) -> Page {
     announce.set_value(settings.display.announce_file_count);
     sizer.add(&announce, 0, SizerFlag::Left | SizerFlag::All, 6);
 
-    let interval = SpinCtrl::builder(&panel).with_range(0, 100).build();
-    interval.set_value(settings.display.progress_interval as i32);
-    labelled(
+    let interval = labelled(
         &panel,
         &sizer,
         "Announce transfer &progress every this many percent (0 turns it off):",
-        &interval,
         "Progress announcement interval",
+        |panel| SpinCtrl::builder(panel).with_range(0, 100).build(),
     );
+    interval.set_value(settings.display.progress_interval as i32);
 
     let hidden = CheckBox::builder(&panel)
         .with_label("Show &hidden files")
@@ -288,38 +300,35 @@ fn build_display_page(notebook: &Notebook, settings: &Settings) -> Page {
 fn build_connection_page(notebook: &Notebook, settings: &Settings) -> Page {
     let (panel, sizer) = page(notebook);
 
-    let timeout = SpinCtrl::builder(&panel).with_range(5, 300).build();
-    timeout.set_value(settings.connection.timeout as i32);
-    labelled(
+    let timeout = labelled(
         &panel,
         &sizer,
         "Connection &timeout, in seconds:",
-        &timeout,
         "Connection timeout",
+        |panel| SpinCtrl::builder(panel).with_range(5, 300).build(),
     );
+    timeout.set_value(settings.connection.timeout as i32);
 
-    let retries = SpinCtrl::builder(&panel).with_range(0, 10).build();
-    retries.set_value(settings.connection.max_retries as i32);
-    labelled(
+    let retries = labelled(
         &panel,
         &sizer,
         "&Retry a failed connection this many times:",
-        &retries,
         "Connection retries",
+        |panel| SpinCtrl::builder(panel).with_range(0, 10).build(),
     );
+    retries.set_value(settings.connection.max_retries as i32);
 
-    let host_keys = Choice::builder(&panel).build();
+    let host_keys = labelled(
+        &panel,
+        &sizer,
+        "SSH &host key checking:",
+        "SSH host key checking",
+        |panel| Choice::builder(panel).build(),
+    );
     fill_choice(
         &host_keys,
         &HOST_KEY_CHOICES,
         &settings.connection.verify_host_keys,
-    );
-    labelled(
-        &panel,
-        &sizer,
-        "SSH &host key checking:",
-        &host_keys,
-        "SSH host key checking",
     );
 
     let passive = CheckBox::builder(&panel)
@@ -356,19 +365,27 @@ fn build_speech_page(notebook: &Notebook, settings: &Settings) -> Page {
         .build();
     sizer.add(&note, 0, SizerFlag::Left | SizerFlag::All, 6);
 
-    let rate = Slider::builder(&panel)
-        .with_min_value(0)
-        .with_max_value(100)
-        .build();
+    let rate = labelled(&panel, &sizer, "Speech &rate:", "Speech rate", |panel| {
+        Slider::builder(panel)
+            .with_min_value(0)
+            .with_max_value(100)
+            .build()
+    });
     rate.set_value(settings.speech.rate);
-    labelled(&panel, &sizer, "Speech &rate:", &rate, "Speech rate");
 
-    let volume = Slider::builder(&panel)
-        .with_min_value(0)
-        .with_max_value(100)
-        .build();
+    let volume = labelled(
+        &panel,
+        &sizer,
+        "Speech &volume:",
+        "Speech volume",
+        |panel| {
+            Slider::builder(panel)
+                .with_min_value(0)
+                .with_max_value(100)
+                .build()
+        },
+    );
     volume.set_value(settings.speech.volume);
-    labelled(&panel, &sizer, "Speech &volume:", &volume, "Speech volume");
 
     panel.set_sizer(sizer, true);
 
@@ -396,7 +413,9 @@ fn build_audio_page(notebook: &Notebook, settings: &Settings, frame: &MainFrame)
     let packs = portkeydrop_core::soundpacks::available_packs(&packs_dir);
     let pack_directories: Vec<String> = packs.keys().cloned().collect();
 
-    let pack = Choice::builder(&panel).build();
+    let pack = labelled(&panel, &sizer, "Sound &pack:", "Sound pack", |panel| {
+        Choice::builder(panel).build()
+    });
     for directory in &pack_directories {
         let label = packs
             .get(directory)
@@ -411,8 +430,6 @@ fn build_audio_page(notebook: &Notebook, settings: &Settings, frame: &MainFrame)
     if !pack_directories.is_empty() {
         pack.set_selection(selected as u32);
     }
-    labelled(&panel, &sizer, "Sound &pack:", &pack, "Sound pack");
-
     // One checkbox per event, grouped by section, so a user can silence just
     // the ones that get in the way.
     let events_label = StaticText::builder(&panel)
@@ -482,25 +499,23 @@ fn build_application_page(notebook: &Notebook, settings: &Settings) -> Page {
     auto_update.set_value(settings.app.auto_update_enabled);
     sizer.add(&auto_update, 0, SizerFlag::Left | SizerFlag::All, 6);
 
-    let interval = SpinCtrl::builder(&panel).with_range(1, 168).build();
-    interval.set_value(settings.app.update_check_interval_hours as i32);
-    labelled(
+    let interval = labelled(
         &panel,
         &sizer,
         "Check for updates every this many &hours:",
-        &interval,
         "Update check interval",
+        |panel| SpinCtrl::builder(panel).with_range(1, 168).build(),
     );
+    interval.set_value(settings.app.update_check_interval_hours as i32);
 
-    let channel = Choice::builder(&panel).build();
-    fill_choice(&channel, &CHANNEL_CHOICES, &settings.app.update_channel);
-    labelled(
+    let channel = labelled(
         &panel,
         &sizer,
         "Update &channel:",
-        &channel,
         "Update channel",
+        |panel| Choice::builder(panel).build(),
     );
+    fill_choice(&channel, &CHANNEL_CHOICES, &settings.app.update_channel);
 
     let tray = CheckBox::builder(&panel)
         .with_label("Show an icon in the &notification area")

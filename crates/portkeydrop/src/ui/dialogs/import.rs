@@ -33,7 +33,10 @@ pub fn show(frame: &MainFrame) {
 
     // Only sources with something to import are offered, plus "from file".
     let sources = importers::available_sources();
-    let source_picker = Choice::builder(&dialog).build();
+    let source_picker =
+        super::add_labelled(&dialog, &sizer, "Import &from:", "Import from", |dialog| {
+            Choice::builder(dialog).build()
+        });
     for source in &sources {
         let suffix = if source.is_available() && *source != ImportSource::FromFile {
             " (found on this computer)"
@@ -45,16 +48,9 @@ pub fn show(frame: &MainFrame) {
     if !sources.is_empty() {
         source_picker.set_selection(0);
     }
-    super::add_labelled(
-        &dialog,
-        &sizer,
-        "Import &from:",
-        &source_picker,
-        "Import from",
-    );
-
-    let location = TextCtrl::builder(&dialog).build();
-    super::add_labelled(&dialog, &sizer, "&Location:", &location, "Location");
+    let location = super::add_labelled(&dialog, &sizer, "&Location:", "Location", |dialog| {
+        TextCtrl::builder(dialog).build()
+    });
 
     let actions = BoxSizer::builder(Orientation::Horizontal).build();
     let browse = Button::builder(&dialog)
