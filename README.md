@@ -59,44 +59,44 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 Packaged builds for Windows (installer and portable ZIP), macOS, and Linux (tarball and AppImage) are published on the [releases page](https://github.com/Orinks/PortkeyDrop/releases). On Linux, download the AppImage, mark it executable (`chmod +x PortkeyDrop-*.AppImage`), and run it.
 
-To run from source instead, Portkey Drop currently supports Python 3.11 and 3.12.
+To run from source you need a Rust toolchain (1.85 or newer) and a C++ compiler, since wxWidgets is built from source on first compile.
 
-**Windows:**
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-git clone https://github.com/Orinks/PortkeyDrop.git
-cd PortkeyDrop
-uv sync
-uv run portkeydrop
-```
-
-**Mac/Linux:**
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/Orinks/PortkeyDrop.git
 cd PortkeyDrop
-uv sync
-uv run portkeydrop
+cargo run --release
 ```
 
 ## Development
 
 ```bash
-uv sync --all-extras --group dev
-uv run pytest
-uv run ruff check
+cargo test            # Run the test suite
+cargo build           # Debug build
+cargo clippy          # Lints
+cargo fmt             # Format
 ```
+
+The workspace is four crates:
+
+| Crate | Contents |
+|---|---|
+| `portkeydrop` | The wxWidgets front end: window, panes, dialogs |
+| `portkeydrop-core` | Protocols, transfers, settings, sites, sound packs, updates |
+| `prism` | Safe wrapper over the Prism speech library |
+| `prism-sys` | Raw FFI to Prism's C API, with the platform binaries vendored |
+
+`portkeydrop-core` has no UI dependency, so protocol parsing, transfer rules, and
+credential handling are all tested without a display.
 
 ## Build
 
-Release-style local builds use Nuitka, matching the GitHub Actions build path:
-
 ```bash
-uv sync --extra build --group dev
-uv run python installer/build_nuitka.py
+cargo build --release
 ```
 
-On Windows, install Inno Setup 6 before building the installer.
+On Windows the executable embeds an application manifest requesting Common
+Controls 6. That is not optional: wxWidgets imports `GetWindowSubclass`, which
+only version 6 exports, so a build without the manifest will not start.
 
 ## License
 
