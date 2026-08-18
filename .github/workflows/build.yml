@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'dev' }}
+          ref: ${{ (github.event_name == 'schedule' && 'dev') || github.ref }}
           fetch-depth: 0
 
       - name: Check build conditions
@@ -87,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          ref: ${{ (github.event_name == 'schedule' && 'dev') || github.ref }}
           fetch-depth: 0
 
       - name: Install Rust
@@ -158,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          ref: ${{ (github.event_name == 'schedule' && 'dev') || github.ref }}
           fetch-depth: 0
 
       - name: Install Rust
@@ -250,7 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          ref: ${{ (github.event_name == 'schedule' && 'dev') || github.ref }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v7
