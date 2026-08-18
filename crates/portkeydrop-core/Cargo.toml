@@ -1,0 +1,69 @@
+[package]
+name = "portkeydrop-core"
+description = "Protocol, transfer, and configuration engine for Portkey Drop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+# Configuration and credentials
+dirs = "6"
+uuid = { version = "1", features = ["v4", "serde"] }
+fernet = { version = "0.2", default-features = false, features = ["rustcrypto"] }
+sha2 = "0.10"
+base64 = "0.22"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+whoami = "1"
+
+# Protocol clients
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "fs"] }
+russh = { version = "0.62", default-features = false, features = ["ring", "flate2", "rsa", "des", "dsa"] }
+russh-sftp = "2"
+native-tls = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "json"] }
+quick-xml = "0.37"
+percent-encoding = "2"
+url = "2"
+
+# Key handling. ssh-key types come from russh so both agree on one version.
+hmac = "0.12"
+sha1 = "0.10"
+aes = "0.8"
+cbc = "0.1"
+argon2 = "0.5"
+
+# Import sources
+plist = "1"
+encoding_rs = "0.8"
+
+# Sound packs and audio
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tempfile.workspace = true
+rodio = { version = "0.20", default-features = false, features = ["symphonia-all"] }
+# rodio's "symphonia-all" enables the Vorbis *codec* but not the Ogg *container*,
+# so without this the default sound pack's .ogg files cannot be demuxed at all.
+symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis"] }
+
+# Updater
+semver = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
