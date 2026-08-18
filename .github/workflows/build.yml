@@ -41,6 +41,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
 
@@ -49,6 +50,14 @@ jobs:
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          elif [ "$GITHUB_EVENT_NAME" != "schedule" ]; then
+            # A run someone started by hand is a request for a build. The gate
+            # below exists to stop the nightly schedule publishing a release
+            # with nothing to say, which is not what a manual run is doing.
+            echo "is_nightly=true" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "tag=nightly-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
             echo "is_nightly=true" >> $GITHUB_OUTPUT
             echo "tag=nightly-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT

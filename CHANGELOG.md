@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- Portkey Drop is now a native application written in Rust rather than Python. The Windows download is about a fifth of the size it was (7 MB portable, down from 36 MB) and starts without unpacking a bundled interpreter first. Everything it did before it still does: SFTP, FTP, FTPS, and WebDAV, the same keyboard shortcuts, the same sound packs, and the same saved sites and passwords, which are read from where the previous version left them.
+- macOS builds now ship as a disk image containing a universal app bundle, so one download works on both Intel and Apple silicon Macs, and updating no longer leaves you to finish the job in Finder.
+
+### Fixed
+- Settings, Site Manager, and the import window announced the wrong labels: each field was read out with the previous field's label, spin controls were read as unlabelled, and the first control on every page had no label at all.
+- The update check said a new version was available and then offered only a Close button. It now offers to download and install it, with progress you can hear and a Cancel that stops the download.
+- Release notes shown in the update window are no longer read out with their formatting characters.
+
 ## [0.6.0] - 2026-07-24
 
 ### Added
