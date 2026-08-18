@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from scripts.changelog_tools import (
+    excluded_entries_from_notes,
+    messages_request_nightly_build,
     ChangelogSection,
     extract_release_block,
     format_sections,
@@ -83,3 +85,36 @@ def test_normalize_entry_matches_curated_release_body_wording() -> None:
     )
 
     assert normalize_entry(changelog_entry) == normalize_entry(release_body_entry)
+
+
+def test_a_commit_can_ask_for_a_nightly_the_changelog_would_not_justify() -> None:
+    # Some builds matter for reasons that never become a user-facing bullet:
+    # a dependency bump, a fix inside a library. Without this the only way to
+    # ship one is a release whose notes say nothing.
+    assert messages_request_nightly_build(["fix(deps): bump russh\n\nnightly: build"])
+    assert messages_request_nightly_build(["chore: refresh vendored DLL [nightly build]"])
+    assert messages_request_nightly_build(["Nightly: Build"])
+
+
+def test_ordinary_commits_do_not_ask_for_a_nightly() -> None:
+    assert not messages_request_nightly_build(
+        ["fix(sftp): reconnect after an idle timeout", "docs: describe the nightly channel"]
+    )
+    assert not messages_request_nightly_build([])
+
+
+def test_entries_already_announced_are_read_back_out_of_the_notes(tmp_path) -> None:
+    # A nightly must not re-announce what the previous nightly, or the stable
+    # release it followed, already told the user.
+    notes = tmp_path / "previous-notes.md"
+    notes.write_text(
+        "## Fixed\n- The **Cancel** button on the download dialog now cancels.\n",
+        encoding="utf-8",
+    )
+    excluded = excluded_entries_from_notes(str(notes))
+    assert normalize_entry("- The Cancel button on the download dialog now cancels.") in excluded
+
+
+def test_missing_notes_file_excludes_nothing() -> None:
+    assert excluded_entries_from_notes("") == set()
+    assert excluded_entries_from_notes("no-such-notes.md") == set()

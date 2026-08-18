@@ -43,6 +43,8 @@ jobs:
 
       - name: Check build conditions
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
 
@@ -57,30 +59,28 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
 
             LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
+            LATEST_STABLE_TAG=$(git tag --list "v*" --sort=-version:refname | head -1)
 
-            if [ -z "$LAST_TAG" ]; then
-              echo "should_build=true" >> $GITHUB_OUTPUT
-            else
-              RANGE="$LAST_TAG"..HEAD
-
-              # Build only when there is at least one user-facing file change.
-              # This avoids shipping nightlies for docs/test/ci-only changes and
-              # works even when squash merges or sync commits hide the original
-              # commit subjects on first-parent history.
-              USER_FACING_PATHS=$(git diff --name-only "$RANGE" -- \
-                src/ \
-                installer/ \
-                scripts/generate_build_meta.py \
-                pyproject.toml \
-                '*.spec' \
-                soundpacks/ | sed '/^$/d')
-
-              if [ -n "$USER_FACING_PATHS" ]; then
-                echo "should_build=true" >> $GITHUB_OUTPUT
-              else
-                echo "should_build=false" >> $GITHUB_OUTPUT
-              fi
+            # Build when there is something new to tell the user, not merely
+            # when a source file moved. Gating on file changes is what ships a
+            # release whose notes read "No user-facing changes"; a commit
+            # saying "[nightly build]" forces one when the reason is real but
+            # has no changelog bullet.
+            : > previous-notes.md
+            : > latest-stable-notes.md
+            if [ -n "$LAST_TAG" ]; then
+              gh release view "$LAST_TAG" --json body -q .body > previous-notes.md || true
             fi
+            if [ -n "$LATEST_STABLE_TAG" ]; then
+              gh release view "$LATEST_STABLE_TAG" --json body -q .body > latest-stable-notes.md || true
+            fi
+
+            python scripts/changelog_tools.py should-build-nightly \
+              --previous-tag "$LAST_TAG" \
+              --head HEAD \
+              --exclude-notes previous-notes.md \
+              --latest-stable-tag "$LATEST_STABLE_TAG" \
+              --exclude-stable-notes latest-stable-notes.md >> $GITHUB_OUTPUT
           fi
 
   build-windows:
@@ -401,10 +401,16 @@ jobs:
             LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
             if [ -n "$LAST_TAG" ]; then
               gh release view "$LAST_TAG" --json body -q .body > previous-notes.md || true
+              : > latest-stable-notes.md
+              LATEST_STABLE_TAG=$(git tag --list "v*" --sort=-version:refname | head -1)
+              if [ -n "$LATEST_STABLE_TAG" ]; then
+                gh release view "$LATEST_STABLE_TAG" --json body -q .body > latest-stable-notes.md || true
+              fi
               python scripts/changelog_tools.py notes \
                 --kind nightly \
                 --previous-tag "$LAST_TAG" \
                 --exclude-notes previous-notes.md \
+                --exclude-stable-notes latest-stable-notes.md \
                 --output notes.md
             else
               python scripts/changelog_tools.py notes --kind nightly --output notes.md

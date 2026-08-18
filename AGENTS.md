@@ -44,6 +44,26 @@ When committing from an OMX-enabled Codex surface, opt out of the Lore commit gu
 OMX_LORE_COMMIT_GUARD=0 git commit -m "type(scope): description"
 ```
 
+## Nightly Builds
+
+A nightly is published only when there is something new to tell the user:
+`scripts/changelog_tools.py should-build-nightly` looks for `## Unreleased`
+entries that neither the previous nightly nor the latest stable release has
+already announced. A build whose changes are all internal therefore does not
+ship a release whose notes read "No user-facing changes".
+
+When a build matters for a reason that has no user-facing bullet — a
+dependency bump, a fix inside a vendored library — say so in the commit and
+it is built anyway:
+
+```
+fix(deps): bump russh to 0.62.1
+
+nightly: build
+```
+
+`[nightly build]` anywhere in the message does the same thing.
+
 PowerShell equivalent:
 
 ```powershell
