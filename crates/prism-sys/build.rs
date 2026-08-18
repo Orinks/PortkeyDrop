@@ -61,10 +61,29 @@ fn main() {
     let Some(profile_dir) = profile_dir(&out_dir) else {
         return;
     };
-    let destination = profile_dir.join(file_name);
-    // Copy failures are not fatal: the loader also searches the vendor
-    // directory and the system library path.
-    if let Err(err) = fs::copy(&vendored, &destination) {
-        println!("cargo:warning=prism-sys: could not stage {file_name}: {err}");
+    // Everything in the platform directory, not just the library itself: the
+    // Linux build carries renamed copies of glib and speech-dispatcher that it
+    // finds through a RUNPATH of `$ORIGIN`, so they have to land in the same
+    // directory or it will not load at all.
+    let Ok(entries) = fs::read_dir(&vendor_dir) else {
+        println!(
+            "cargo:warning=prism-sys: could not read {}",
+            vendor_dir.display()
+        );
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        // Import libraries and provenance notes are for the build and the
+        // reader, not the running program.
+        if name.ends_with(".lib") || name.ends_with(".txt") {
+            continue;
+        }
+        // Copy failures are not fatal: the loader also searches the vendor
+        // directory and the system library path.
+        if let Err(err) = fs::copy(entry.path(), profile_dir.join(name)) {
+            println!("cargo:warning=prism-sys: could not stage {name}: {err}");
+        }
     }
 }

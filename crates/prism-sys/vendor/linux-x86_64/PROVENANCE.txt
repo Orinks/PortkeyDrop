@@ -1,0 +1,8 @@
+Prism and its bundled dependencies, taken from prismatoid 0.17.3 (PyPI, manylinux_2_34_x86_64).
+
+libprism.so differs from the wheel's copy in one byte range: DT_RUNPATH
+was shortened from $ORIGIN/../../prismatoid.libs to $ORIGIN so that the
+libraries can sit beside it instead of in a Python package layout. No
+code was changed.
+
+Licensed MPL-2.0; see ../licenses/.

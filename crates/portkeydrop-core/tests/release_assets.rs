@@ -14,6 +14,8 @@ fn stable_assets(version: &str) -> Vec<String> {
         format!("PortkeyDrop-{version}-windows-setup.exe"),
         format!("PortkeyDrop-{version}-windows-portable.zip"),
         format!("PortkeyDrop-{version}-macOS.dmg"),
+        format!("PortkeyDrop-{version}-linux.tar.gz"),
+        format!("PortkeyDrop-{version}-linux-x86_64.AppImage"),
         "checksums.txt".to_string(),
     ]
 }
@@ -24,6 +26,8 @@ fn nightly_assets(stamp: &str) -> Vec<String> {
         format!("PortkeyDrop-nightly-{stamp}-windows-setup.exe"),
         format!("PortkeyDrop-nightly-{stamp}-windows-portable.zip"),
         format!("PortkeyDrop-nightly-{stamp}-macOS.dmg"),
+        format!("PortkeyDrop-nightly-{stamp}-linux.tar.gz"),
+        format!("PortkeyDrop-nightly-{stamp}-linux-x86_64.AppImage"),
         "checksums.txt".to_string(),
     ]
 }
@@ -104,4 +108,29 @@ fn a_mac_does_not_get_handed_a_windows_build() {
     let release = release_with(nightly_assets("20260818"));
     let asset = select_asset(&release, false, "macos").expect("an asset for macOS");
     assert!(asset.name.ends_with(".dmg"), "got {}", asset.name);
+}
+
+#[test]
+fn linux_prefers_the_appimage_over_the_tarball() {
+    // Only the AppImage can update itself: the tarball path tells the user
+    // where the download went and leaves the install to them.
+    let release = release_with(stable_assets("0.6.0"));
+    let asset = select_asset(&release, false, "linux").expect("an asset for Linux");
+    assert_eq!(asset.name, "PortkeyDrop-0.6.0-linux-x86_64.AppImage");
+}
+
+#[test]
+fn every_platform_resolves_to_its_own_artifact() {
+    // One release carries all five files; each platform has to come away
+    // with the right one rather than whichever sorts first.
+    let release = release_with(stable_assets("0.6.0"));
+    for (system, portable, expected) in [
+        ("windows", false, "PortkeyDrop-0.6.0-windows-setup.exe"),
+        ("windows", true, "PortkeyDrop-0.6.0-windows-portable.zip"),
+        ("macos", false, "PortkeyDrop-0.6.0-macOS.dmg"),
+        ("linux", false, "PortkeyDrop-0.6.0-linux-x86_64.AppImage"),
+    ] {
+        let asset = select_asset(&release, portable, system).expect("an asset");
+        assert_eq!(asset.name, expected, "for {system} (portable: {portable})");
+    }
 }

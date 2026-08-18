@@ -246,15 +246,115 @@ jobs:
           name: macos
           path: dist/PortkeyDrop_macOS_*.dmg
 
-  # The Linux job is still to come: crates/prism-sys/vendor has no
-  # linux-x86_64 entry yet. Prism's Linux build is auditwheel-repaired and
-  # needs its bundled glib and speech-dispatcher libraries alongside it with
-  # the RPATH layout preserved, which is a job of its own.
+  build-linux:
+    name: Linux
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ (github.event_name == 'schedule' && 'dev') || github.ref }}
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # wxdragon-sys builds wxWidgets from source, which needs GTK's headers.
+      # Built on 22.04 rather than latest so the result runs on older glibc:
+      # a binary linked against a newer one will not start on a distro that
+      # ships an older release, and there is no useful error when it does not.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libasound2-dev pkg-config cmake \
+            libssl-dev file desktop-file-utils
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Stage the install tree
+        run: |
+          mkdir -p dist/PortkeyDrop
+          cp target/release/portkeydrop dist/PortkeyDrop/PortkeyDrop
+          # The Prism library and everything it carries. It resolves those
+          # through a RUNPATH of $ORIGIN, so they must stay beside it.
+          cp crates/prism-sys/vendor/linux-x86_64/*.so* dist/PortkeyDrop/
+          cp crates/prism-sys/vendor/licenses/LICENSE dist/PortkeyDrop/PRISM-LICENSE
+          cp crates/prism-sys/vendor/licenses/NOTICE dist/PortkeyDrop/PRISM-NOTICE
+          cp crates/prism-sys/vendor/linux-x86_64/PROVENANCE.txt dist/PortkeyDrop/PRISM-PROVENANCE.txt
+
+      - name: Check the speech library resolves
+        run: |
+          cd dist/PortkeyDrop
+          # ldd on the library itself, not the executable: Prism is opened at
+          # run time, so a missing dependency is invisible until the app is
+          # already running and silent.
+          if ldd libprism.so | grep -q "not found"; then
+            echo "libprism.so has unresolved dependencies:"
+            ldd libprism.so | grep "not found"
+            exit 1
+          fi
+          ldd libprism.so | head -20
+
+      - name: Build the tarball
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          tar -czf "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz" -C dist PortkeyDrop
+
+      - name: Build the AppImage
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          APPDIR=dist/PortkeyDrop.AppDir
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
+            "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp dist/PortkeyDrop/PortkeyDrop dist/PortkeyDrop/*.so* "$APPDIR/usr/bin/"
+          cp installer/appimage/AppRun "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/PortkeyDrop"
+          cp installer/appimage/portkeydrop.desktop "$APPDIR/portkeydrop.desktop"
+          cp installer/appimage/portkeydrop.desktop "$APPDIR/usr/share/applications/"
+          cp installer/appimage/portkeydrop.png "$APPDIR/portkeydrop.png"
+          cp installer/appimage/portkeydrop.png \
+            "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
+          desktop-file-validate "$APPDIR/portkeydrop.desktop"
+
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          # No FUSE on the runner, so the tool is unpacked and run in place.
+          ./appimagetool --appimage-extract-and-run "$APPDIR" \
+            "dist/PortkeyDrop_Linux_v${VERSION}.AppImage"
+
+      - name: Check what is about to ship
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          test -f "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz"
+          test -f "dist/PortkeyDrop_Linux_v${VERSION}.AppImage"
+          # The speech library has to be inside both, or the build runs mute
+          # and nothing says so until a user launches it.
+          tar -tzf "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz" | grep -q "libprism.so"
+          ls -la dist/*.tar.gz dist/*.AppImage
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/PortkeyDrop_Linux_*.tar.gz
+            dist/PortkeyDrop_Linux_*.AppImage
 
   release:
     name: Release
-    needs: [prepare, build-windows, build-macos]
-    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success')
+    needs: [prepare, build-windows, build-macos, build-linux]
+    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-linux.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

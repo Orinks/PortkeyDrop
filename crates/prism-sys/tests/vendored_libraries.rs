@@ -48,7 +48,12 @@ fn every_platform_directory_holds_its_library() {
 fn the_platforms_we_ship_are_vendored() {
     // Named explicitly rather than derived from the directory listing: the
     // point is to fail when one goes missing, which a listing cannot catch.
-    for platform in ["windows-x86_64", "macos-x86_64", "macos-aarch64"] {
+    for platform in [
+        "windows-x86_64",
+        "macos-x86_64",
+        "macos-aarch64",
+        "linux-x86_64",
+    ] {
         let library = expected_library(platform).expect("a known platform");
         assert!(
             vendor_dir().join(platform).join(library).is_file(),
@@ -67,4 +72,25 @@ fn the_licence_travels_with_the_binaries() {
             "vendor/licenses/{file} is missing"
         );
     }
+}
+
+#[test]
+fn the_linux_library_keeps_its_dependencies_beside_it() {
+    // Prism's Linux build carries renamed copies of glib and
+    // speech-dispatcher, found through a RUNPATH of `$ORIGIN`. Vendoring the
+    // library without them produces one that cannot be loaded at all.
+    let linux = vendor_dir().join("linux-x86_64");
+    let libraries = std::fs::read_dir(&linux)
+        .expect("the linux vendor directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".so"))
+        .count();
+    assert!(
+        libraries > 1,
+        "linux-x86_64 holds {libraries} shared libraries; libprism.so does not          travel alone"
+    );
+    assert!(
+        linux.join("PROVENANCE.txt").is_file(),
+        "the Linux library was altered to retarget its RUNPATH, which has to be          recorded next to it"
+    );
 }
