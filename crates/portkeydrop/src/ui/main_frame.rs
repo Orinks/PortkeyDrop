@@ -1486,6 +1486,7 @@ impl MainFrame {
         };
         if let Some(icon) = self.tray.borrow().as_ref() {
             icon.set_tooltip(&tooltip);
+            icon.refresh_menu(self);
         }
     }
 

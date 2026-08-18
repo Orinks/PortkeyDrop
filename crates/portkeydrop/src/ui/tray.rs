@@ -28,6 +28,10 @@ const ICON_BACKGROUND: [u8; 3] = [42, 92, 170];
 /// The notification area icon and its menu.
 pub struct TrayIcon {
     icon: Rc<TaskBarIcon>,
+    /// The menu wxWidgets shows by itself where it reports no click events.
+    /// Held here because it does not take ownership of the one it is given.
+    #[cfg(not(target_os = "windows"))]
+    menu: std::cell::RefCell<Menu>,
 }
 
 impl TrayIcon {
@@ -49,16 +53,23 @@ impl TrayIcon {
             return None;
         }
 
-        // Showing the window is the common case, so it is on the plain click as
-        // well as the double click.
+        // Only Windows reports every mouse event on a notification area icon.
+        // Linux reports the two below; macOS reports none, and opens the menu
+        // by itself, which is that platform's own convention.
+        //
+        // Showing the window is the common case, so it is on the plain click
+        // as well as the double click.
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             let frame = frame.clone();
             icon.on_left_down(move |_| frame.show_window());
         }
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             let frame = frame.clone();
             icon.on_left_double_click(move |_| frame.show_window());
         }
+        #[cfg(target_os = "windows")]
         {
             // Win+B then Enter surfaces as this on some wxWidgets builds, and
             // it is the only keyboard route to the icon.
@@ -67,6 +78,7 @@ impl TrayIcon {
         }
 
         // Right-click, and the keyboard's context-menu route, open the menu.
+        #[cfg(target_os = "windows")]
         {
             let frame = frame.clone();
             let icon_for_menu = Rc::clone(&icon);
@@ -75,6 +87,15 @@ impl TrayIcon {
                 icon_for_menu.popup_menu(&mut menu);
             });
         }
+
+        // Everywhere else wxWidgets shows the menu itself, so it is handed one
+        // to keep. It does not take ownership, hence the copy held below.
+        #[cfg(not(target_os = "windows"))]
+        let menu = {
+            let mut menu = build_menu(frame);
+            icon.set_popup_menu(&mut menu);
+            std::cell::RefCell::new(menu)
+        };
 
         // The selection is posted rather than acted on: running it here would
         // let Exit destroy this icon while wxWidgets is still dispatching from
@@ -89,7 +110,27 @@ impl TrayIcon {
             });
         }
 
-        Some(Self { icon })
+        Some(Self {
+            icon,
+            #[cfg(not(target_os = "windows"))]
+            menu,
+        })
+    }
+
+    /// Rebuild the menu so its items match what is currently possible.
+    ///
+    /// Nothing to do where the menu is built fresh on each right-click. Where
+    /// wxWidgets holds one and shows it itself, that copy goes stale: the
+    /// queue count stops moving and Disconnect stays enabled after the
+    /// connection has gone.
+    #[allow(unused_variables)]
+    pub fn refresh_menu(&self, frame: &MainFrame) {
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut rebuilt = build_menu(frame);
+            self.icon.set_popup_menu(&mut rebuilt);
+            *self.menu.borrow_mut() = rebuilt;
+        }
     }
 
     /// Update the tooltip to reflect the current state.
