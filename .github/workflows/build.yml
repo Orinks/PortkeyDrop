@@ -461,6 +461,17 @@ jobs:
             fi
           done
 
+          # The rename above only moves files its cases recognise. Anything
+          # unmatched stays behind in dist/, and an empty assets/ would go on
+          # to publish a release with nothing attached to it.
+          if [ -z "$(ls -A assets 2>/dev/null)" ]; then
+            echo "No assets were staged for the release. dist/ holds:"
+            ls -la dist
+            exit 1
+          fi
+          echo "Staged for release:"
+          ls -la assets
+
           # Generate checksums
           cd assets && sha256sum * > checksums.txt 2>/dev/null || true
 
