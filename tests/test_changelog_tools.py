@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from scripts.changelog_tools import (
     excluded_entries_from_notes,
+    messages_skip_changelog,
     messages_request_nightly_build,
     ChangelogSection,
     extract_release_block,
@@ -68,12 +69,21 @@ def test_format_sections_uses_release_note_headings() -> None:
 
 
 def test_user_facing_paths_match_release_build_surface() -> None:
-    assert is_user_facing_path("src/portkeydrop/app.py")
-    assert is_user_facing_path("installer/build.py")
-    assert is_user_facing_path("scripts/generate_build_meta.py")
-    assert is_user_facing_path("installer/portkeydrop.spec")
+    assert is_user_facing_path("crates/portkeydrop/src/ui/main_frame.rs")
+    assert is_user_facing_path("crates/portkeydrop-core/src/protocols/sftp.rs")
+    assert is_user_facing_path("installer/portkeydrop.iss")
+    assert is_user_facing_path("Cargo.toml")
+    assert is_user_facing_path("rust-toolchain.toml")
     assert not is_user_facing_path(".github/workflows/ci.yml")
-    assert not is_user_facing_path("tests/test_app.py")
+    assert not is_user_facing_path("Cargo.lock")
+    assert not is_user_facing_path("README.md")
+
+
+def test_tests_inside_a_crate_are_not_user_facing() -> None:
+    # `crates/` covers the whole workspace, but a change confined to a crate's
+    # own test files has nothing to tell a user.
+    assert not is_user_facing_path("crates/portkeydrop-core/tests/sftp_live.rs")
+    assert not is_user_facing_path("crates/prism/benches/speech.rs")
 
 
 def test_normalize_entry_matches_curated_release_body_wording() -> None:
@@ -118,3 +128,21 @@ def test_entries_already_announced_are_read_back_out_of_the_notes(tmp_path) -> N
 def test_missing_notes_file_excludes_nothing() -> None:
     assert excluded_entries_from_notes("") == set()
     assert excluded_entries_from_notes("no-such-notes.md") == set()
+
+
+def test_one_skip_marker_does_not_exempt_a_range_with_real_work() -> None:
+    # The dangerous case: a housekeeping commit opting out alongside a
+    # change the user would notice, letting the latter ship with no note.
+    assert not messages_skip_changelog(
+        ["chore: rename a module\n\nChangelog: none", "feat(ui): add a Go To menu"]
+    )
+
+
+def test_a_range_that_all_opts_out_skips_the_gate() -> None:
+    assert messages_skip_changelog(
+        [
+            "chore: rename a module\n\nChangelog: none",
+            "refactor: split a file [skip changelog]",
+        ]
+    )
+    assert not messages_skip_changelog([])

@@ -9,16 +9,25 @@ from pathlib import Path
 
 CHANGELOG_PATH = Path("CHANGELOG.md")
 USER_FACING_PATH_PREFIXES = (
-    "src/",
+    "crates/",
     "installer/",
-    "soundpacks/",
 )
 USER_FACING_PATHS = {
-    "pyproject.toml",
-    "scripts/generate_build_meta.py",
+    # A deliberate dependency or toolchain change can alter behaviour. The
+    # lock file is left out: routine `cargo update` churn would demand a
+    # changelog entry for every refresh.
+    "Cargo.toml",
+    "rust-toolchain.toml",
 }
-USER_FACING_SUFFIXES = (".spec",)
+USER_FACING_SUFFIXES = ()
+# Tests live inside the crates they cover, and a test-only change has nothing
+# to tell a user.
+NON_USER_FACING_PATH_FRAGMENTS = ("/tests/", "/benches/")
 SECTION_ORDER = ("Added", "Changed", "Fixed", "Improved", "Removed", "Deprecated", "Security")
+# Written into a commit message to opt a change out of the CHANGELOG gate --
+# for work that touches user-facing files without changing anything a user
+# would notice, such as a refactor or a rename.
+SKIP_CHANGELOG_MARKERS = ("changelog: none", "[skip changelog]")
 # Written into a commit message to force a nightly that the changelog would
 # not otherwise justify -- a dependency bump, a security fix in a library, a
 # build users need for a reason that has no user-facing bullet.
@@ -37,9 +46,11 @@ def run_git(args: list[str]) -> str:
 
 def is_user_facing_path(path: str) -> bool:
     normalized = path.replace("\\", "/")
+    if any(fragment in normalized for fragment in NON_USER_FACING_PATH_FRAGMENTS):
+        return False
     return (
         normalized in USER_FACING_PATHS
-        or normalized.endswith(USER_FACING_SUFFIXES)
+        or (bool(USER_FACING_SUFFIXES) and normalized.endswith(USER_FACING_SUFFIXES))
         or normalized.startswith(USER_FACING_PATH_PREFIXES)
     )
 
@@ -63,8 +74,27 @@ def ref_is_ancestor(ancestor: str, descendant: str) -> bool:
 
 
 def commit_messages(base: str, head: str) -> list[str]:
-    output = run_git(["log", "--format=%B%x00", f"{base}..{head}"])
+    output = run_git(["log", "--no-merges", "--format=%B%x00", f"{base}..{head}"])
     return [message.strip() for message in output.split("\0") if message.strip()]
+
+
+def messages_skip_changelog(messages: list[str]) -> bool:
+    """Whether every commit in the range opted out of the changelog gate.
+
+    Every one, not any: a single marker must not exempt a range that also
+    carries real user-facing work, which is the failure mode that lets a
+    change ship with no note attached to it.
+    """
+    if not messages:
+        return False
+    return all(
+        any(marker in message.casefold() for marker in SKIP_CHANGELOG_MARKERS)
+        for message in messages
+    )
+
+
+def commits_skip_changelog(base: str, head: str) -> bool:
+    return messages_skip_changelog(commit_messages(base, head))
 
 
 def messages_request_nightly_build(messages: list[str]) -> bool:
@@ -231,6 +261,10 @@ def check_command(args: argparse.Namespace) -> int:
     user_facing = [path for path in files if is_user_facing_path(path)]
     if not user_facing:
         print("No user-facing paths changed.")
+        return 0
+
+    if commits_skip_changelog(args.base, args.head):
+        print("Every commit opted out of the changelog gate.")
         return 0
 
     if CHANGELOG_PATH.as_posix() not in files:

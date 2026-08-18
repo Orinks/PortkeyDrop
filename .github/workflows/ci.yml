@@ -30,6 +30,10 @@ jobs:
         fetch-depth: 0
 
     - name: Check CHANGELOG entry
+      # Skipped when a PR carries the `skip-changelog` label. On non-PR events
+      # the labels expression is null and contains() is false, so pushes still
+      # run the gate and rely on a `Changelog: none` commit trailer instead.
+      if: "!contains(github.event.pull_request.labels.*.name, 'skip-changelog')"
       run: |
         if [ "${{ github.event_name }}" = "pull_request" ]; then
           BASE="origin/${{ github.base_ref }}"
@@ -50,6 +54,9 @@ jobs:
             echo
             echo "User-facing changes need a curated \`CHANGELOG.md\` entry under \`## Unreleased\`."
             echo "This keeps nightly and stable release notes based on product wording instead of PR titles."
+            echo
+            echo "If the change really has nothing to tell a user, add a \`Changelog: none\`"
+            echo "trailer to every commit, or put the \`skip-changelog\` label on the PR."
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
