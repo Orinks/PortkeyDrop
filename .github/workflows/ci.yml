@@ -113,8 +113,20 @@ jobs:
       with:
         components: clippy
 
+    # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+    # nearly all of a cold build. Two settings matter more than they look:
+    #
+    # cache-on-failure keeps that work when a later step fails. Without it
+    # a run that dies packaging the installer throws away forty minutes of
+    # C++ compilation, and the next attempt starts from nothing again.
+    #
+    # shared-key lets this job reuse what CI built on the same OS instead
+    # of each workflow keeping its own copy.
     - name: Cache cargo artifacts
       uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ runner.os }}
 
     # Deliberately not the whole workspace: the UI crate pulls wxdragon-sys,
     # which downloads and builds wxWidgets from source with CMake. The crates
@@ -138,8 +150,20 @@ jobs:
       with:
         components: clippy
 
+    # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+    # nearly all of a cold build. Two settings matter more than they look:
+    #
+    # cache-on-failure keeps that work when a later step fails. Without it
+    # a run that dies packaging the installer throws away forty minutes of
+    # C++ compilation, and the next attempt starts from nothing again.
+    #
+    # shared-key lets this job reuse what CI built on the same OS instead
+    # of each workflow keeping its own copy.
     - name: Cache cargo artifacts
       uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ runner.os }}
 
     # The full workspace, including the wxWidgets front end. One platform
     # rather than three: wxdragon-sys builds wxWidgets from source, so a

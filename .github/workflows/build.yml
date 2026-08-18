@@ -113,8 +113,20 @@ jobs:
       # wxdragon-sys downloads wxWidgets and builds it with CMake, which is the
       # slowest part of a cold build by a wide margin. The cache is keyed on the
       # lock file, so it survives everything except a dependency change.
+      # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+      # nearly all of a cold build. Two settings matter more than they look:
+      #
+      # cache-on-failure keeps that work when a later step fails. Without it
+      # a run that dies packaging the installer throws away forty minutes of
+      # C++ compilation, and the next attempt starts from nothing again.
+      #
+      # shared-key lets this job reuse what CI built on the same OS instead
+      # of each workflow keeping its own copy.
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: ${{ runner.os }}
 
       - name: Build
         run: cargo build --release --locked
@@ -136,9 +148,12 @@ jobs:
 
       - name: Build the installer
         run: |
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
-            "/DMyAppVersion=${{ needs.prepare.outputs.version }}" \
-            installer/portkeydrop.iss
+          # No /DMyAppVersion here: Git Bash rewrites anything that looks
+          # like a Unix path, so the flag reached ISCC as a second script
+          # filename. The staging step already wrote dist/version.txt,
+          # which the script reads when no version is given on the command
+          # line.
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" installer/portkeydrop.iss
 
       - name: Build the portable ZIP
         run: |
@@ -183,8 +198,20 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+      # nearly all of a cold build. Two settings matter more than they look:
+      #
+      # cache-on-failure keeps that work when a later step fails. Without it
+      # a run that dies packaging the installer throws away forty minutes of
+      # C++ compilation, and the next attempt starts from nothing again.
+      #
+      # shared-key lets this job reuse what CI built on the same OS instead
+      # of each workflow keeping its own copy.
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: ${{ runner.os }}
 
       # One universal binary rather than a build per architecture: the
       # updater picks an asset by platform alone, with no notion of
@@ -233,8 +260,14 @@ jobs:
           # Both architectures actually present, in both the executable and
           # the speech library. A thin binary here is silent breakage for
           # every user on the other architecture.
-          lipo -info "$APP/Contents/MacOS/PortkeyDrop" | grep -q "x86_64 arm64"
-          lipo -info "$APP/Contents/Frameworks/libprism.dylib" | grep -q "x86_64 arm64"
+          # Read the output rather than piping it: steps run with pipefail,
+          # and `grep -q` closing the pipe early makes the producer fail.
+          executable_arches=$(lipo -info "$APP/Contents/MacOS/PortkeyDrop")
+          library_arches=$(lipo -info "$APP/Contents/Frameworks/libprism.dylib")
+          echo "$executable_arches"
+          echo "$library_arches"
+          [[ "$executable_arches" == *"x86_64 arm64"* ]]
+          [[ "$library_arches" == *"x86_64 arm64"* ]]
           test -f "$APP/Contents/Info.plist"
 
       - name: Build the disk image
@@ -269,8 +302,20 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+      # nearly all of a cold build. Two settings matter more than they look:
+      #
+      # cache-on-failure keeps that work when a later step fails. Without it
+      # a run that dies packaging the installer throws away forty minutes of
+      # C++ compilation, and the next attempt starts from nothing again.
+      #
+      # shared-key lets this job reuse what CI built on the same OS instead
+      # of each workflow keeping its own copy.
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: ${{ runner.os }}
 
       # wxdragon-sys builds wxWidgets from source, which needs GTK's headers.
       # Built on 22.04 rather than latest so the result runs on older glibc:
@@ -303,12 +348,17 @@ jobs:
           # ldd on the library itself, not the executable: Prism is opened at
           # run time, so a missing dependency is invisible until the app is
           # already running and silent.
-          if ldd libprism.so | grep -q "not found"; then
+          # This check failed open before: `grep -q` matching "not found"
+          # exits at once, ldd takes SIGPIPE, pipefail fails the pipeline, and
+          # the `if` reads that as no match -- so a library that could not be
+          # loaded sailed through the check meant to catch it.
+          resolved=$(ldd libprism.so)
+          echo "$resolved"
+          if grep -q "not found" <<<"$resolved"; then
             echo "libprism.so has unresolved dependencies:"
-            ldd libprism.so | grep "not found"
+            grep "not found" <<<"$resolved"
             exit 1
           fi
-          ldd libprism.so | head -20
 
       - name: Build the tarball
         env:
@@ -349,7 +399,8 @@ jobs:
           test -f "dist/PortkeyDrop_Linux_v${VERSION}.AppImage"
           # The speech library has to be inside both, or the build runs mute
           # and nothing says so until a user launches it.
-          tar -tzf "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz" | grep -q "libprism.so"
+          contents=$(tar -tzf "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz")
+          [[ "$contents" == *"libprism.so"* ]]
           ls -la dist/*.tar.gz dist/*.AppImage
 
       - uses: actions/upload-artifact@v7
