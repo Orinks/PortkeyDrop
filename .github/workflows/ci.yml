@@ -64,6 +64,28 @@ jobs:
           exit 1
         fi
 
+  release-tooling:
+    name: Release tooling
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install pytest
+      run: pip install pytest
+
+    # changelog_tools.py decides whether a nightly ships and what its notes
+    # say. It outlived the Python application, so its tests have to outlive
+    # the Python test suite too -- one of them already caught a marker that
+    # fired on prose.
+    - name: Test
+      run: python -m pytest tests/test_changelog_tools.py -q
+
   format:
     name: Format
     runs-on: ubuntu-latest
@@ -119,9 +141,11 @@ jobs:
     - name: Cache cargo artifacts
       uses: Swatinem/rust-cache@v2
 
-    # The full workspace, including the wxWidgets front end. Windows is where
-    # the app ships today and where the vendored Prism library exists, so this
-    # is the job that proves the whole thing still builds.
+    # The full workspace, including the wxWidgets front end. One platform
+    # rather than three: wxdragon-sys builds wxWidgets from source, so a
+    # matrix here would triple the slowest job in the file. The release
+    # workflow compiles all three, which is where a platform-specific break
+    # surfaces.
     - name: Clippy
       run: cargo clippy --workspace --all-targets
 
