@@ -62,7 +62,14 @@ fix(deps): bump russh to 0.62.1
 nightly: build
 ```
 
-`[nightly build]` anywhere in the message does the same thing.
+`[nightly build]` works the same way. Both have to be a line of their own:
+a commit that merely writes about the marker, such as a change to this
+tooling, would otherwise set it off.
+
+A change that touches user-facing files but has nothing to tell a user --
+a rename, a refactor -- opts out of the CHANGELOG gate the same way, with
+`Changelog: none` or `[skip changelog]` on its own line in **every** commit
+of the range, or a `skip-changelog` label on the PR.
 
 PowerShell equivalent:
 

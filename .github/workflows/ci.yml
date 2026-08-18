@@ -17,6 +17,9 @@ defaults:
 
 env:
   FORCE_COLOR: "1"
+  CARGO_TERM_COLOR: always
+  # A warning that only fails locally is a warning nobody fixes.
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   changelog-check:
@@ -61,113 +64,66 @@ jobs:
           exit 1
         fi
 
-  lint:
-    name: Lint
+  format:
+    name: Format
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    - name: Ruff format check
-      uses: astral-sh/ruff-action@v3
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        args: format --check
+        components: rustfmt
 
-    - name: Ruff lint
-      uses: astral-sh/ruff-action@v3
-      with:
-        args: check
+    - name: Check formatting
+      run: cargo fmt --all --check
 
-  tests:
-    name: Tests (Ubuntu, Python ${{ matrix.python-version }})
+  core:
+    name: Core (Ubuntu)
     runs-on: ubuntu-latest
-    needs: lint
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        python-version: ${{ matrix.python-version }}
-        cache: pip
+        components: clippy
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # Use prebuilt wx wheels only — never build from source.
-        # extras.wxpython.org provides Linux wheels for supported Python versions.
-        pip install \
-          -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 \
-          --only-binary wxPython \
-          -e ".[dev]"
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
 
-    - name: Run tests with coverage
-      env:
-        PYTHONPATH: src
-      run: |
-        mkdir -p reports
-        pytest tests/ -n auto -v --tb=short -m "not integration" \
-          --junitxml=reports/junit.xml \
-          --cov=src/portkeydrop \
-          --cov-report=xml:reports/coverage.xml \
-          --cov-report=term-missing
+    # Deliberately not the whole workspace: the UI crate pulls wxdragon-sys,
+    # which downloads and builds wxWidgets from source with CMake. The crates
+    # tested here have no UI dependency by design, so they give fast feedback
+    # on protocol parsing, transfer rules, and credential handling.
+    - name: Clippy
+      run: cargo clippy -p portkeydrop-core -p prism -p prism-sys --all-targets
 
-    - name: Upload test report
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: junit-${{ matrix.python-version }}
-        path: reports/junit.xml
-        retention-days: 7
+    - name: Test
+      run: cargo test -p portkeydrop-core -p prism -p prism-sys
 
-    - name: Upload coverage report
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-${{ matrix.python-version }}
-        path: reports/coverage.xml
-        retention-days: 7
-
-  coverage-gate:
-    name: Coverage Gate
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.event_name == 'pull_request'
+  app:
+    name: App (Windows)
+    runs-on: windows-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        fetch-depth: 0
+        components: clippy
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: "3.11"
-        cache: pip
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
 
-    - name: Install diff-cover
-      run: pip install diff-cover>=9.0.0
+    # The full workspace, including the wxWidgets front end. Windows is where
+    # the app ships today and where the vendored Prism library exists, so this
+    # is the job that proves the whole thing still builds.
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets
 
-    - name: Download coverage report
-      uses: actions/download-artifact@v7
-      with:
-        name: coverage-3.11
-        path: reports
-
-    - name: Check coverage on changed lines
-      run: |
-        diff-cover reports/coverage.xml \
-          --compare-branch=origin/${{ github.base_ref }} \
-          --fail-under=80 \
-          --diff-range-notation='..' \
-          --exclude \
-            '*/portkeydrop/ui/*' \
-            '*/portkeydrop/dialogs/*' \
-            '*/portkeydrop/importers/winscp.py'
-        echo "✅ New code meets coverage threshold!"
+    - name: Test
+      run: cargo test --workspace

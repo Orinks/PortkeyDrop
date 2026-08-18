@@ -22,10 +22,6 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PYTHON_VERSION: "3.11"
-  NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-cache
-
 jobs:
   prepare:
     name: Prepare
@@ -46,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "is_nightly=false" >> $GITHUB_OUTPUT
@@ -94,45 +90,57 @@ jobs:
           ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Nuitka cache
-        uses: actions/cache/restore@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
-          restore-keys: |
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+      # wxdragon-sys downloads wxWidgets and builds it with CMake, which is the
+      # slowest part of a cold build by a wide margin. The cache is keyed on the
+      # lock file, so it survives everything except a dependency change.
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
-        run: pip install -e .[dev,build]
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Stage the install tree
+        run: |
+          mkdir -p dist/PortkeyDrop_dir
+          # The installer script expects this capitalisation; cargo emits the
+          # crate name in lower case.
+          cp target/release/portkeydrop.exe dist/PortkeyDrop_dir/PortkeyDrop.exe
+          cp target/release/prism.dll dist/PortkeyDrop_dir/prism.dll
+          {
+            echo "[version]"
+            echo "value=${{ needs.prepare.outputs.version }}"
+          } > dist/version.txt
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Build
+      - name: Build the installer
         run: |
-          python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
-          python installer/build_nuitka.py --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+            "/DMyAppVersion=${{ needs.prepare.outputs.version }}" \
+            installer/portkeydrop.iss
 
-      - name: Validate runtime deps for installer/portable
+      - name: Build the portable ZIP
         run: |
-          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data
+          # A portable install keeps its configuration beside the executable,
+          # which is what the marker switches on. Without it a copy on a USB
+          # stick would write to the host machine's profile instead.
+          cp -r dist/PortkeyDrop_dir dist/PortkeyDrop_Portable
+          : > dist/PortkeyDrop_Portable/.portable
+          (cd dist/PortkeyDrop_Portable && 7z a -tzip \
+            "../PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip" .)
 
-      - name: Validate portable ZIP contents
+      - name: Check what is about to ship
         run: |
-          python scripts/verify_portable_zip.py --runtime-dir dist/PortkeyDrop_dir --require-runtime-no-data --portable-zip dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip
-
-      - name: Save Nuitka cache
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
+          test -f "dist/PortkeyDrop_Setup_v${{ needs.prepare.outputs.version }}.exe"
+          test -f "dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip"
+          # A build without the speech library runs mute, and a screen reader
+          # user has no way to tell until they launch it.
+          test -f dist/PortkeyDrop_dir/prism.dll
+          ls -la dist
 
       - uses: actions/upload-artifact@v7
         with:
@@ -141,210 +149,16 @@ jobs:
             dist/PortkeyDrop_Setup_*.exe
             dist/PortkeyDrop_Portable_*.zip
 
-  build-macos:
-    name: macOS
-    needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Restore Nuitka cache
-        uses: actions/cache/restore@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
-          restore-keys: |
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
-
-      - name: Install dependencies
-        run: |
-          pip install --only-binary wxPython wxPython
-          pip install -e .[dev,build]
-
-      - name: Build
-        timeout-minutes: 30
-        run: |
-          python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
-          python installer/build_nuitka.py --skip-installer --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
-
-      - name: Save Nuitka cache
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macos
-          path: |
-            dist/PortkeyDrop_macOS_*.zip
-
-  build-linux:
-    name: Linux
-    needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Restore Nuitka cache
-        uses: actions/cache/restore@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
-          restore-keys: |
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-
-            nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ccache \
-            libgtk-3-dev \
-            libnotify-dev \
-            libsdl2-dev \
-            libwebkit2gtk-4.1-dev \
-            freeglut3-dev \
-            xvfb
-
-      - name: Install dependencies
-        run: |
-          WX_PYTHON_VERSION=4.2.5
-          PY_TAG=$(python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
-          pip install \
-            "https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04/wxpython-${WX_PYTHON_VERSION}-${PY_TAG}-${PY_TAG}-linux_x86_64.whl"
-          pip install -e .[dev,build]
-
-      - name: Build
-        timeout-minutes: 55
-        run: |
-          python scripts/generate_build_meta.py ${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}
-          python installer/build_nuitka.py --tag "${{ needs.prepare.outputs.is_nightly == 'true' && needs.prepare.outputs.tag || '' }}"
-
-      - name: Smoke test packaged app
-        env:
-          XDG_DATA_HOME: ${{ runner.temp }}/portkeydrop-data
-          XDG_CONFIG_HOME: ${{ runner.temp }}/portkeydrop-config
-        run: |
-          set +e
-          timeout 25s xvfb-run -a dist/PortkeyDrop/PortkeyDrop > linux-smoke.log 2>&1
-          status=$?
-          set -e
-          cat linux-smoke.log
-          if grep -E "cannot register existing type 'G(Task|AsyncResult|InputStream|Seekable|PollableInputStream)'|GLib-GObject-CRITICAL" linux-smoke.log; then
-            echo "Packaged Linux app hit the GLib/GIO duplicate type-registration crash."
-            exit 1
-          fi
-          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
-            echo "Packaged Linux app exited unexpectedly with status $status."
-            exit "$status"
-          fi
-
-      - name: Package AppImage
-        timeout-minutes: 15
-        run: python installer/build_appimage.py
-
-      - name: Smoke test AppImage on Fedora
-        timeout-minutes: 15
-        run: |
-          cat > fedora-smoke.sh <<'EOF'
-          set -e
-          dnf install -y -q gtk3 libnotify alsa-lib xorg-x11-server-Xvfb dejavu-sans-fonts >/dev/null
-          cd /work
-          appimage=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.AppImage' -print -quit)
-          if [ -z "$appimage" ]; then
-            echo "AppImage was not created."
-            exit 1
-          fi
-          chmod +x "$appimage"
-          export XDG_DATA_HOME=/tmp/pkd-data XDG_CONFIG_HOME=/tmp/pkd-config
-          set +e
-          timeout 25s xvfb-run -a "$appimage" --appimage-extract-and-run > fedora-smoke.log 2>&1
-          status=$?
-          set -e
-          cat fedora-smoke.log
-          if grep -E "error while loading shared libraries|cannot open shared object file" fedora-smoke.log; then
-            echo "AppImage is missing a shared library on Fedora."
-            exit 1
-          fi
-          if grep -E "cannot register existing type 'G(Task|AsyncResult|InputStream|Seekable|PollableInputStream)'|GLib-GObject-CRITICAL" fedora-smoke.log; then
-            echo "AppImage hit the GLib/GIO duplicate type-registration crash on Fedora."
-            exit 1
-          fi
-          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
-            echo "AppImage exited unexpectedly with status $status on Fedora."
-            exit "$status"
-          fi
-          echo "Fedora smoke test passed."
-          EOF
-          docker run --rm -v "$PWD:/work" fedora:43 bash /work/fedora-smoke.sh
-
-      - name: Verify Linux tarball avoids bundled OpenSSL
-        run: |
-          tarball=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.tar.gz' -print -quit)
-          if [ -z "$tarball" ]; then
-            echo "Linux tarball was not created."
-            exit 1
-          fi
-          if tar -tzf "$tarball" | grep -E '(^|/)lib(ssl|crypto)\.so'; then
-            echo "Linux tarball must not bundle OpenSSL libraries; use the target system OpenSSL instead."
-            exit 1
-          fi
-
-      - name: Verify Linux tarball includes sound_lib x64 libraries
-        run: |
-          tarball=$(find dist -maxdepth 1 -name 'PortkeyDrop_Linux_*.tar.gz' -print -quit)
-          if [ -z "$tarball" ]; then
-            echo "Linux tarball was not created."
-            exit 1
-          fi
-          for lib in libbass.so libbassmix.so libbassopus.so libtags.so; do
-            if ! tar -tzf "$tarball" | grep -qx "PortkeyDrop/sound_lib/lib/x64/$lib"; then
-              echo "Linux tarball is missing sound_lib/lib/x64/$lib."
-              exit 1
-            fi
-          done
-
-      - name: Save Nuitka cache
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: .nuitka-cache
-          key: nuitka-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml', 'installer/build_nuitka.py') }}-${{ github.run_id }}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: linux
-          path: |
-            dist/PortkeyDrop_Linux_*.tar.gz
-            dist/PortkeyDrop_Linux_*.AppImage
-
+  # The macOS and Linux jobs are gone with the Python build they ran. Bringing
+  # them back as cargo builds needs the Prism speech library vendored for those
+  # platforms first: crates/prism-sys/vendor carries only the Windows DLL, and
+  # a file transfer client for screen reader users that cannot speak is not
+  # something to publish. `git log -- .github/workflows/build.yml` has the
+  # PyInstaller versions to work from.
   release:
     name: Release
-    needs: [prepare, build-windows, build-macos, build-linux]
-    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-linux.result == 'success')
+    needs: [prepare, build-windows]
+    if: always() && needs.prepare.outputs.should_build == 'true' && needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

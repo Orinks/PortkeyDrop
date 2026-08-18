@@ -3,20 +3,21 @@
 ;
 ; Requirements:
 ;   - Inno Setup 6.0 or later (https://jrsoftware.org/isinfo.php)
-;   - Nuitka build output staged in dist/PortkeyDrop_dir/
+;   - cargo build --release output staged in dist/PortkeyDrop_dir/
 ;
 ; Build:
 ;   iscc installer/portkeydrop.iss
 
 #define MyAppName "PortkeyDrop"
-; Version is read from dist/version.txt (written by CI/build scripts from pyproject.toml)
+; Version is read from dist/version.txt (written by CI from Cargo.toml), or passed
+; on the command line with /DMyAppVersion.
 ; Fail the build if it is missing so installers never ship with stale metadata.
 #ifndef MyAppVersion
   #define VersionFilePath AddBackslash(SourcePath) + "..\dist\version.txt"
   #if FileExists(VersionFilePath)
     #define MyAppVersion ReadIni(VersionFilePath, "version", "value", "")
   #else
-    #error Missing dist/version.txt; run installer/build_nuitka.py or write the CI version file before compiling the installer.
+    #error Missing dist/version.txt; write it from Cargo.toml, or pass /DMyAppVersion, before compiling the installer.
   #endif
 #endif
 #define MyAppPublisher "Orinks"

@@ -102,8 +102,9 @@ def test_a_commit_can_ask_for_a_nightly_the_changelog_would_not_justify() -> Non
     # a dependency bump, a fix inside a library. Without this the only way to
     # ship one is a release whose notes say nothing.
     assert messages_request_nightly_build(["fix(deps): bump russh\n\nnightly: build"])
-    assert messages_request_nightly_build(["chore: refresh vendored DLL [nightly build]"])
-    assert messages_request_nightly_build(["Nightly: Build"])
+    assert messages_request_nightly_build(["chore: refresh the vendored DLL\n\n[nightly build]"])
+    # The marker is a trailer, so case does not matter but placement does.
+    assert messages_request_nightly_build(["chore: something\n\nNightly: Build"])
 
 
 def test_ordinary_commits_do_not_ask_for_a_nightly() -> None:
@@ -142,7 +143,31 @@ def test_a_range_that_all_opts_out_skips_the_gate() -> None:
     assert messages_skip_changelog(
         [
             "chore: rename a module\n\nChangelog: none",
-            "refactor: split a file [skip changelog]",
+            "refactor: split a file\n\n[skip changelog]",
         ]
     )
     assert not messages_skip_changelog([])
+
+
+
+def test_writing_about_a_marker_does_not_trigger_it() -> None:
+    # Found by dry-running the gate: the commit that introduced these
+    # markers explained them in its body and set them off.
+    prose = (
+        "ci: build a nightly only when there is something to tell the user\n"
+        "\n"
+        'A commit saying "nightly: build" or "[nightly build]" forces one.'
+    )
+    assert not messages_request_nightly_build([prose])
+    assert not messages_skip_changelog(
+        ["docs: explain that Changelog: none opts a commit out of the gate"]
+    )
+
+
+def test_a_marker_on_its_own_line_still_counts() -> None:
+    assert messages_request_nightly_build(
+        ["fix(deps): bump russh\n\nnightly: build"]
+    )
+    assert messages_request_nightly_build(
+        ["chore: refresh the vendored DLL\n\n[nightly build]"]
+    )

@@ -78,6 +78,17 @@ def commit_messages(base: str, head: str) -> list[str]:
     return [message.strip() for message in output.split("\0") if message.strip()]
 
 
+def has_marker(message: str, markers: tuple[str, ...]) -> bool:
+    """Whether a commit message carries one of `markers` as a trailer.
+
+    The marker has to be a line of its own. Matching it anywhere in the
+    message means a commit that merely writes about the marker -- release
+    tooling changes, a PR description quoting the docs -- silently triggers
+    it, which is how the gate ends up firing on prose.
+    """
+    return any(line.strip().casefold() in markers for line in message.splitlines())
+
+
 def messages_skip_changelog(messages: list[str]) -> bool:
     """Whether every commit in the range opted out of the changelog gate.
 
@@ -87,10 +98,7 @@ def messages_skip_changelog(messages: list[str]) -> bool:
     """
     if not messages:
         return False
-    return all(
-        any(marker in message.casefold() for marker in SKIP_CHANGELOG_MARKERS)
-        for message in messages
-    )
+    return all(has_marker(message, SKIP_CHANGELOG_MARKERS) for message in messages)
 
 
 def commits_skip_changelog(base: str, head: str) -> bool:
@@ -104,10 +112,7 @@ def messages_request_nightly_build(messages: list[str]) -> bool:
     that never become a user-facing bullet. Rather than shipping those with
     "no user-facing changes" as their notes, the commit says so explicitly.
     """
-    return any(
-        any(marker in message.casefold() for marker in NIGHTLY_BUILD_MARKERS)
-        for message in messages
-    )
+    return any(has_marker(message, NIGHTLY_BUILD_MARKERS) for message in messages)
 
 
 def commits_request_nightly_build(base: str, head: str) -> bool:
