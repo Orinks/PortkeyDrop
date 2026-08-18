@@ -54,6 +54,16 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
 
+; Refuse to install over a running copy. The app holds this named mutex for
+; its lifetime (see crates/portkeydrop/src/single_instance.rs), so Setup can
+; ask the user to close it rather than failing part way through replacing a
+; file that is still open.
+;
+; Deliberately not paired with CloseApplications: closing the window is not
+; the same as quitting when "minimise to the notification area on close" is
+; on, and Setup would carry on believing the app had gone.
+AppMutex=Local\PortkeyDrop.SingleInstance
+
 ; Privileges and install scope
 PrivilegesRequired=lowest
 UsePreviousPrivileges=yes
