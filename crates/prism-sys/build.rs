@@ -18,6 +18,15 @@ fn library_file_name(target_os: &str) -> &'static str {
     }
 }
 
+/// Vendor subdirectory holding the library for one target.
+///
+/// Keyed by architecture as well as OS: macOS ships separate Intel and Apple
+/// silicon builds under the same file name, so a single directory cannot hold
+/// both.
+fn vendor_subdirectory(target_os: &str, target_arch: &str) -> String {
+    format!("{target_os}-{target_arch}")
+}
+
 /// Walk up from `OUT_DIR` to the profile directory (`target/debug`), which is
 /// where Cargo places binaries and where the loader looks first.
 fn profile_dir(out_dir: &Path) -> Option<PathBuf> {
@@ -31,19 +40,20 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let file_name = library_file_name(&target_os);
 
-    let vendored = manifest_dir.join("vendor").join("bin").join(file_name);
-    println!(
-        "cargo:vendor_dir={}",
-        manifest_dir.join("vendor").join("bin").display()
-    );
+    let vendor_dir = manifest_dir
+        .join("vendor")
+        .join(vendor_subdirectory(&target_os, &target_arch));
+    let vendored = vendor_dir.join(file_name);
+    println!("cargo:vendor_dir={}", vendor_dir.display());
 
     if !vendored.is_file() {
         println!(
-            "cargo:warning=prism-sys: {} is not vendored for this platform; \
-             speech output will be unavailable unless the library is installed system-wide",
-            file_name
+            "cargo:warning=prism-sys: {file_name} is not vendored for \
+             {target_os}-{target_arch}; the app will run without speech unless the \
+             library is installed system-wide"
         );
         return;
     }

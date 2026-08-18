@@ -149,16 +149,100 @@ jobs:
             dist/PortkeyDrop_Setup_*.exe
             dist/PortkeyDrop_Portable_*.zip
 
-  # The macOS and Linux jobs are gone with the Python build they ran. Bringing
-  # them back as cargo builds needs the Prism speech library vendored for those
-  # platforms first: crates/prism-sys/vendor carries only the Windows DLL, and
-  # a file transfer client for screen reader users that cannot speak is not
-  # something to publish. `git log -- .github/workflows/build.yml` has the
-  # PyInstaller versions to work from.
+  build-macos:
+    name: macOS
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.is_nightly == 'true' && 'dev' || github.ref }}
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # One universal binary rather than a build per architecture: the
+      # updater picks an asset by platform alone, with no notion of
+      # architecture, so publishing two would hand half of macOS the wrong
+      # one. wxWidgets gets built twice here, which is why the timeout is
+      # generous.
+      - name: Build for both architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Assemble the app bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          APP="dist/PortkeyDrop.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
+
+          lipo -create -output "$APP/Contents/MacOS/PortkeyDrop" \
+            target/aarch64-apple-darwin/release/portkeydrop \
+            target/x86_64-apple-darwin/release/portkeydrop
+
+          # The loader looks beside the executable and then in
+          # ../Frameworks, which is where a bundle keeps its libraries.
+          lipo -create -output "$APP/Contents/Frameworks/libprism.dylib" \
+            crates/prism-sys/vendor/macos-aarch64/libprism.dylib \
+            crates/prism-sys/vendor/macos-x86_64/libprism.dylib
+
+          sed -e "s|<string>0\.0\.0</string>|<string>${VERSION}</string>|g" \
+            installer/macos/Info.plist > "$APP/Contents/Info.plist"
+          plutil -lint "$APP/Contents/Info.plist"
+
+          cp crates/prism-sys/vendor/licenses/LICENSE "$APP/Contents/Resources-LICENSE" 2>/dev/null || true
+
+          # An unsigned bundle copied out of a DMG is quarantined; ad-hoc
+          # signing at least keeps it launchable without Gatekeeper refusing
+          # the whole bundle outright.
+          codesign --force --deep --sign - "$APP"
+
+      - name: Check the bundle before packaging it
+        run: |
+          APP="dist/PortkeyDrop.app"
+          # Both architectures actually present, in both the executable and
+          # the speech library. A thin binary here is silent breakage for
+          # every user on the other architecture.
+          lipo -info "$APP/Contents/MacOS/PortkeyDrop" | grep -q "x86_64 arm64"
+          lipo -info "$APP/Contents/Frameworks/libprism.dylib" | grep -q "x86_64 arm64"
+          test -f "$APP/Contents/Info.plist"
+
+      - name: Build the disk image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # A DMG, not a ZIP: the updater's macOS path mounts a DMG and
+          # replaces the bundle itself, where anything else it can only hand
+          # to Finder for the user to finish by hand.
+          hdiutil create -volname "Portkey Drop" \
+            -srcfolder dist/PortkeyDrop.app \
+            -ov -format UDZO \
+            "dist/PortkeyDrop_macOS_v${VERSION}.dmg"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/PortkeyDrop_macOS_*.dmg
+
+  # The Linux job is still to come: crates/prism-sys/vendor has no
+  # linux-x86_64 entry yet. Prism's Linux build is auditwheel-repaired and
+  # needs its bundled glib and speech-dispatcher libraries alongside it with
+  # the RPATH layout preserved, which is a job of its own.
+
   release:
     name: Release
-    needs: [prepare, build-windows]
-    if: always() && needs.prepare.outputs.should_build == 'true' && needs.build-windows.result == 'success'
+    needs: [prepare, build-windows, build-macos]
+    if: always() && needs.prepare.outputs.should_build == 'true' && (needs.build-windows.result == 'success' || needs.build-macos.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -184,14 +268,14 @@ jobs:
           TIMESTAMP=$(date -u +%Y%m%d)
 
           # Rename assets based on release type
-          for f in dist/*.exe dist/*.zip dist/*.tar.gz dist/*.AppImage; do
+          for f in dist/*.exe dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.AppImage; do
             [ -f "$f" ] || continue
             name=$(basename "$f")
             if [ "$IS_NIGHTLY" = "true" ]; then
               case "$name" in
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-windows-portable.zip" ;;
-                *macOS*.zip) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-macOS.zip" ;;
+                *macOS*.dmg) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-macOS.dmg" ;;
                 *Linux*.tar.gz) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-linux.tar.gz" ;;
                 *Linux*.AppImage) mv "$f" "assets/PortkeyDrop-nightly-${TIMESTAMP}-linux-x86_64.AppImage" ;;
               esac
@@ -199,7 +283,7 @@ jobs:
               case "$name" in
                 *Setup*.exe) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-setup.exe" ;;
                 *Portable*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-windows-portable.zip" ;;
-                *macOS*.zip) mv "$f" "assets/PortkeyDrop-${VERSION}-macOS.zip" ;;
+                *macOS*.dmg) mv "$f" "assets/PortkeyDrop-${VERSION}-macOS.dmg" ;;
                 *Linux*.tar.gz) mv "$f" "assets/PortkeyDrop-${VERSION}-linux.tar.gz" ;;
                 *Linux*.AppImage) mv "$f" "assets/PortkeyDrop-${VERSION}-linux-x86_64.AppImage" ;;
               esac

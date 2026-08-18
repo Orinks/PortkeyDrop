@@ -13,6 +13,7 @@ fn stable_assets(version: &str) -> Vec<String> {
     vec![
         format!("PortkeyDrop-{version}-windows-setup.exe"),
         format!("PortkeyDrop-{version}-windows-portable.zip"),
+        format!("PortkeyDrop-{version}-macOS.dmg"),
         "checksums.txt".to_string(),
     ]
 }
@@ -22,6 +23,7 @@ fn nightly_assets(stamp: &str) -> Vec<String> {
     vec![
         format!("PortkeyDrop-nightly-{stamp}-windows-setup.exe"),
         format!("PortkeyDrop-nightly-{stamp}-windows-portable.zip"),
+        format!("PortkeyDrop-nightly-{stamp}-macOS.dmg"),
         "checksums.txt".to_string(),
     ]
 }
@@ -81,4 +83,25 @@ fn the_checksum_file_is_never_offered_as_the_download() {
         let asset = select_asset(&release, portable, "windows").expect("an asset");
         assert_ne!(asset.name, "checksums.txt");
     }
+}
+
+#[test]
+fn a_mac_picks_the_disk_image() {
+    // Only a DMG can be installed without the user finishing the job in
+    // Finder: the macOS apply script mounts it and swaps the bundle, and
+    // falls back to merely opening anything else.
+    let release = release_with(stable_assets("0.6.0"));
+    for portable in [true, false] {
+        let asset = select_asset(&release, portable, "macos").expect("an asset for macOS");
+        assert_eq!(asset.name, "PortkeyDrop-0.6.0-macOS.dmg");
+    }
+}
+
+#[test]
+fn a_mac_does_not_get_handed_a_windows_build() {
+    // The Windows ZIP sorts before the DMG in the asset list, and the
+    // fallback arm returns whichever candidate comes first.
+    let release = release_with(nightly_assets("20260818"));
+    let asset = select_asset(&release, false, "macos").expect("an asset for macOS");
+    assert!(asset.name.ends_with(".dmg"), "got {}", asset.name);
 }
