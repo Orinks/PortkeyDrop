@@ -1,7 +1,7 @@
 # Portkey Drop - Product Requirements Document
 
 ## Overview
-Portkey Drop is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via SFTP, FTP, and FTPS. SCP and WebDAV are planned protocol targets. Built with wxPython and Prismatoid for full NVDA/JAWS compatibility.
+Portkey Drop is an accessible file transfer client built for screen reader users. It provides a clean, keyboard-driven interface for connecting to remote servers via SFTP, FTP, and FTPS. SCP and WebDAV are planned protocol targets. Written in Rust, with wxWidgets through wxDragon for the interface and Prism for speech, for full NVDA/JAWS compatibility.
 
 ## Why This Exists
 Existing file transfer clients (FileZilla, WinSCP, Cyberduck) rely heavily on visual cues (drag-and-drop, tree views with icons) that don't translate well to assistive technology. Portkey Drop uses a dual-pane layout with properly labeled standard ListCtrl panes ("Local Files" / "Remote Files") that screen readers like NVDA and JAWS handle naturally. Each pane is a standard list control with SetName(), so screen readers announce which pane has focus. Every action is keyboard-accessible and every state change is announced.
@@ -87,7 +87,7 @@ Planned:
 - Date format: Relative ("2 days ago") with full date on request
 
 ## Architecture
-- **UI Layer**: wxPython + Prismatoid (screen reader announcements)
+- **UI Layer**: wxWidgets via wxDragon + Prism (screen reader announcements)
 - **Protocol Layer**: Abstract `TransferClient` interface per protocol
   - `asyncssh` for SFTP
   - `ftplib` (stdlib) for FTP
