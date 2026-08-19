@@ -268,7 +268,7 @@ pub fn load_settings(config_dir: &Path) -> Settings {
 
 /// Write settings into `config_dir`, creating the directory if needed.
 pub fn save_settings(settings: &Settings, config_dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(config_dir)?;
+    crate::private_files::ensure_private_dir(config_dir)?;
     let text = settings
         .to_json()
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
