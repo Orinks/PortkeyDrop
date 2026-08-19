@@ -193,7 +193,7 @@ impl SiteManager {
 
     /// Write the site list and sync every password to the store.
     pub fn save(&mut self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.config_dir)?;
+        crate::private_files::ensure_private_dir(&self.config_dir)?;
 
         for site in &self.sites {
             if site.password.is_empty() {

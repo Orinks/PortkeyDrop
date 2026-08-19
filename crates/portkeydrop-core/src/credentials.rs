@@ -158,7 +158,7 @@ impl VaultStore {
         }
         let plaintext = serde_json::to_vec(&self.entries)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        std::fs::write(&self.path, self.key.encrypt(&plaintext))
+        crate::private_files::write_private(&self.path, self.key.encrypt(&plaintext))
     }
 
     /// Whether the vault holds nothing, either because it is new or unreadable.

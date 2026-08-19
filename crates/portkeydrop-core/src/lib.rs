@@ -10,6 +10,7 @@ pub mod importers;
 pub mod local_files;
 pub mod migration;
 pub mod portable;
+pub mod private_files;
 pub mod protocols;
 pub mod settings;
 pub mod sites;
