@@ -335,30 +335,10 @@ jobs:
         run: |
           mkdir -p dist/PortkeyDrop
           cp target/release/portkeydrop dist/PortkeyDrop/PortkeyDrop
-          # The Prism library and everything it carries. It resolves those
-          # through a RUNPATH of $ORIGIN, so they must stay beside it.
-          cp crates/prism-sys/vendor/linux-x86_64/*.so* dist/PortkeyDrop/
-          cp crates/prism-sys/vendor/licenses/LICENSE dist/PortkeyDrop/PRISM-LICENSE
-          cp crates/prism-sys/vendor/licenses/NOTICE dist/PortkeyDrop/PRISM-NOTICE
-          cp crates/prism-sys/vendor/linux-x86_64/PROVENANCE.txt dist/PortkeyDrop/PRISM-PROVENANCE.txt
-
-      - name: Check the speech library resolves
-        run: |
-          cd dist/PortkeyDrop
-          # ldd on the library itself, not the executable: Prism is opened at
-          # run time, so a missing dependency is invisible until the app is
-          # already running and silent.
-          # This check failed open before: `grep -q` matching "not found"
-          # exits at once, ldd takes SIGPIPE, pipefail fails the pipeline, and
-          # the `if` reads that as no match -- so a library that could not be
-          # loaded sailed through the check meant to catch it.
-          resolved=$(ldd libprism.so)
-          echo "$resolved"
-          if grep -q "not found" <<<"$resolved"; then
-            echo "libprism.so has unresolved dependencies:"
-            grep "not found" <<<"$resolved"
-            exit 1
-          fi
+          # No speech library here. Prism's Linux build bundles its own glib,
+          # which clashes with the system one: duplicate GObject type
+          # registration, then an abort or a segfault. Orca reads the interface
+          # through AT-SPI regardless.
 
       - name: Build the tarball
         env:
@@ -374,7 +354,7 @@ jobs:
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
             "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
-          cp dist/PortkeyDrop/PortkeyDrop dist/PortkeyDrop/*.so* "$APPDIR/usr/bin/"
+          cp dist/PortkeyDrop/PortkeyDrop "$APPDIR/usr/bin/"
           cp installer/appimage/AppRun "$APPDIR/AppRun"
           chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/PortkeyDrop"
           cp installer/appimage/portkeydrop.desktop "$APPDIR/portkeydrop.desktop"
@@ -397,10 +377,8 @@ jobs:
         run: |
           test -f "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz"
           test -f "dist/PortkeyDrop_Linux_v${VERSION}.AppImage"
-          # The speech library has to be inside both, or the build runs mute
-          # and nothing says so until a user launches it.
           contents=$(tar -tzf "dist/PortkeyDrop_Linux_v${VERSION}.tar.gz")
-          [[ "$contents" == *"libprism.so"* ]]
+          [[ "$contents" == *"PortkeyDrop/PortkeyDrop"* ]]
           ls -la dist/*.tar.gz dist/*.AppImage
 
       - uses: actions/upload-artifact@v7
