@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 
 - Linux downloads are paused for this release. The build links a system library from an older distribution and will not start on current ones, and the AppImage does not carry its own copy of the desktop toolkit. Windows and macOS are unaffected.
 
+### Changed
+- Settings, sites, and known hosts now live where each system keeps application configuration -- `%APPDATA%\PortkeyDrop` on Windows, `Application Support` on macOS, `~/.config/portkeydrop` on Linux -- rather than a folder in your home directory. Everything is copied across the first time you start, and the old folder is left where it is, so an older version still works. Portable installs are unchanged and keep their data beside the program.
+
 ### Security
 - On Linux and macOS the configuration folder and the encrypted password vault were created with whatever permissions the system defaulted to, commonly leaving them readable by every account on the machine. Since the vault's key is derived from the machine and user name rather than a secret, another local user could read the file and work out its key. The folder and the vault are now owner-only, and opening the app tightens an existing install. Windows already restricted them through the user profile.
 
