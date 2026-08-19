@@ -777,7 +777,7 @@ impl MainFrame {
 
         let text = [
             portkeydrop_core::APP_NAME.to_string(),
-            format!("Version {VERSION} ({mode})"),
+            format!("Version {} ({mode})", super::format::build_version()),
             String::new(),
             "A keyboard-first file transfer client for SFTP, FTP, FTPS, and WebDAV.".to_string(),
             String::new(),
@@ -826,7 +826,7 @@ impl MainFrame {
 
                 match service.check_for_update(
                     VERSION,
-                    None,
+                    portkeydrop_core::nightly_date(),
                     channel,
                     portable,
                     portkeydrop_core::updater::current_system(),

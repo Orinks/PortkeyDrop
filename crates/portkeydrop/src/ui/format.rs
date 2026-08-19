@@ -152,6 +152,18 @@ pub fn should_announce_progress(previous: Option<u8>, current: u8, interval: u32
     }
 }
 
+/// The running version, naming the nightly when this is one.
+///
+/// A nightly carries the version of the release before it, so "0.6.0" alone
+/// leaves someone on a nightly unable to say which build they have -- or to
+/// tell whether an update actually landed.
+pub fn build_version() -> String {
+    match portkeydrop_core::nightly_date() {
+        Some(date) => format!("{} nightly {date}", portkeydrop_core::VERSION),
+        None => portkeydrop_core::VERSION.to_string(),
+    }
+}
+
 /// The status bar's connection field.
 pub fn connection_status(connected: bool, host: &str) -> String {
     if connected && !host.is_empty() {
@@ -388,5 +400,25 @@ mod tests {
             .and_hms_opt(9, 5, 30)
             .unwrap();
         assert_eq!(log_line(when, "Connected"), "[09:05:30] Connected");
+    }
+}
+
+#[cfg(test)]
+mod build_version_tests {
+    #[test]
+    fn the_version_string_is_never_empty() {
+        assert!(!super::build_version().is_empty());
+    }
+
+    #[test]
+    fn a_nightly_build_says_so() {
+        // Compiled without the stamp this is just the version; the point is
+        // that whichever it is, it names the build well enough to compare
+        // against what the update dialog offers.
+        let version = super::build_version();
+        assert!(version.starts_with(portkeydrop_core::VERSION), "{version}");
+        if portkeydrop_core::nightly_date().is_some() {
+            assert!(version.contains("nightly"), "{version}");
+        }
     }
 }

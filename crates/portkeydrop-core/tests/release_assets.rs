@@ -6,7 +6,7 @@
 //! CI and the only symptom is every installed copy quietly failing to find
 //! its update.
 
-use portkeydrop_core::updater::{select_asset, Release, ReleaseAsset};
+use portkeydrop_core::updater::{is_update_available, select_asset, Release, ReleaseAsset};
 
 /// Exactly what the release job writes into `assets/` for a stable release.
 fn stable_assets(version: &str) -> Vec<String> {
@@ -133,4 +133,49 @@ fn every_platform_resolves_to_its_own_artifact() {
         let asset = select_asset(&release, portable, system).expect("an asset");
         assert_eq!(asset.name, expected, "for {system} (portable: {portable})");
     }
+}
+
+/// A published nightly, named the way CI tags them.
+fn nightly_release(stamp: &str) -> Release {
+    Release {
+        tag_name: format!("nightly-{stamp}"),
+        name: format!("Nightly {stamp}"),
+        prerelease: true,
+        published_at: "2026-08-19T01:55:00Z".to_string(),
+        ..Release::default()
+    }
+}
+
+#[test]
+fn the_nightly_already_installed_is_not_offered_again() {
+    // Reported from a real install: after updating to a nightly, the check
+    // kept offering the same one. Every nightly carries the version of the
+    // release before it, so the version cannot tell them apart -- without the
+    // build's own date there is nothing to compare and everything looks new.
+    let release = nightly_release("20260819");
+    assert!(
+        !is_update_available(&release, "0.6.0", Some("20260819")),
+        "the running nightly should not be offered to itself"
+    );
+}
+
+#[test]
+fn a_newer_nightly_is_still_offered() {
+    let release = nightly_release("20260820");
+    assert!(is_update_available(&release, "0.6.0", Some("20260819")));
+}
+
+#[test]
+fn an_older_nightly_is_not_offered() {
+    // Re-running an older build's check should not walk the user backwards.
+    let release = nightly_release("20260818");
+    assert!(!is_update_available(&release, "0.6.0", Some("20260819")));
+}
+
+#[test]
+fn a_release_build_still_sees_nightlies_when_it_asks_for_them() {
+    // A stable build has no date, and someone on the nightly channel should
+    // still be offered one. That is the case the old behaviour got right.
+    let release = nightly_release("20260819");
+    assert!(is_update_available(&release, "0.6.0", None));
 }

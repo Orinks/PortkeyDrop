@@ -22,6 +22,22 @@ pub mod updater;
 /// The application version, taken from the crate manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The date of the nightly this build came from, as `YYYYMMDD`.
+///
+/// Empty for a release build. Prefer [`nightly_date`], which turns that into
+/// an `Option` rather than leaving an empty string to be compared.
+pub const NIGHTLY_DATE: &str = env!("PORTKEYDROP_NIGHTLY_DATE");
+
+/// Which nightly this build is, if it is one.
+///
+/// Every nightly carries the version of the release it was cut after, so the
+/// version alone cannot tell one from another. Without this the updater has
+/// nothing to compare a nightly against and offers the build already
+/// installed, over and over.
+pub fn nightly_date() -> Option<&'static str> {
+    (!NIGHTLY_DATE.is_empty()).then_some(NIGHTLY_DATE)
+}
+
 /// The product name as shown in window titles and the notification area.
 pub const APP_NAME: &str = "Portkey Drop";
 
