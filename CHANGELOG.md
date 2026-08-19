@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - Portkey Drop is now a native application written in Rust rather than Python. The Windows download is about a fifth of the size it was (7 MB portable, down from 36 MB) and starts without unpacking a bundled interpreter first. Everything it did before it still does: SFTP, FTP, FTPS, and WebDAV, the same keyboard shortcuts, the same sound packs, and the same saved sites and passwords, which are read from where the previous version left them.
 - macOS builds now ship as a disk image containing a universal app bundle, so one download works on both Intel and Apple silicon Macs, and updating no longer leaves you to finish the job in Finder.
 
-- Linux builds do not speak their own announcements. The speech library brings its own copy of glib, which cannot coexist with the one GTK already uses in the same process: the app aborts on start-up. Orca still reads the window, its lists, and every control through the desktop's own accessibility support, so what is lost is Portkey Drop announcing over the top, such as transfer progress. Windows and macOS are unaffected.
+- Linux downloads are paused for this release. The build links a system library from an older distribution and will not start on current ones, and the AppImage does not carry its own copy of the desktop toolkit. Windows and macOS are unaffected.
 
 ### Fixed
 - Speech could corrupt memory on every platform. Portkey Drop's description of the speech library's configuration was forty-seven bytes shorter than the real one, so starting speech wrote past the space set aside for it. Windows and macOS survived it; Linux crashed on the first announcement, which is how it came to light.
