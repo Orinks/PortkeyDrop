@@ -50,6 +50,13 @@ fn main() {
     println!("cargo:vendor_dir={}", vendor_dir.display());
 
     if !vendored.is_file() {
+        // A copy staged by an earlier build, from before this platform's
+        // library was dropped, is still found and loaded by the loader. That
+        // cost a confusing half hour once: the tests kept crashing against a
+        // library that was no longer in the tree.
+        if let Some(profile_dir) = profile_dir(&out_dir) {
+            let _ = fs::remove_file(profile_dir.join(file_name));
+        }
         println!(
             "cargo:warning=prism-sys: {file_name} is not vendored for \
              {target_os}-{target_arch}; the app will run without speech unless the \

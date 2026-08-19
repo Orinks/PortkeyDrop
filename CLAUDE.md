@@ -12,7 +12,14 @@ cargo test -p portkeydrop-core # One crate
 cargo build                    # Debug build
 cargo clippy --all-targets     # Lints
 cargo fmt                      # Format
+
+wsl -d Ubuntu -- bash scripts/linux-check.sh   # Lints and tests on Linux
 ```
+
+On Windows every `cfg(unix)` block is compiled out, so a clean local clippy
+says nothing about the code inside one. `scripts/linux-check.sh` runs the
+Core (Ubuntu) job's commands through WSL; use it before pushing anything
+that touches platform-gated code.
 
 ## Layout
 
