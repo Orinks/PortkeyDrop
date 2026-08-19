@@ -168,7 +168,7 @@ pub fn append(
     // then reads as a *changed* key, which is refused outright, so accepting
     // one server silently stops another from connecting.
     if ends_mid_line(path) {
-        write!(file, "\n")?;
+        writeln!(file)?;
     }
     writeln!(file, "{}", entry.to_line())
 }
