@@ -23,13 +23,6 @@ pub enum Error {
     /// The Prism shared library could not be loaded or initialised.
     #[error("Prism is not available on this system")]
     Unavailable,
-    /// Prism is already running in this process.
-    ///
-    /// Its Linux build allows one context at a time; a second alive alongside
-    /// the first crashes the process rather than failing, so it is refused
-    /// here instead.
-    #[error("Prism is already running in this process")]
-    AlreadyRunning,
     /// No speech backend is usable right now (no screen reader, no TTS).
     #[error("no speech backend is available")]
     NoBackend,
@@ -76,33 +69,29 @@ unsafe fn owned_string(text: *const std::os::raw::c_char, fallback: &str) -> Str
     }
 }
 
-/// Whether a [`Context`] is currently live, and the lock guarding that.
+/// Serialises Prism's start-up and shutdown.
 ///
-/// Prism's Linux build allows one context per process. A second one alive at
-/// the same time segfaults, and start-up of two at once also races the GObject
-/// type registration in the glib it carries with it: glib reports "cannot
-/// register existing type" for everything registered twice and the process can
-/// abort on a double free.
+/// Not for the reason it was first written. The crashes that prompted it came
+/// from a `PrismConfig` forty-seven bytes short of the real one, which
+/// corrupted the stack on every call; glib noticing first made it look like a
+/// type-registration conflict. With the struct right, start-up, shutdown, and
+/// overlapping contexts all behave.
 ///
-/// Both were found by running this crate's tests on Linux. The harness runs
-/// tests in parallel threads within one process, so two tests each building an
-/// `Announcer` overlap; individually every one of them passes.
-///
-/// `Context::new` is safe Rust, so it must not be able to crash the process no
-/// matter how it is called. It refuses rather than starting a second context,
-/// and `Announcer` treats that refusal the same as Prism being absent: silent,
-/// and honest about being unavailable.
-fn context_live() -> &'static Mutex<bool> {
-    static LIVE: OnceLock<Mutex<bool>> = OnceLock::new();
-    LIVE.get_or_init(|| Mutex::new(false))
+/// The lock stays because concurrent start-up is not something the library
+/// documents, and it costs nothing in an app that starts speech once.
+fn lifecycle_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Take the lock, ignoring poisoning.
+/// Take the lifecycle lock, ignoring poisoning.
 ///
-/// A panic elsewhere leaves it poisoned, but refusing all speech from then on
-/// would be a worse outcome than continuing with the flag as it stands.
-fn lock_live() -> std::sync::MutexGuard<'static, bool> {
-    context_live().lock().unwrap_or_else(|err| err.into_inner())
+/// It guards `()`; there is no state left inconsistent by a panic elsewhere,
+/// and refusing all speech from then on would be the worse outcome.
+fn lock_lifecycle() -> std::sync::MutexGuard<'static, ()> {
+    lifecycle_lock()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 /// A live Prism library context.
@@ -115,8 +104,8 @@ pub struct Context {
 }
 
 // The wrapper requires `&mut` for every mutating call, so a context may move
-// between threads. Only one may exist at a time -- see [`context_live`] --
-// which `Context::new` enforces rather than trusting callers with.
+// between threads. Starting and stopping are serialised; see
+// [`lifecycle_lock`].
 unsafe impl Send for Context {}
 
 impl Context {
@@ -126,13 +115,10 @@ impl Context {
     /// refuses to start.
     pub fn new() -> Result<Self, Error> {
         let api = Api::get().ok_or(Error::Unavailable)?;
-        let mut live = lock_live();
-        if *live {
-            return Err(Error::AlreadyRunning);
-        }
-        // SAFETY: `config_init` fills a plain struct; `init` accepts a pointer
-        // to it and copies what it needs. The lock is held across this so two
-        // threads cannot register Prism's types at the same time.
+        let _guard = lock_lifecycle();
+        // SAFETY: `config_init` fills the whole struct and `init` reads the
+        // whole struct, so `PrismConfig` has to match the library's layout
+        // exactly. It is pinned by a test in prism-sys.
         let raw = unsafe {
             let mut config = (api.config_init)();
             (api.init)(&mut config)
@@ -140,7 +126,6 @@ impl Context {
         if raw.is_null() {
             return Err(Error::Unavailable);
         }
-        *live = true;
         Ok(Self { api, raw })
     }
 
@@ -189,10 +174,9 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         if !self.raw.is_null() {
-            let mut live = lock_live();
+            let _guard = lock_lifecycle();
             unsafe { (self.api.shutdown)(self.raw) };
             self.raw = ptr::null_mut();
-            *live = false;
         }
     }
 }
@@ -468,13 +452,35 @@ mod tests {
     }
 }
 
-// Tests that start Prism more than once per process live here in principle
-// and are absent in practice. On the vendored Linux build, a second start --
-// even after the first is dropped, even single-threaded -- segfaults the
-// process. The guard in `Context::new` stops a second *live* context, and the
-// lock stops two starting at once, but neither makes repeated start/stop
-// cycles safe, because the library does not support them.
-//
-// The app starts Prism once and shuts down at exit, which is the shape the
-// library supports. Anything that constructs an `Announcer` per operation
-// would crash on Linux, so it must not.
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+
+    #[test]
+    fn many_threads_may_start_prism_at_once() {
+        // This crashed the process before `PrismConfig` matched the library:
+        // a regression does not fail a case, it takes the test binary down.
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let mut announcer = Announcer::new();
+                    announcer.announce("concurrent start");
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("starting Prism should not panic");
+        }
+    }
+
+    #[test]
+    fn a_context_may_be_started_again_after_being_dropped() {
+        // Settings that rebuild the announcer take this path, and it is the
+        // pattern that failed hardest under the short struct.
+        for _ in 0..3 {
+            if let Ok(context) = Context::new() {
+                drop(context);
+            }
+        }
+    }
+}

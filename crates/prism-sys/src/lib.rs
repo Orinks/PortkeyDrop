@@ -29,27 +29,40 @@ pub struct PrismBackend {
     _private: [u8; 0],
 }
 
+/// Opaque registry of backends, optionally supplied to [`PrismConfig`].
+#[repr(C)]
+pub struct PrismRegistry {
+    _private: [u8; 0],
+}
+
 /// Stable identifier for a registered backend.
 pub type PrismBackendId = u64;
 
-/// Initialisation configuration.
+/// Configuration handed to `prism_init`.
 ///
-/// The Windows and Android builds carry an extra `platform_data` pointer (a
-/// window handle); the POSIX builds do not. Getting this wrong corrupts the
-/// stack, so the layout is selected by target rather than by a feature flag.
-#[cfg(any(windows, target_os = "android"))]
+/// Forty-eight bytes with eight fields, identical on every platform. That is
+/// not obvious from outside and getting it wrong is quiet: the library fills
+/// the whole struct on the way out of `prism_config_init` and reads the whole
+/// struct on the way into `prism_init`, so a short definition corrupts the
+/// stack around it rather than failing. Windows tolerated a sixteen-byte
+/// version of this for a while; Linux segfaulted on the first call.
+///
+/// The layout is pinned by the tests below, taken from the shipped library
+/// rather than from a header. `version` is how Prism announces a change.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PrismConfig {
     pub version: u8,
-    pub platform_data: *mut c_void,
-}
-
-#[cfg(not(any(windows, target_os = "android")))]
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PrismConfig {
-    pub version: u8,
+    pub registry: *mut PrismRegistry,
+    /// Called when a backend appears or disappears.
+    pub availability_callback: Option<
+        unsafe extern "C" fn(userdata: *mut c_void, id: u64, name: *mut c_char, available: bool),
+    >,
+    pub availability_userdata: *mut c_void,
+    pub availability_poll_interval_ms: u32,
+    pub availability_debounce_samples: u32,
+    pub availability_backoff_max_ms: u32,
+    pub availability_auto_power_manage: bool,
 }
 
 /// Error codes returned by the `prism_backend_*` entry points.
@@ -147,13 +160,40 @@ mod tests {
 
     #[test]
     fn config_layout_matches_c_header() {
-        // The C struct is `{ uint8_t version; void *platform_data; }` on
-        // Windows/Android and `{ uint8_t version; }` elsewhere. Pointer
-        // alignment makes the former two words wide.
-        #[cfg(any(windows, target_os = "android"))]
-        assert_eq!(size_of::<PrismConfig>(), size_of::<*mut c_void>() * 2);
-        #[cfg(not(any(windows, target_os = "android")))]
-        assert_eq!(size_of::<PrismConfig>(), 1);
+        // Taken from the library itself rather than from a header we do not
+        // ship: cffi reports these offsets for PrismConfig on both Linux and
+        // Windows, identically. The previous version of this test asserted a
+        // one-byte struct and passed, which is how a definition forty-seven
+        // bytes short went unnoticed.
+        assert_eq!(size_of::<PrismConfig>(), 48, "PrismConfig is 48 bytes");
+        assert_eq!(align_of::<PrismConfig>(), 8);
+
+        assert_eq!(core::mem::offset_of!(PrismConfig, version), 0);
+        assert_eq!(core::mem::offset_of!(PrismConfig, registry), 8);
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_callback),
+            16
+        );
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_userdata),
+            24
+        );
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_poll_interval_ms),
+            32
+        );
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_debounce_samples),
+            36
+        );
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_backoff_max_ms),
+            40
+        );
+        assert_eq!(
+            core::mem::offset_of!(PrismConfig, availability_auto_power_manage),
+            44
+        );
     }
 
     #[test]
