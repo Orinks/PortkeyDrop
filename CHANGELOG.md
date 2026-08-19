@@ -9,10 +9,7 @@ All notable changes to this project will be documented in this file.
 - macOS builds now ship as a disk image containing a universal app bundle, so one download works on both Intel and Apple silicon Macs, and updating no longer leaves you to finish the job in Finder.
 
 ### Fixed
-- Speech could corrupt memory on every platform. The description of Prism's
-  configuration was forty-seven bytes shorter than the real one, so starting
-  speech wrote past the space set aside for it. Windows and macOS survived it;
-  Linux crashed on the first announcement, which is how it was found.
+- Speech could corrupt memory on every platform. Portkey Drop's description of the speech library's configuration was forty-seven bytes shorter than the real one, so starting speech wrote past the space set aside for it. Windows and macOS survived it; Linux crashed on the first announcement, which is how it came to light.
 - Settings, Site Manager, and the import window announced the wrong labels: each field was read out with the previous field's label, spin controls were read as unlabelled, and the first control on every page had no label at all.
 - The update check said a new version was available and then offered only a Close button. It now offers to download and install it, with progress you can hear and a Cancel that stops the download.
 - Release notes shown in the update window are no longer read out with their formatting characters.
