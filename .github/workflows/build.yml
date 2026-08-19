@@ -381,7 +381,16 @@ jobs:
           [[ "$contents" == *"PortkeyDrop/PortkeyDrop"* ]]
           ls -la dist/*.tar.gz dist/*.AppImage
 
+      # Built but not published. The executable links libtiff.so.5 from the
+      # 22.04 build host, and 24.04 onwards ships libtiff6, so it will not
+      # start on a current distro; the AppImage bundles no GTK either, where a
+      # real one would carry its dependencies. Established by launching the
+      # tarball under WSLg. The job still runs so the build keeps being
+      # checked -- it is the download that is held back.
+      #
+      # Set the repository variable PUBLISH_LINUX to "true" to ship it again.
       - uses: actions/upload-artifact@v7
+        if: vars.PUBLISH_LINUX == 'true'
         with:
           name: linux
           path: |
