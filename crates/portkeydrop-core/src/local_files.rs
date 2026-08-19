@@ -66,7 +66,7 @@ fn permission_string(metadata: &std::fs::Metadata) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return format_mode(metadata.permissions().mode());
+        format_mode(metadata.permissions().mode())
     }
     #[cfg(not(unix))]
     {
