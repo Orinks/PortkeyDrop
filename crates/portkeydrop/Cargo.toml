@@ -1,0 +1,39 @@
+[package]
+name = "portkeydrop"
+description = "Keyboard-first, screen-reader-friendly file transfer client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "portkeydrop_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "portkeydrop"
+path = "src/main.rs"
+
+[dependencies]
+portkeydrop-core = { path = "../portkeydrop-core" }
+prism = { path = "../prism" }
+wxdragon = "0.9"
+anyhow.workspace = true
+log.workspace = true
+env_logger = "0.11"
+chrono.workspace = true
+# Release notes arrive as markdown and are shown in a plain text box.
+pulldown-cmark = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

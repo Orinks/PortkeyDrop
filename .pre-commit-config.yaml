@@ -3,16 +3,30 @@ repos:
     rev: v4.5.0
     hooks:
     -   id: trailing-whitespace
+        # The vendored Prism libraries are binaries; rewriting bytes inside
+        # one would ship a library that cannot load.
+        exclude: ^crates/prism-sys/vendor/
     -   id: end-of-file-fixer
+        exclude: ^crates/prism-sys/vendor/
     -   id: check-yaml
     -   id: check-added-large-files
-    -   id: debug-statements
+        # The vendored speech libraries are legitimately large.
+        args: [--maxkb=6000]
 
--   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.3
+# Ruff linted src/ and tests/, which are gone with the Python application.
+# The Rust equivalents run through cargo rather than pre-commit, so they see
+# the whole workspace rather than only the files being committed.
+-   repo: local
     hooks:
-    -   id: ruff
-        args: [--fix]
-        files: ^(src/|tests/)
-    -   id: ruff-format
-        files: ^(src/|tests/)
+    -   id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+    -   id: ruff-changelog-tools
+        name: ruff (release tooling)
+        entry: ruff check --fix
+        language: system
+        files: ^(scripts/|tests/).*\.py$
+        pass_filenames: true

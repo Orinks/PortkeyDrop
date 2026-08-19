@@ -1,3 +1,6 @@
+# Rust build output
+/target/
+
 __pycache__/
 *.pyc
 .venv/
@@ -22,3 +25,8 @@ cov.json
 
 # Auto-generated at build time by scripts/generate_build_meta.py
 src/portkeydrop/_build_meta.py
+
+# Claude Code checks worktrees out here. One was committed as a bare gitlink
+# with no .gitmodules entry, which made `git submodule foreach` fail in the
+# cleanup step of every CI job.
+.claude/worktrees/

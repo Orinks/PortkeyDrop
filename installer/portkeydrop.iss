@@ -3,20 +3,21 @@
 ;
 ; Requirements:
 ;   - Inno Setup 6.0 or later (https://jrsoftware.org/isinfo.php)
-;   - Nuitka build output staged in dist/PortkeyDrop_dir/
+;   - cargo build --release output staged in dist/PortkeyDrop_dir/
 ;
 ; Build:
 ;   iscc installer/portkeydrop.iss
 
 #define MyAppName "PortkeyDrop"
-; Version is read from dist/version.txt (written by CI/build scripts from pyproject.toml)
+; Version is read from dist/version.txt (written by CI from Cargo.toml), or passed
+; on the command line with /DMyAppVersion.
 ; Fail the build if it is missing so installers never ship with stale metadata.
 #ifndef MyAppVersion
   #define VersionFilePath AddBackslash(SourcePath) + "..\dist\version.txt"
   #if FileExists(VersionFilePath)
     #define MyAppVersion ReadIni(VersionFilePath, "version", "value", "")
   #else
-    #error Missing dist/version.txt; run installer/build_nuitka.py or write the CI version file before compiling the installer.
+    #error Missing dist/version.txt; write it from Cargo.toml, or pass /DMyAppVersion, before compiling the installer.
   #endif
 #endif
 #define MyAppPublisher "Orinks"
@@ -52,6 +53,16 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
+
+; Refuse to install over a running copy. The app holds this named mutex for
+; its lifetime (see crates/portkeydrop/src/single_instance.rs), so Setup can
+; ask the user to close it rather than failing part way through replacing a
+; file that is still open.
+;
+; Deliberately not paired with CloseApplications: closing the window is not
+; the same as quitting when "minimise to the notification area on close" is
+; on, and Setup would carry on believing the app had gone.
+AppMutex=Local\PortkeyDrop.SingleInstance
 
 ; Privileges and install scope
 PrivilegesRequired=lowest

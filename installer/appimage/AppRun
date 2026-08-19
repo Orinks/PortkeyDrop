@@ -1,7 +1,8 @@
 #!/bin/bash
-# AppImage entry point. Bundled libraries live in usr/lib; the Nuitka dist
-# keeps its own layout under opt/portkeydrop with rpaths patched by
-# linuxdeploy to reach usr/lib.
+# AppImage entry point. The executable and the Prism speech library sit
+# together in usr/bin, and libprism.so reaches its own bundled dependencies
+# through a RUNPATH of $ORIGIN, so there is no library path to set up: an
+# LD_LIBRARY_PATH pointing at a directory this AppDir does not have would
+# only be a lie left for the next reader.
 HERE="$(dirname "$(readlink -f "$0")")"
-export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$HERE/opt/portkeydrop/PortkeyDrop" "$@"
+exec "$HERE/usr/bin/PortkeyDrop" "$@"

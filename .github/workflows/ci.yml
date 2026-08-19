@@ -17,6 +17,9 @@ defaults:
 
 env:
   FORCE_COLOR: "1"
+  CARGO_TERM_COLOR: always
+  # A warning that only fails locally is a warning nobody fixes.
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   changelog-check:
@@ -30,6 +33,10 @@ jobs:
         fetch-depth: 0
 
     - name: Check CHANGELOG entry
+      # Skipped when a PR carries the `skip-changelog` label. On non-PR events
+      # the labels expression is null and contains() is false, so pushes still
+      # run the gate and rely on a `Changelog: none` commit trailer instead.
+      if: "!contains(github.event.pull_request.labels.*.name, 'skip-changelog')"
       run: |
         if [ "${{ github.event_name }}" = "pull_request" ]; then
           BASE="origin/${{ github.base_ref }}"
@@ -50,36 +57,16 @@ jobs:
             echo
             echo "User-facing changes need a curated \`CHANGELOG.md\` entry under \`## Unreleased\`."
             echo "This keeps nightly and stable release notes based on product wording instead of PR titles."
+            echo
+            echo "If the change really has nothing to tell a user, add a \`Changelog: none\`"
+            echo "trailer to every commit, or put the \`skip-changelog\` label on the PR."
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         fi
 
-  lint:
-    name: Lint
+  release-tooling:
+    name: Release tooling
     runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    - name: Ruff format check
-      uses: astral-sh/ruff-action@v3
-      with:
-        args: format --check
-
-    - name: Ruff lint
-      uses: astral-sh/ruff-action@v3
-      with:
-        args: check
-
-  tests:
-    name: Tests (Ubuntu, Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    needs: lint
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -87,80 +74,104 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
-        python-version: ${{ matrix.python-version }}
-        cache: pip
+        python-version: "3.12"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # Use prebuilt wx wheels only — never build from source.
-        # extras.wxpython.org provides Linux wheels for supported Python versions.
-        pip install \
-          -f https://extras.wxpython.org/wxPython4/extras/linux/gtk3/ubuntu-24.04 \
-          --only-binary wxPython \
-          -e ".[dev]"
+    - name: Install pytest
+      run: pip install pytest
 
-    - name: Run tests with coverage
-      env:
-        PYTHONPATH: src
-      run: |
-        mkdir -p reports
-        pytest tests/ -n auto -v --tb=short -m "not integration" \
-          --junitxml=reports/junit.xml \
-          --cov=src/portkeydrop \
-          --cov-report=xml:reports/coverage.xml \
-          --cov-report=term-missing
+    # changelog_tools.py decides whether a nightly ships and what its notes
+    # say. It outlived the Python application, so its tests have to outlive
+    # the Python test suite too -- one of them already caught a marker that
+    # fired on prose.
+    - name: Test
+      run: python -m pytest tests/test_changelog_tools.py -q
 
-    - name: Upload test report
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: junit-${{ matrix.python-version }}
-        path: reports/junit.xml
-        retention-days: 7
-
-    - name: Upload coverage report
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-${{ matrix.python-version }}
-        path: reports/coverage.xml
-        retention-days: 7
-
-  coverage-gate:
-    name: Coverage Gate
+  format:
+    name: Format
     runs-on: ubuntu-latest
-    needs: tests
-    if: github.event_name == 'pull_request'
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        fetch-depth: 0
+        components: rustfmt
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - name: Check formatting
+      run: cargo fmt --all --check
+
+  core:
+    name: Core (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        python-version: "3.11"
-        cache: pip
+        components: clippy
 
-    - name: Install diff-cover
-      run: pip install diff-cover>=9.0.0
-
-    - name: Download coverage report
-      uses: actions/download-artifact@v7
+    # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+    # nearly all of a cold build. Two settings matter more than they look:
+    #
+    # cache-on-failure keeps that work when a later step fails. Without it
+    # a run that dies packaging the installer throws away forty minutes of
+    # C++ compilation, and the next attempt starts from nothing again.
+    #
+    # shared-key lets this job reuse what CI built on the same OS instead
+    # of each workflow keeping its own copy.
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
       with:
-        name: coverage-3.11
-        path: reports
+        cache-on-failure: true
+        shared-key: ${{ runner.os }}
 
-    - name: Check coverage on changed lines
-      run: |
-        diff-cover reports/coverage.xml \
-          --compare-branch=origin/${{ github.base_ref }} \
-          --fail-under=80 \
-          --diff-range-notation='..' \
-          --exclude \
-            '*/portkeydrop/ui/*' \
-            '*/portkeydrop/dialogs/*' \
-            '*/portkeydrop/importers/winscp.py'
-        echo "✅ New code meets coverage threshold!"
+    # Deliberately not the whole workspace: the UI crate pulls wxdragon-sys,
+    # which downloads and builds wxWidgets from source with CMake. The crates
+    # tested here have no UI dependency by design, so they give fast feedback
+    # on protocol parsing, transfer rules, and credential handling.
+    - name: Clippy
+      run: cargo clippy -p portkeydrop-core -p prism -p prism-sys --all-targets
+
+    - name: Test
+      run: cargo test -p portkeydrop-core -p prism -p prism-sys
+
+  app:
+    name: App (Windows)
+    runs-on: windows-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
+    # nearly all of a cold build. Two settings matter more than they look:
+    #
+    # cache-on-failure keeps that work when a later step fails. Without it
+    # a run that dies packaging the installer throws away forty minutes of
+    # C++ compilation, and the next attempt starts from nothing again.
+    #
+    # shared-key lets this job reuse what CI built on the same OS instead
+    # of each workflow keeping its own copy.
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ runner.os }}
+
+    # The full workspace, including the wxWidgets front end. One platform
+    # rather than three: wxdragon-sys builds wxWidgets from source, so a
+    # matrix here would triple the slowest job in the file. The release
+    # workflow compiles all three, which is where a platform-specific break
+    # surfaces.
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets
+
+    - name: Test
+      run: cargo test --workspace
