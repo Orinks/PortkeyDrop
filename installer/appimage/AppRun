@@ -1,8 +1,5 @@
 #!/bin/bash
-# AppImage entry point. The executable and the Prism speech library sit
-# together in usr/bin, and libprism.so reaches its own bundled dependencies
-# through a RUNPATH of $ORIGIN, so there is no library path to set up: an
-# LD_LIBRARY_PATH pointing at a directory this AppDir does not have would
-# only be a lie left for the next reader.
+# AppImage entry point. The executable stands alone: the Linux build ships no
+# speech library, so there is nothing beside it to find.
 HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/usr/bin/PortkeyDrop" "$@"
