@@ -325,7 +325,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev libasound2-dev pkg-config cmake \
+            libgtk-3-dev libasound2-dev libdbus-1-dev pkg-config cmake \
             libssl-dev file desktop-file-utils
 
       - name: Build
