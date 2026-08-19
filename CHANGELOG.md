@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Linux downloads are paused for this release. The build links a system library from an older distribution and will not start on current ones, and the AppImage does not carry its own copy of the desktop toolkit. Windows and macOS are unaffected.
 
 ### Fixed
+- Checking for updates on a nightly build kept offering the nightly already installed. Nightlies carry the version number of the release before them, so the app had no way to tell one from another; it now knows which nightly it is, and About names it too.
 - Speech could corrupt memory on every platform. Portkey Drop's description of the speech library's configuration was forty-seven bytes shorter than the real one, so starting speech wrote past the space set aside for it. Windows and macOS survived it; Linux crashed on the first announcement, which is how it came to light.
 - Settings, Site Manager, and the import window announced the wrong labels: each field was read out with the previous field's label, spin controls were read as unlabelled, and the first control on every page had no label at all.
 - The update check said a new version was available and then offered only a Close button. It now offers to download and install it, with progress you can hear and a Cancel that stops the download.

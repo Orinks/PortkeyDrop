@@ -39,6 +39,8 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       is_nightly: ${{ steps.check.outputs.is_nightly }}
       tag: ${{ steps.check.outputs.tag }}
+      # Empty for a release build; the version number identifies those.
+      nightly_date: ${{ steps.check.outputs.nightly_date }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -52,9 +54,13 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")
+          # Read once. A run that crosses midnight would otherwise tag with
+          # one date and name its files with another.
+          TODAY=$(date -u +%Y%m%d)
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "is_nightly=false" >> $GITHUB_OUTPUT
+            echo "nightly_date=" >> $GITHUB_OUTPUT
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -64,11 +70,13 @@ jobs:
             # with nothing to say, which is not what a manual run is doing.
             echo "is_nightly=true" >> $GITHUB_OUTPUT
             echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "tag=nightly-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+            echo "tag=nightly-$TODAY" >> $GITHUB_OUTPUT
+            echo "nightly_date=$TODAY" >> $GITHUB_OUTPUT
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
             echo "is_nightly=true" >> $GITHUB_OUTPUT
-            echo "tag=nightly-$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+            echo "tag=nightly-$TODAY" >> $GITHUB_OUTPUT
+            echo "nightly_date=$TODAY" >> $GITHUB_OUTPUT
             echo "version=$VERSION" >> $GITHUB_OUTPUT
 
             LAST_TAG=$(git tag --list "nightly-*" --sort=-version:refname | head -1)
@@ -101,6 +109,11 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: windows-latest
+    env:
+      # Which nightly this is. Without it the updater cannot tell one
+      # nightly from another -- they share the version of the release
+      # before them -- and offers the build already installed.
+      PORTKEYDROP_NIGHTLY_DATE: ${{ needs.prepare.outputs.nightly_date }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -186,6 +199,11 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: macos-latest
+    env:
+      # Which nightly this is. Without it the updater cannot tell one
+      # nightly from another -- they share the version of the release
+      # before them -- and offers the build already installed.
+      PORTKEYDROP_NIGHTLY_DATE: ${{ needs.prepare.outputs.nightly_date }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
@@ -292,6 +310,11 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
+    env:
+      # Which nightly this is. Without it the updater cannot tell one
+      # nightly from another -- they share the version of the release
+      # before them -- and offers the build already installed.
+      PORTKEYDROP_NIGHTLY_DATE: ${{ needs.prepare.outputs.nightly_date }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v6
@@ -419,11 +442,13 @@ jobs:
           IS_NIGHTLY: ${{ needs.prepare.outputs.is_nightly }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          NIGHTLY_DATE: ${{ needs.prepare.outputs.nightly_date }}
           CLIFF_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p assets
-          TIMESTAMP=$(date -u +%Y%m%d)
+          # From prepare, not computed again: the tag was made with this.
+          TIMESTAMP="$NIGHTLY_DATE"
 
           # Rename assets based on release type
           for f in dist/*.exe dist/*.zip dist/*.dmg dist/*.tar.gz dist/*.AppImage; do
