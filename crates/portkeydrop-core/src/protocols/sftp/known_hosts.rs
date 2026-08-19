@@ -8,6 +8,10 @@
 
 use std::path::Path;
 
+/// A UTF-8 byte order mark, which some Windows editors write at the start
+/// of a file whether or not anyone wanted one.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
 /// One parsed `known_hosts` line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownHostEntry {
@@ -76,6 +80,10 @@ pub fn parse_line(line: &str) -> Option<KnownHostEntry> {
 
 /// Parse a whole `known_hosts` document.
 pub fn parse(contents: &str) -> Vec<KnownHostEntry> {
+    // A byte order mark would otherwise become part of the first entry's
+    // host pattern, so exactly one host -- whichever is first -- stops
+    // matching. Windows editors add one without being asked.
+    let contents = contents.strip_prefix(BYTE_ORDER_MARK).unwrap_or(contents);
     contents.lines().filter_map(parse_line).collect()
 }
 
@@ -153,7 +161,31 @@ pub fn append(
         .create(true)
         .append(true)
         .open(path)?;
+
+    // Start a line of our own. A file whose last line has no newline -- one
+    // an editor saved, or an earlier release wrote -- would otherwise have
+    // this entry glued onto it, breaking the host recorded there. That host
+    // then reads as a *changed* key, which is refused outright, so accepting
+    // one server silently stops another from connecting.
+    if ends_mid_line(path) {
+        write!(file, "\n")?;
+    }
     writeln!(file, "{}", entry.to_line())
+}
+
+/// Whether the file ends part way through a line, owing a newline.
+fn ends_mid_line(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    // Only the last byte matters, so the file is not read into memory.
+    if file.seek(SeekFrom::End(-1)).is_err() {
+        return false; // Empty or not seekable; nothing is owed either way.
+    }
+    let mut last = [0u8; 1];
+    matches!(file.read_exact(&mut last), Ok(())) && last[0] != b'\n'
 }
 
 #[cfg(test)]
