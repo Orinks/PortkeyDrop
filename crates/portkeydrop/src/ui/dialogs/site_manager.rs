@@ -23,6 +23,7 @@ const ID_NEW_SITE: Id = 7200;
 const ID_DUPLICATE_SITE: Id = 7201;
 const ID_DELETE_SITE: Id = 7202;
 const ID_CONNECT_SITE: Id = 7203;
+const ID_BROWSE_KEY: Id = 7204;
 
 /// The editable fields of a site.
 struct SiteFields {
@@ -177,12 +178,12 @@ pub fn show(frame: &MainFrame) {
     let port = super::add_labelled(
         &dialog,
         &right,
-        "P&ort (leave blank for the protocol default):",
+        "Po&rt (leave blank for the protocol default):",
         "Port",
         |dialog| TextCtrl::builder(dialog).build(),
     );
 
-    let username = super::add_labelled(&dialog, &right, "&Username:", "Username", |dialog| {
+    let username = super::add_labelled(&dialog, &right, "Userna&me:", "Username", |dialog| {
         TextCtrl::builder(dialog).build()
     });
 
@@ -192,16 +193,41 @@ pub fn show(frame: &MainFrame) {
             .build()
     });
 
-    let key_path = super::add_labelled(
-        &dialog,
-        &right,
-        "Private &key file (SFTP only):",
-        "Private key file",
-        |dialog| TextCtrl::builder(dialog).build(),
+    // The label goes first, then the field, then the button: a screen reader
+    // takes a control's name from the preceding sibling, so a button built
+    // before the field would take the field's label and leave the field bare.
+    let key_path_label = StaticText::builder(&dialog)
+        .with_label("Private &key file (SFTP only):")
+        .build();
+    right.add(&key_path_label, 0, SizerFlag::Left | SizerFlag::Top, 8);
+
+    let key_row = BoxSizer::builder(Orientation::Horizontal).build();
+    let key_path = TextCtrl::builder(&dialog).build();
+    key_path.set_name("Private key file");
+    key_row.add(
+        &key_path,
+        1,
+        SizerFlag::AlignCenterVertical | SizerFlag::All,
+        4,
     );
 
+    let browse_key = Button::builder(&dialog)
+        .with_id(ID_BROWSE_KEY)
+        .with_label("&Browse for key file...")
+        .build();
+    // Named for what it browses for, not just "Browse": a screen reader user
+    // moving through the dialog hears the button on its own.
+    browse_key.set_name("Browse for key file");
+    key_row.add(
+        &browse_key,
+        0,
+        SizerFlag::AlignCenterVertical | SizerFlag::All,
+        4,
+    );
+    right.add_sizer(&key_row, 0, SizerFlag::Expand | SizerFlag::All, 0);
+
     let explicit_ssl = CheckBox::builder(&dialog)
-        .with_label("Use SS&L (AUTH SSL)")
+        .with_label("Us&e SSL (AUTH SSL)")
         .build();
     explicit_ssl.set_name("Use SSL (AUTH SSL) with FTP");
     right.add(&explicit_ssl, 0, SizerFlag::Left | SizerFlag::All, 4);
@@ -467,6 +493,29 @@ pub fn show(frame: &MainFrame) {
     {
         let connect_to_selected = Rc::clone(&connect_to_selected);
         connect.on_click(move |_| connect_to_selected());
+    }
+
+    {
+        // Whatever is typed already is where the chooser starts, so someone
+        // correcting a path does not begin from their home directory again.
+        let dialog_for_browse = dialog;
+        let key_path_field = key_path;
+        browse_key.on_click(move |_| {
+            let current = key_path_field.get_value();
+            let starting_dir = std::path::Path::new(&current)
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if let Some(chosen) = super::super::prompts::ask_open_file(
+                &dialog_for_browse,
+                "Select a private key file",
+                "All files (*.*)|*.*",
+                &starting_dir,
+            ) {
+                key_path_field.set_value(&chosen);
+                key_path_field.set_focus();
+            }
+        });
     }
 
     // Enter on a site connects to it. A list control swallows Enter rather

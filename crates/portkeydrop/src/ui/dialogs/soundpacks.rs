@@ -87,7 +87,7 @@ pub fn show(frame: &MainFrame) {
     let buttons = BoxSizer::builder(Orientation::Horizontal).build();
     let preview = Button::builder(&dialog)
         .with_id(ID_PREVIEW)
-        .with_label("&Play")
+        .with_label("Pla&y")
         .build();
     let use_pack = Button::builder(&dialog)
         .with_id(ID_USE_PACK)
