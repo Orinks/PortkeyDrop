@@ -13,7 +13,11 @@ All notable changes to this project will be documented in this file.
 ### Security
 - On Linux and macOS the configuration folder and the encrypted password vault were created with whatever permissions the system defaulted to, commonly leaving them readable by every account on the machine. Since the vault's key is derived from the machine and user name rather than a secret, another local user could read the file and work out its key. The folder and the vault are now owner-only, and opening the app tightens an existing install. Windows already restricted them through the user profile.
 
+### Added
+- The Site Manager has its Browse button back for choosing a private key file, and it opens where the current path points rather than at your home folder.
+
 ### Fixed
+- Alt+U reached both Duplicate and Username in the Site Manager, and Alt+P reached both Play and Preview in the sound pack window, so neither letter activated anything. Each access key now reaches one control.
 - Accepting a host key could stop a different server from connecting. The new entry was written onto the end of the last line when the known hosts file did not end in a newline, which corrupted both; the server recorded there then looked like it had changed its key, and a changed key is refused outright. Existing files are repaired the next time a key is accepted.
 - The first server in the known hosts file was not recognised if the file began with a byte order mark, as one written by some Windows editors does.
 - Checking for updates on a nightly build kept offering the nightly already installed. Nightlies carry the version number of the release before them, so the app had no way to tell one from another; it now knows which nightly it is, and About names it too.
