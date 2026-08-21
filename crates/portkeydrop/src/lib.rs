@@ -4,5 +4,6 @@
 //! things, listens for keys, and speaks.
 
 pub mod cli;
+pub mod console;
 pub mod single_instance;
 pub mod ui;
