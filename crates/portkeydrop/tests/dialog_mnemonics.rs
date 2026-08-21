@@ -167,6 +167,11 @@ fn the_sound_pack_access_keys_are_unique() {
 }
 
 #[test]
+fn the_host_key_access_keys_are_unique() {
+    assert_unique("host_key.rs");
+}
+
+#[test]
 fn the_scanner_finds_the_mnemonics_it_should_and_ignores_the_rest() {
     // Guards the test itself: a scanner that quietly found nothing would make
     // every dialog above pass.

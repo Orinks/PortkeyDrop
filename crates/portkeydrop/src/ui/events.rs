@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
-use portkeydrop_core::protocols::RemoteFile;
+use portkeydrop_core::protocols::{HostKeyDecision, RemoteFile};
 use portkeydrop_core::updater::UpdateInfo;
 
 /// Something that happened away from the UI thread.
@@ -55,6 +55,17 @@ pub enum AppEvent {
     TrayCommand(i32),
     /// A line for the activity log.
     Log { message: String },
+    /// An unknown SSH host key; the worker is blocked on `reply`.
+    ///
+    /// The UI thread shows the dialog and sends the answer. Dropping this
+    /// without answering is a rejection: that is the safe choice if the
+    /// window has gone.
+    HostKeyPrompt {
+        host: String,
+        algorithm: String,
+        fingerprint: String,
+        reply: Sender<HostKeyDecision>,
+    },
 }
 
 /// The result of an update check.
@@ -104,6 +115,29 @@ pub fn post(sender: &EventSender, event: AppEvent) {
 /// Drain every event currently waiting, without blocking.
 pub fn drain(receiver: &EventReceiver) -> Vec<AppEvent> {
     receiver.try_iter().collect()
+}
+
+/// Ask the UI thread what to do about an untrusted host key.
+///
+/// Posts a prompt and blocks until the UI answers. If the window has gone,
+/// the channel is closed and the key is refused.
+pub fn ask_host_key(
+    sender: &EventSender,
+    host: &str,
+    algorithm: &str,
+    fingerprint: &str,
+) -> HostKeyDecision {
+    let (reply, reply_rx) = std::sync::mpsc::channel();
+    post(
+        sender,
+        AppEvent::HostKeyPrompt {
+            host: host.to_string(),
+            algorithm: algorithm.to_string(),
+            fingerprint: fingerprint.to_string(),
+            reply,
+        },
+    );
+    reply_rx.recv().unwrap_or(HostKeyDecision::Reject)
 }
 
 #[cfg(test)]
@@ -188,5 +222,56 @@ mod tests {
 
         let events = drain(&receiver);
         assert!(matches!(events.first(), Some(AppEvent::Connected { .. })));
+    }
+
+    #[test]
+    fn a_host_key_prompt_carries_the_offer_and_the_answer() {
+        // The connect worker blocks on the reply; the UI thread is what
+        // actually talks to the user. This is that round trip without a
+        // display.
+        let (sender, receiver) = channel();
+        let worker = std::thread::spawn(move || {
+            ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
+        });
+
+        match receiver.recv().expect("the prompt is posted") {
+            AppEvent::HostKeyPrompt {
+                host,
+                algorithm,
+                fingerprint,
+                reply,
+            } => {
+                assert_eq!(host, "example.com");
+                assert_eq!(algorithm, "ssh-ed25519");
+                assert_eq!(fingerprint, "SHA256:abc");
+                reply
+                    .send(HostKeyDecision::AcceptPermanent)
+                    .expect("the worker is waiting");
+            }
+            other => panic!("expected a host key prompt, got {other:?}"),
+        }
+
+        assert_eq!(
+            worker.join().expect("the worker finished"),
+            HostKeyDecision::AcceptPermanent
+        );
+    }
+
+    #[test]
+    fn a_host_key_prompt_with_no_answer_is_a_rejection() {
+        // Closing the window while the worker is waiting must not hang, and
+        // must not accept the key.
+        let (sender, receiver) = channel();
+        let worker = std::thread::spawn(move || {
+            ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
+        });
+
+        let event = receiver.recv().expect("the prompt is posted");
+        drop(event);
+
+        assert_eq!(
+            worker.join().expect("the worker finished"),
+            HostKeyDecision::Reject
+        );
     }
 }

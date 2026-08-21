@@ -4,6 +4,7 @@
 //! OK/Cancel, every control given an accessible name, and the initial focus put
 //! on the first thing the user will want to change.
 
+pub mod host_key;
 pub mod import;
 pub mod properties;
 pub mod settings;
@@ -98,6 +99,7 @@ mod tests {
         // Adding a menu item without its dialog would otherwise fail only when
         // the user clicked it.
         fn _assert_modules() {
+            let _ = super::host_key::TITLE;
             let _ = super::import::TITLE;
             let _ = super::properties::TITLE;
             let _ = super::settings::TITLE;
