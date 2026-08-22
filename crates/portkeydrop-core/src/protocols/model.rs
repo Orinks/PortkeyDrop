@@ -221,6 +221,11 @@ pub struct ConnectionInfo {
     pub key_path: String,
     /// Connect timeout in seconds.
     pub timeout: u64,
+    /// SSH only: seconds between keepalive probes. 0 turns them off.
+    ///
+    /// Idle SFTP sessions are dropped by firewalls and by servers with a
+    /// `ClientAliveInterval`; a probe keeps the connection answering.
+    pub keepalive: u64,
     /// FTP only.
     pub passive_mode: bool,
     /// FTP only: upgrade the control connection with `AUTH SSL`.
@@ -238,6 +243,7 @@ impl Default for ConnectionInfo {
             password: String::new(),
             key_path: String::new(),
             timeout: 30,
+            keepalive: 60,
             passive_mode: true,
             ftp_explicit_ssl: false,
             host_key_policy: HostKeyPolicy::AutoAdd,

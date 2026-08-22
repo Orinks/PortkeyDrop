@@ -100,6 +100,9 @@ impl QuickConnectBar {
         // Voice control matches on the visible label, so the accessible name
         // has to start with it.
         explicit_ssl.set_name("Use SSL (AUTH SSL) with FTP");
+        // Ticked from the connection defaults so someone whose server needs
+        // AUTH SSL does not have to remember it on every connection.
+        explicit_ssl.set_value(state.settings.connection.ftp_explicit_ssl);
         explicit_ssl.enable(default_protocol == Protocol::Ftp);
         sizer.add(
             &explicit_ssl,

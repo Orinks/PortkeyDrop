@@ -189,8 +189,14 @@ impl SftpClient {
             offered: Arc::clone(&offered),
         };
 
+        // Without a keepalive an idle session is dropped silently by
+        // firewalls and by servers running a `ClientAliveInterval`, and the
+        // user only finds out when their next command fails.
+        let keepalive = (self.info.keepalive > 0).then(|| Duration::from_secs(self.info.keepalive));
         let config = Arc::new(client::Config {
             inactivity_timeout: Some(Duration::from_secs(3600)),
+            keepalive_interval: keepalive,
+            keepalive_max: 3,
             ..Default::default()
         });
         let endpoint = (self.info.host.clone(), self.info.effective_port());

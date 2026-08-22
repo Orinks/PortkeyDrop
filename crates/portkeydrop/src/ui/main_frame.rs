@@ -90,12 +90,13 @@ impl MainFrame {
         let (sender, receiver) = events::channel();
         let state = Rc::new(RefCell::new(state));
 
-        let (sort_field, sort_ascending, show_hidden) = {
+        let (sort_field, sort_ascending, show_hidden, date_style) = {
             let state = state.borrow();
             (
                 SortField::from_setting(&state.settings.display.sort_by),
                 state.settings.display.sort_ascending,
                 state.settings.display.show_hidden_files,
+                format::DateStyle::from_setting(&state.settings.display.date_format),
             )
         };
 
@@ -116,12 +117,12 @@ impl MainFrame {
         let local = Rc::new(FilePane::new(
             &panes,
             "Local files",
-            PaneState::new(sort_field, sort_ascending, show_hidden),
+            PaneState::new(sort_field, sort_ascending, show_hidden).with_date_style(date_style),
         ));
         let remote = Rc::new(FilePane::new(
             &panes,
             "Remote files",
-            PaneState::new(sort_field, sort_ascending, show_hidden),
+            PaneState::new(sort_field, sort_ascending, show_hidden).with_date_style(date_style),
         ));
 
         let activity_panel = Panel::builder(&panes).build();
@@ -575,8 +576,9 @@ impl MainFrame {
         let pane_for_focus = Rc::clone(&pane);
         pane.list.on_item_focused(move |_| {
             if let Some(file) = pane_for_focus.selected_file() {
+                let style = pane_for_focus.state.borrow().date_style();
                 this.status_bar
-                    .set_status_text(&format::file_row_text(&file), 1);
+                    .set_status_text(&format::file_row_text(&file, style), 1);
             }
         });
 
@@ -750,7 +752,10 @@ impl MainFrame {
         use portkeydrop_core::transfer::Status;
 
         let mut state = self.state.borrow_mut();
-        let interval = state.settings.display.progress_interval;
+        let interval = format::effective_progress_interval(
+            state.settings.display.progress_interval,
+            &state.settings.speech.verbosity,
+        );
         let previous = state.announced_progress.get(&job.id).copied();
 
         match job.status {
@@ -807,6 +812,40 @@ impl MainFrame {
     // Connection
     // ---------------------------------------------------------------
 
+    /// Move the quick connect bar onto newly saved connection defaults.
+    ///
+    /// Only the values that actually changed are applied. The bar holds
+    /// whatever the user last selected, so re-applying every default would
+    /// throw away a protocol or port they had already set up while saving an
+    /// unrelated preference.
+    pub(super) fn apply_connection_defaults(
+        &self,
+        before: &portkeydrop_core::settings::ConnectionDefaults,
+        after: &portkeydrop_core::settings::ConnectionDefaults,
+    ) {
+        let bar = &self.quick_connect;
+        let mut changed = false;
+
+        if before.ftp_explicit_ssl != after.ftp_explicit_ssl {
+            bar.explicit_ssl.set_value(after.ftp_explicit_ssl);
+            changed = true;
+        }
+        if before.protocol != after.protocol {
+            if let Some(index) = protocols::SUPPORTED_PROTOCOL_VALUES
+                .iter()
+                .position(|name| *name == after.protocol)
+            {
+                bar.protocol.set_selection(index as u32);
+                changed = true;
+            }
+        }
+        if changed {
+            // Brings the port and the AUTH SSL checkbox back in step with
+            // whichever protocol is now selected.
+            self.on_protocol_changed(bar);
+        }
+    }
+
     fn on_protocol_changed(&self, bar: &QuickConnectBar) {
         let Some(name) = bar.protocol.get_string_selection() else {
             return;
@@ -851,6 +890,7 @@ impl MainFrame {
             password: bar.password.get_value(),
             key_path: String::new(),
             timeout: state.settings.connection.timeout,
+            keepalive: state.settings.connection.keepalive,
             passive_mode: state.settings.connection.passive_mode,
             ftp_explicit_ssl: protocol == Protocol::Ftp && bar.explicit_ssl.is_checked(),
             host_key_policy: HostKeyPolicy::from_setting(
@@ -1385,17 +1425,19 @@ impl MainFrame {
     /// Called after the settings dialog closes so a changed sort order or
     /// hidden-file preference takes effect at once rather than on next launch.
     pub(super) fn refresh_display_settings(&self) {
-        let (sort_field, ascending, show_hidden) = {
+        let (sort_field, ascending, show_hidden, date_style) = {
             let state = self.state.borrow();
             (
                 SortField::from_setting(&state.settings.display.sort_by),
                 state.settings.display.sort_ascending,
                 state.settings.display.show_hidden_files,
+                format::DateStyle::from_setting(&state.settings.display.date_format),
             )
         };
         for pane in [&self.local, &self.remote] {
             let mut state = pane.state.borrow_mut();
             state.set_show_hidden(show_hidden);
+            state.set_date_style(date_style);
             // `sort_by` toggles direction when the field is unchanged, so the
             // direction is set explicitly afterwards.
             state.sort_by(sort_field);

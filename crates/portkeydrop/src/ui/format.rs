@@ -4,6 +4,8 @@
 //! listened to: the item's name first, then its details, with the units spelled
 //! out rather than left as bare numbers.
 
+use chrono::NaiveDateTime;
+
 use portkeydrop_core::protocols::RemoteFile;
 use portkeydrop_core::transfer::{format_bytes, Status, TransferJob};
 
@@ -16,13 +18,91 @@ pub const FILE_COLUMNS: [(&str, i32); 5] = [
     ("Permissions", 100),
 ];
 
+/// How the Modified column reads a timestamp out.
+///
+/// Stored as `display.date_format`. An exact stamp is what you want when
+/// comparing two files; "3 days ago" is what you want when skimming a folder,
+/// and it is far shorter to listen to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DateStyle {
+    /// `2026-03-04 09:05`.
+    Absolute,
+    /// `3 days ago`.
+    #[default]
+    Relative,
+}
+
+impl DateStyle {
+    /// Map a `display.date_format` setting value onto a style.
+    pub fn from_setting(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "absolute" => DateStyle::Absolute,
+            _ => DateStyle::Relative,
+        }
+    }
+
+    /// The value stored back in settings.
+    pub fn as_setting(self) -> &'static str {
+        match self {
+            DateStyle::Absolute => "absolute",
+            DateStyle::Relative => "relative",
+        }
+    }
+}
+
+/// A file's modification time in the requested style, or an empty string.
+pub fn modified_text(file: &RemoteFile, style: DateStyle) -> String {
+    match style {
+        DateStyle::Absolute => file.display_modified(),
+        DateStyle::Relative => file
+            .modified
+            .map(|when| relative_time(when, chrono::Local::now().naive_local()))
+            .unwrap_or_default(),
+    }
+}
+
+/// How long ago `when` was, in the largest unit that still reads naturally.
+///
+/// Only one unit is used: "3 days ago" rather than "3 days, 4 hours ago",
+/// because the Modified column is skimmed, not studied.
+pub fn relative_time(when: NaiveDateTime, now: NaiveDateTime) -> String {
+    let seconds = now.signed_duration_since(when).num_seconds();
+    if seconds < 0 {
+        // Clock skew between here and the server, or a file stamped ahead of
+        // time. "In the future" is honest; a negative age would not be.
+        return "in the future".to_string();
+    }
+
+    const MINUTE: i64 = 60;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    const WEEK: i64 = 7 * DAY;
+    const MONTH: i64 = 30 * DAY;
+    const YEAR: i64 = 365 * DAY;
+
+    let (count, unit) = match seconds {
+        s if s < MINUTE => return "just now".to_string(),
+        s if s < HOUR => (s / MINUTE, "minute"),
+        s if s < DAY => (s / HOUR, "hour"),
+        s if s < WEEK => (s / DAY, "day"),
+        s if s < MONTH => (s / WEEK, "week"),
+        s if s < YEAR => (s / MONTH, "month"),
+        s => (s / YEAR, "year"),
+    };
+    if count == 1 {
+        format!("1 {unit} ago")
+    } else {
+        format!("{count} {unit}s ago")
+    }
+}
+
 /// The cell values for one file row.
-pub fn file_row(file: &RemoteFile) -> [String; 5] {
+pub fn file_row(file: &RemoteFile, style: DateStyle) -> [String; 5] {
     [
         file.name.clone(),
         file.display_size(),
         file.display_type(),
-        file.display_modified(),
+        modified_text(file, style),
         file.permissions.clone(),
     ]
 }
@@ -31,7 +111,7 @@ pub fn file_row(file: &RemoteFile) -> [String; 5] {
 ///
 /// Used where a single-column list is the more accessible control, and as the
 /// text announced when focus lands on a row.
-pub fn file_row_text(file: &RemoteFile) -> String {
+pub fn file_row_text(file: &RemoteFile, style: DateStyle) -> String {
     let mut parts = vec![if file.name.is_empty() {
         "Item".to_string()
     } else {
@@ -41,7 +121,7 @@ pub fn file_row_text(file: &RemoteFile) -> String {
     if !file.is_dir {
         parts.push(format!("size {}", file.display_size()));
     }
-    let modified = file.display_modified();
+    let modified = modified_text(file, style);
     if !modified.is_empty() {
         parts.push(format!("modified {modified}"));
     }
@@ -136,6 +216,23 @@ pub fn transfer_finished_announcement(job: &TransferJob) -> String {
     }
 }
 
+/// The progress interval to use once spoken detail is taken into account.
+///
+/// `display.progress_interval` says how often to speak; `speech.verbosity`
+/// says how much detail the user wants overall, so the two are combined here
+/// rather than at every call site. Turning progress off entirely stays off:
+/// asking for more detail must never start speech someone silenced.
+pub fn effective_progress_interval(interval: u32, verbosity: &str) -> u32 {
+    if interval == 0 {
+        return 0;
+    }
+    match verbosity.trim().to_ascii_lowercase().as_str() {
+        "minimal" => 0,
+        "verbose" => (interval / 2).max(1),
+        _ => interval,
+    }
+}
+
 /// Whether progress should be announced at this percentage.
 ///
 /// Announcing every byte would drown out everything else, so it is limited to
@@ -194,6 +291,13 @@ mod tests {
     use chrono::NaiveDate;
     use portkeydrop_core::transfer::Direction;
 
+    fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(hour, minute, 0)
+            .unwrap()
+    }
+
     fn file() -> RemoteFile {
         let mut file = RemoteFile::file("notes.txt", "/home/a/notes.txt", 2048);
         file.permissions = "-rw-r--r--".into();
@@ -218,7 +322,7 @@ mod tests {
 
     #[test]
     fn a_file_row_fills_every_column() {
-        let row = file_row(&file());
+        let row = file_row(&file(), DateStyle::Absolute);
         assert_eq!(row[0], "notes.txt");
         assert_eq!(row[1], "2.0 KB");
         assert_eq!(row[2], "TXT file");
@@ -229,7 +333,7 @@ mod tests {
     #[test]
     fn the_spoken_row_leads_with_the_file_name() {
         // The name is what the user is looking for; details come after.
-        let text = file_row_text(&file());
+        let text = file_row_text(&file(), DateStyle::Absolute);
         assert!(text.starts_with("notes.txt,"));
         assert!(text.contains("size 2.0 KB"));
         assert!(text.contains("modified 2026-03-04 09:05"));
@@ -239,21 +343,21 @@ mod tests {
     #[test]
     fn a_directory_is_not_announced_with_a_size() {
         // "<DIR>" read aloud after every folder is noise.
-        let text = file_row_text(&RemoteFile::dir("docs", "/docs"));
+        let text = file_row_text(&RemoteFile::dir("docs", "/docs"), DateStyle::Absolute);
         assert!(text.starts_with("docs, Folder"));
         assert!(!text.contains("size"));
     }
 
     #[test]
     fn an_unnamed_row_still_says_something() {
-        let text = file_row_text(&RemoteFile::default());
+        let text = file_row_text(&RemoteFile::default(), DateStyle::Absolute);
         assert!(text.starts_with("Item"));
     }
 
     #[test]
     fn empty_details_are_left_out_of_the_spoken_row() {
         let bare = RemoteFile::file("a.bin", "/a.bin", 10);
-        let text = file_row_text(&bare);
+        let text = file_row_text(&bare, DateStyle::Absolute);
         assert!(!text.contains("modified"));
         assert!(!text.contains("permissions"));
     }
@@ -391,6 +495,88 @@ mod tests {
         assert_eq!(window_title(Some("/home/a")), "Portkey Drop - /home/a");
         assert_eq!(window_title(None), "Portkey Drop");
         assert_eq!(window_title(Some("")), "Portkey Drop");
+    }
+
+    #[test]
+    fn the_date_style_setting_round_trips() {
+        assert_eq!(DateStyle::from_setting("absolute"), DateStyle::Absolute);
+        assert_eq!(DateStyle::from_setting("Relative"), DateStyle::Relative);
+        // An unreadable value must not blank the Modified column.
+        assert_eq!(DateStyle::from_setting("nonsense"), DateStyle::Relative);
+        assert_eq!(DateStyle::Absolute.as_setting(), "absolute");
+        assert_eq!(DateStyle::Relative.as_setting(), "relative");
+    }
+
+    #[test]
+    fn relative_times_use_one_unit_and_the_right_plural() {
+        let now = at(2026, 3, 4, 12, 0);
+        assert_eq!(relative_time(now, now), "just now");
+        assert_eq!(relative_time(at(2026, 3, 4, 11, 59), now), "1 minute ago");
+        assert_eq!(relative_time(at(2026, 3, 4, 11, 30), now), "30 minutes ago");
+        assert_eq!(relative_time(at(2026, 3, 4, 11, 0), now), "1 hour ago");
+        assert_eq!(relative_time(at(2026, 3, 3, 12, 0), now), "1 day ago");
+        assert_eq!(relative_time(at(2026, 2, 25, 12, 0), now), "1 week ago");
+        assert_eq!(relative_time(at(2026, 1, 4, 12, 0), now), "1 month ago");
+        assert_eq!(relative_time(at(2024, 3, 4, 12, 0), now), "2 years ago");
+    }
+
+    #[test]
+    fn a_timestamp_ahead_of_the_clock_is_not_reported_as_negative() {
+        // Server clocks drift; "-3 minutes ago" would read as nonsense.
+        let now = at(2026, 3, 4, 12, 0);
+        assert_eq!(relative_time(at(2026, 3, 4, 12, 5), now), "in the future");
+    }
+
+    #[test]
+    fn the_modified_column_follows_the_chosen_style() {
+        let file = file();
+        assert_eq!(
+            modified_text(&file, DateStyle::Absolute),
+            "2026-03-04 09:05"
+        );
+        // The relative form is measured against the real clock, so all that
+        // can be pinned here is that it is not the absolute stamp.
+        let relative = modified_text(&file, DateStyle::Relative);
+        assert!(!relative.is_empty());
+        assert_ne!(relative, "2026-03-04 09:05");
+    }
+
+    #[test]
+    fn a_file_with_no_timestamp_has_an_empty_modified_cell_in_either_style() {
+        let bare = RemoteFile::file("a.bin", "/a.bin", 10);
+        assert_eq!(modified_text(&bare, DateStyle::Absolute), "");
+        assert_eq!(modified_text(&bare, DateStyle::Relative), "");
+    }
+
+    #[test]
+    fn minimal_verbosity_silences_progress_entirely() {
+        assert_eq!(effective_progress_interval(25, "minimal"), 0);
+        assert!(!should_announce_progress(
+            Some(20),
+            50,
+            effective_progress_interval(25, "minimal")
+        ));
+    }
+
+    #[test]
+    fn verbose_verbosity_halves_the_interval() {
+        assert_eq!(effective_progress_interval(25, "verbose"), 12);
+        // Never down to zero, which would silence progress instead.
+        assert_eq!(effective_progress_interval(1, "verbose"), 1);
+    }
+
+    #[test]
+    fn normal_verbosity_leaves_the_interval_alone() {
+        assert_eq!(effective_progress_interval(25, "normal"), 25);
+        assert_eq!(effective_progress_interval(25, "anything else"), 25);
+    }
+
+    #[test]
+    fn asking_for_more_detail_cannot_switch_progress_back_on() {
+        // The user set the interval to 0 to silence progress; verbosity is
+        // about how much to say, not whether to start saying it.
+        assert_eq!(effective_progress_interval(0, "verbose"), 0);
+        assert_eq!(effective_progress_interval(0, "normal"), 0);
     }
 
     #[test]

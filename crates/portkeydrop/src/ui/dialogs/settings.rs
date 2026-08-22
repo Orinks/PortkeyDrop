@@ -35,6 +35,36 @@ const HOST_KEY_CHOICES: [(&str, &str); 3] = [
 const CHANNEL_CHOICES: [(&str, &str); 2] =
     [("stable", "Stable releases"), ("nightly", "Nightly builds")];
 
+/// Protocols offered as the default for new connections.
+///
+/// The stored values are the wire names the quick connect bar uses, so the
+/// picker and the bar always agree about what "sftp" means.
+const PROTOCOL_CHOICES: [(&str, &str); 4] = [
+    ("sftp", "SFTP, file transfer over SSH"),
+    ("ftp", "FTP"),
+    ("ftps", "FTPS, FTP over TLS"),
+    ("webdav", "WebDAV"),
+];
+
+/// How the Modified column reads dates out.
+const DATE_FORMAT_CHOICES: [(&str, &str); 2] = [
+    (
+        "relative",
+        "How long ago the file changed, such as 3 days ago",
+    ),
+    (
+        "absolute",
+        "The exact date and time, such as 2026-03-04 09:05",
+    ),
+];
+
+/// How much Portkey Drop says while a transfer runs.
+const VERBOSITY_CHOICES: [(&str, &str); 3] = [
+    ("minimal", "Only when a transfer finishes"),
+    ("normal", "Progress at the interval set on the Display page"),
+    ("verbose", "Progress twice as often as that interval"),
+];
+
 /// Show the settings dialog, applying changes on OK.
 pub fn show(frame: &MainFrame) {
     let dialog = Dialog::builder(&frame.frame, TITLE)
@@ -95,6 +125,8 @@ pub fn show(frame: &MainFrame) {
 
         let workers_changed =
             updated.transfer.concurrent_transfers != settings.transfer.concurrent_transfers;
+        let connection_before = settings.connection.clone();
+        let connection_after = updated.connection.clone();
 
         {
             let mut state = frame.state.borrow_mut();
@@ -107,6 +139,7 @@ pub fn show(frame: &MainFrame) {
             }
         }
         frame.refresh_display_settings();
+        frame.apply_connection_defaults(&connection_before, &connection_after);
         // Creating or removing the tray icon here means the preference takes
         // effect at once rather than on next launch.
         frame.sync_tray_icon();
@@ -281,14 +314,28 @@ fn build_display_page(notebook: &Notebook, settings: &Settings) -> Page {
     hidden.set_value(settings.display.show_hidden_files);
     sizer.add(&hidden, 0, SizerFlag::Left | SizerFlag::All, 6);
 
+    let date_format = labelled(
+        &panel,
+        &sizer,
+        "&Show modification dates as:",
+        "Show modification dates as",
+        |panel| Choice::builder(panel).build(),
+    );
+    fill_choice(
+        &date_format,
+        &DATE_FORMAT_CHOICES,
+        &settings.display.date_format,
+    );
+
     panel.set_sizer(sizer, true);
 
     let apply = {
-        let (announce, interval, hidden) = (announce, interval, hidden);
+        let (announce, interval, hidden, date_format) = (announce, interval, hidden, date_format);
         move |settings: &mut Settings| {
             settings.display.announce_file_count = announce.is_checked();
             settings.display.progress_interval = interval.value().max(0) as u32;
             settings.display.show_hidden_files = hidden.is_checked();
+            settings.display.date_format = choice_value(&date_format, &DATE_FORMAT_CHOICES);
         }
     };
     Page {
@@ -299,6 +346,15 @@ fn build_display_page(notebook: &Notebook, settings: &Settings) -> Page {
 
 fn build_connection_page(notebook: &Notebook, settings: &Settings) -> Page {
     let (panel, sizer) = page(notebook);
+
+    let protocol = labelled(
+        &panel,
+        &sizer,
+        "Protocol for &new connections:",
+        "Protocol for new connections",
+        |panel| Choice::builder(panel).build(),
+    );
+    fill_choice(&protocol, &PROTOCOL_CHOICES, &settings.connection.protocol);
 
     let timeout = labelled(
         &panel,
@@ -317,6 +373,15 @@ fn build_connection_page(notebook: &Notebook, settings: &Settings) -> Page {
         |panel| SpinCtrl::builder(panel).with_range(0, 10).build(),
     );
     retries.set_value(settings.connection.max_retries as i32);
+
+    let keepalive = labelled(
+        &panel,
+        &sizer,
+        "Send an SSH &keepalive every this many seconds (0 turns it off):",
+        "SSH keepalive interval",
+        |panel| SpinCtrl::builder(panel).with_range(0, 600).build(),
+    );
+    keepalive.set_value(settings.connection.keepalive as i32);
 
     let host_keys = labelled(
         &panel,
@@ -337,15 +402,32 @@ fn build_connection_page(notebook: &Notebook, settings: &Settings) -> Page {
     passive.set_value(settings.connection.passive_mode);
     sizer.add(&passive, 0, SizerFlag::Left | SizerFlag::All, 6);
 
+    let explicit_ssl = CheckBox::builder(&panel)
+        .with_label("Start new FTP connections with SSL (&AUTH SSL)")
+        .build();
+    explicit_ssl.set_value(settings.connection.ftp_explicit_ssl);
+    sizer.add(&explicit_ssl, 0, SizerFlag::Left | SizerFlag::All, 6);
+
     panel.set_sizer(sizer, true);
 
     let apply = {
-        let (timeout, retries, host_keys, passive) = (timeout, retries, host_keys, passive);
+        let (protocol, timeout, retries, keepalive, host_keys, passive, explicit_ssl) = (
+            protocol,
+            timeout,
+            retries,
+            keepalive,
+            host_keys,
+            passive,
+            explicit_ssl,
+        );
         move |settings: &mut Settings| {
+            settings.connection.protocol = choice_value(&protocol, &PROTOCOL_CHOICES);
             settings.connection.timeout = timeout.value().max(1) as u64;
             settings.connection.max_retries = retries.value().max(0) as u32;
+            settings.connection.keepalive = keepalive.value().max(0) as u64;
             settings.connection.verify_host_keys = choice_value(&host_keys, &HOST_KEY_CHOICES);
             settings.connection.passive_mode = passive.is_checked();
+            settings.connection.ftp_explicit_ssl = explicit_ssl.is_checked();
         }
     };
     Page {
@@ -387,13 +469,23 @@ fn build_speech_page(notebook: &Notebook, settings: &Settings) -> Page {
     );
     volume.set_value(settings.speech.volume);
 
+    let verbosity = labelled(
+        &panel,
+        &sizer,
+        "Spoken &detail during transfers:",
+        "Spoken detail during transfers",
+        |panel| Choice::builder(panel).build(),
+    );
+    fill_choice(&verbosity, &VERBOSITY_CHOICES, &settings.speech.verbosity);
+
     panel.set_sizer(sizer, true);
 
     let apply = {
-        let (rate, volume) = (rate, volume);
+        let (rate, volume, verbosity) = (rate, volume, verbosity);
         move |settings: &mut Settings| {
             settings.speech.rate = rate.get_value();
             settings.speech.volume = volume.get_value();
+            settings.speech.verbosity = choice_value(&verbosity, &VERBOSITY_CHOICES);
         }
     };
     Page {
@@ -588,11 +680,55 @@ mod tests {
     }
 
     #[test]
+    fn the_default_protocol_picker_offers_what_the_connect_bar_offers() {
+        // A protocol the picker stores but the bar cannot select would leave
+        // the bar silently falling back to SFTP.
+        let offered: Vec<&str> = PROTOCOL_CHOICES.iter().map(|(value, _)| *value).collect();
+        assert_eq!(
+            offered,
+            portkeydrop_core::protocols::SUPPORTED_PROTOCOL_VALUES.to_vec()
+        );
+    }
+
+    #[test]
+    fn both_date_formats_are_offered() {
+        let offered: Vec<&str> = DATE_FORMAT_CHOICES
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        assert_eq!(offered, vec!["relative", "absolute"]);
+        for (value, _) in DATE_FORMAT_CHOICES {
+            assert_eq!(
+                crate::ui::format::DateStyle::from_setting(value).as_setting(),
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn every_spoken_detail_level_is_offered() {
+        let offered: Vec<&str> = VERBOSITY_CHOICES.iter().map(|(value, _)| *value).collect();
+        assert_eq!(offered, vec!["minimal", "normal", "verbose"]);
+    }
+
+    #[test]
+    fn the_spoken_detail_labels_say_what_each_level_does() {
+        // "Minimal" on its own does not tell someone what they will stop
+        // hearing, and this picker is read aloud rather than seen.
+        for (value, label) in VERBOSITY_CHOICES {
+            assert!(label.len() > value.len(), "{value}: {label}");
+        }
+    }
+
+    #[test]
     fn every_choice_has_a_readable_label() {
         for entries in [
             &OVERWRITE_CHOICES[..],
             &HOST_KEY_CHOICES[..],
             &CHANNEL_CHOICES[..],
+            &PROTOCOL_CHOICES[..],
+            &DATE_FORMAT_CHOICES[..],
+            &VERBOSITY_CHOICES[..],
         ] {
             for (value, label) in entries {
                 assert!(!label.is_empty(), "{value} has no label");

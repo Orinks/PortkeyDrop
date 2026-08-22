@@ -98,7 +98,7 @@ impl FilePane {
         self.list.delete_all_items();
         let state = self.state.borrow();
         for (row, file) in state.visible_files().iter().enumerate() {
-            let cells = file_row(file);
+            let cells = file_row(file, state.date_style());
             self.list.insert_item(row as i64, &cells[0], None);
             for (column, value) in cells.iter().enumerate().skip(1) {
                 self.list

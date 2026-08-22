@@ -992,7 +992,13 @@ impl MainFrame {
         // Speaking every chunk would bury the user, so the same interval that
         // governs transfer progress governs this.
         let Some(value) = percent else { return };
-        let interval = self.state.borrow().settings.display.progress_interval;
+        let interval = {
+            let state = self.state.borrow();
+            format::effective_progress_interval(
+                state.settings.display.progress_interval,
+                &state.settings.speech.verbosity,
+            )
+        };
         if !format::should_announce_progress(announced, value, interval) {
             return;
         }

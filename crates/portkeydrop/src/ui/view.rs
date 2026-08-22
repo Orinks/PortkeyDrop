@@ -6,6 +6,8 @@
 
 use portkeydrop_core::protocols::RemoteFile;
 
+use super::format::DateStyle;
+
 /// Which column a pane is sorted by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortField {
@@ -68,6 +70,7 @@ pub struct PaneState {
     show_hidden: bool,
     sort_field: SortField,
     sort_ascending: bool,
+    date_style: DateStyle,
     /// Current directory.
     pub path: String,
 }
@@ -82,8 +85,28 @@ impl PaneState {
             show_hidden,
             sort_field,
             sort_ascending,
+            date_style: DateStyle::default(),
             path: String::new(),
         }
+    }
+
+    /// The same pane, reading modification times in the given style.
+    pub fn with_date_style(mut self, date_style: DateStyle) -> Self {
+        self.date_style = date_style;
+        self
+    }
+
+    /// How the pane renders modification times.
+    pub fn date_style(&self) -> DateStyle {
+        self.date_style
+    }
+
+    /// Change how the pane renders modification times.
+    ///
+    /// Rows are unaffected until they are redrawn: only their text changes,
+    /// so there is nothing to recompute.
+    pub fn set_date_style(&mut self, date_style: DateStyle) {
+        self.date_style = date_style;
     }
 
     /// Replace the pane's contents.

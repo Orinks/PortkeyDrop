@@ -485,6 +485,7 @@ pub fn show(frame: &MainFrame) {
                 &frame.state.borrow().settings.connection.verify_host_keys,
             );
             info.timeout = frame.state.borrow().settings.connection.timeout;
+            info.keepalive = frame.state.borrow().settings.connection.keepalive;
             dialog.end_modal(ID_OK);
             frame.connect(info);
         })
