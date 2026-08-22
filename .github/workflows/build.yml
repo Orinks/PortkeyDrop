@@ -1,5 +1,11 @@
 name: Build
 
+# A scheduled run uses the copy of this file on the repository's DEFAULT
+# branch, whatever `actions/checkout` then checks out. Editing it on `dev`
+# changes nothing about the nightlies until the change also reaches `main`.
+# That is how the nightly date stamp went missing for a week: the source
+# knew how to record it, and the workflow that built the source did not.
+
 on:
   schedule:
     # Nightly at 00:27 UTC (8:27 PM EDT / 7:27 PM EST), near AccessiWeather.
@@ -155,6 +161,27 @@ jobs:
             echo "[version]"
             echo "value=${{ needs.prepare.outputs.version }}"
           } > dist/version.txt
+
+      # A nightly whose date did not reach the binary looks fine here and is
+      # broken on the user's machine: About cannot name the build, and the
+      # updater offers the nightly already installed, over and over. Ask the
+      # binary what it is rather than trusting that the environment arrived.
+      - name: Check the build knows which nightly it is
+        if: needs.prepare.outputs.is_nightly == 'true'
+        env:
+          NIGHTLY_DATE: ${{ needs.prepare.outputs.nightly_date }}
+        run: |
+          reported=$(dist/PortkeyDrop_dir/PortkeyDrop.exe --version)
+          echo "$reported"
+          case "$reported" in
+            *"nightly $NIGHTLY_DATE"*) ;;
+            *)
+              echo "::error::the build reports '$reported' and should name" \
+                   "nightly $NIGHTLY_DATE; PORTKEYDROP_NIGHTLY_DATE did not" \
+                   "reach the compiler"
+              exit 1
+              ;;
+          esac
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress

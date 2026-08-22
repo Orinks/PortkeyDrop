@@ -1,6 +1,13 @@
 //! Portkey Drop's entry point.
 
+// Windows attaches a console window to a console-subsystem binary, so every
+// launch of the shipped app opened a terminal behind the window. Linking as a
+// GUI application is what stops that. Debug builds keep their console, where a
+// panic on stderr is worth more than a tidy desktop.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use portkeydrop_app::cli;
+use portkeydrop_app::console;
 use portkeydrop_app::single_instance::{InstanceCheck, SingleInstance};
 use portkeydrop_app::ui::state::AppState;
 use portkeydrop_app::ui::MainFrame;
@@ -8,15 +15,23 @@ use portkeydrop_app::ui::MainFrame;
 fn main() {
     let options = cli::parse(std::env::args().skip(1));
 
+    // A GUI build owns no console, so whatever the command line asked to print
+    // has to go to the terminal it was launched from.
+    if options.show_help || options.show_version || options.unknown.is_some() {
+        console::attach_to_parent();
+    }
+
     if options.show_help {
         println!("{}", cli::USAGE);
         return;
     }
     if options.show_version {
+        // The same string About shows: on a nightly the version number alone
+        // cannot say which build this is.
         println!(
             "{} {}",
             portkeydrop_core::APP_NAME,
-            portkeydrop_core::VERSION
+            portkeydrop_app::ui::format::build_version()
         );
         return;
     }

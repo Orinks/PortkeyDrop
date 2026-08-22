@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Connecting to an unknown SSH host with "Ask before trusting a new server" (the default) now shows a dialog to reject the key, accept it once, or accept it permanently, instead of refusing every new host. Reject is the default, so Enter and Escape both refuse.
+- Starting Portkey Drop opened an empty terminal window behind it. The program was built as a console application, so Windows gave it a console whether it wanted one or not; it is now built as a windowed application and starts with nothing but its own window. `--version` and `--help` still print to the terminal you run them from.
+- The update offer said "Current: 0.6.0" on a nightly build, which is the version of the release before it and the same for every nightly. It now names the running build the way About does, so you can see which nightly you are on and which one is being offered.
 - Alt+U reached both Duplicate and Username in the Site Manager, and Alt+P reached both Play and Preview in the sound pack window, so neither letter activated anything. Each access key now reaches one control.
 - Accepting a host key could stop a different server from connecting. The new entry was written onto the end of the last line when the known hosts file did not end in a newline, which corrupted both; the server recorded there then looked like it had changed its key, and a changed key is refused outright. Existing files are repaired the next time a key is accepted.
 - The first server in the known hosts file was not recognised if the file began with a byte order mark, as one written by some Windows editors does.

@@ -855,7 +855,14 @@ impl MainFrame {
                 ));
                 self.state.borrow_mut().play_sound("notify");
 
-                if dialogs::update::show_offer(&self.frame, VERSION, &update) {
+                // The running build, not the bare version number: on a nightly
+                // "Current: 0.6.0" against "Latest: nightly 20260821" says
+                // nothing about which build is installed.
+                if dialogs::update::show_offer(
+                    &self.frame,
+                    &super::format::build_version(),
+                    &update,
+                ) {
                     self.download_update(*update);
                 }
             }
