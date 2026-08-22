@@ -193,6 +193,16 @@ impl MainFrame {
 
         main_frame.frame.show(true);
         main_frame.frame.centre();
+
+        // After the window exists, so the prompts have a parent to sit over,
+        // and before focus lands in a pane the copied settings may change.
+        if super::dialogs::migration::offer(&main_frame) {
+            main_frame.state.borrow_mut().reload_from_disk();
+            main_frame.refresh_display_settings();
+            main_frame.refresh_local(None);
+            main_frame.log("Settings reloaded from the copied files.");
+        }
+
         main_frame.local.focus();
         main_frame
     }

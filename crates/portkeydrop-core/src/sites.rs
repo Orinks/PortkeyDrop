@@ -211,6 +211,56 @@ impl SiteManager {
         std::fs::write(self.sites_path(), text)
     }
 
+    /// Sites whose password is in the system keyring but not in this store.
+    ///
+    /// Only meaningful for a vault-backed install: someone who moves to a
+    /// portable copy has their passwords sitting in the keyring of the machine
+    /// they left behind, and nothing here would ever look there. Sites that
+    /// already have a password are left alone, so this narrows to exactly what
+    /// an import would add.
+    pub fn keyring_passwords_to_import(&self) -> Vec<String> {
+        if self.passwords.tier() != StorageTier::Vault || !credentials::KeyringStore::available() {
+            return Vec::new();
+        }
+        let keyring = credentials::KeyringStore;
+        self.sites
+            .iter()
+            .filter(|site| site.password.is_empty())
+            .filter(|site| {
+                keyring
+                    .get(&site.id)
+                    .is_some_and(|stored| !stored.is_empty())
+            })
+            .map(|site| site.id.clone())
+            .collect()
+    }
+
+    /// Copy those passwords out of the keyring into this store.
+    ///
+    /// The keyring entries are left in place, so the installed copy of the app
+    /// keeps working.
+    pub fn import_keyring_passwords(&mut self) -> std::io::Result<usize> {
+        let ids = self.keyring_passwords_to_import();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let keyring = credentials::KeyringStore;
+        let mut imported = 0;
+        for id in ids {
+            let Some(password) = keyring.get(&id).filter(|stored| !stored.is_empty()) else {
+                continue;
+            };
+            if let Some(site) = self.sites.iter_mut().find(|site| site.id == id) {
+                site.password = password;
+                imported += 1;
+            }
+        }
+        if imported > 0 {
+            self.save()?;
+        }
+        Ok(imported)
+    }
+
     /// Every saved site, in list order.
     pub fn sites(&self) -> &[Site] {
         &self.sites
@@ -294,6 +344,21 @@ mod tests {
         fn remove(&mut self, site_id: &str) {
             self.entries.lock().unwrap().remove(site_id);
         }
+    }
+
+    /// A store that reports the keyring tier, for the paths that branch on it.
+    #[derive(Clone, Default)]
+    struct KeyringTierStore;
+
+    impl PasswordStore for KeyringTierStore {
+        fn tier(&self) -> StorageTier {
+            StorageTier::Keyring
+        }
+        fn get(&self, _site_id: &str) -> Option<String> {
+            None
+        }
+        fn set(&mut self, _site_id: &str, _password: &str) {}
+        fn remove(&mut self, _site_id: &str) {}
     }
 
     fn manager(dir: &TempDir) -> (SiteManager, FakeStore) {
@@ -497,6 +562,28 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (mut manager, _) = manager(&dir);
         assert!(manager.update(sample_site()).is_err());
+    }
+
+    #[test]
+    fn a_keyring_backed_install_has_no_passwords_to_import() {
+        // The import exists to reach a store this install does not use. One
+        // already reading the keyring has nothing to fetch from it.
+        let dir = TempDir::new().unwrap();
+        let mut manager = SiteManager::with_store(dir.path(), Box::new(KeyringTierStore));
+        manager.add(sample_site()).unwrap();
+        assert!(manager.keyring_passwords_to_import().is_empty());
+        assert_eq!(manager.import_keyring_passwords().unwrap(), 0);
+    }
+
+    #[test]
+    fn sites_that_already_have_a_password_are_not_import_candidates() {
+        // Their password is in the vault; overwriting it from the keyring
+        // would undo a change made in this copy.
+        let dir = TempDir::new().unwrap();
+        let (mut manager, _store) = manager(&dir);
+        manager.add(sample_site()).unwrap();
+        assert!(manager.sites().iter().all(|site| !site.password.is_empty()));
+        assert!(manager.keyring_passwords_to_import().is_empty());
     }
 
     #[test]

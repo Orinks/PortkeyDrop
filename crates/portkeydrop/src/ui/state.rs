@@ -148,6 +148,18 @@ impl AppState {
         self.sites.storage_tier().describe()
     }
 
+    /// Re-read settings and sites from disk.
+    ///
+    /// Used after configuration files are copied in underneath a running app,
+    /// which is what portable-mode migration does. The connection, the queue,
+    /// and the sound player are left alone: none of them came from the files
+    /// that just changed.
+    pub fn reload_from_disk(&mut self) {
+        self.settings = portkeydrop_core::settings::load_settings(&self.config_dir);
+        self.sites = SiteManager::open(&self.config_dir, self.portable);
+        self.apply_settings();
+    }
+
     /// Persist the settings.
     pub fn save_settings(&self) {
         if let Err(err) =

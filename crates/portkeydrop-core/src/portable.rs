@@ -71,6 +71,17 @@ pub fn legacy_config_dir(home_dir: &Path) -> PathBuf {
     home_dir.join(LEGACY_CONFIG_DIR_NAME)
 }
 
+/// Where a standard, non-portable install keeps its configuration.
+///
+/// A portable build needs this to find an existing install to copy from; it is
+/// never where a portable build writes.
+pub fn standard_config_dir() -> PathBuf {
+    match platform_config_dir() {
+        Some(base) => base.join(APP_CONFIG_DIR_NAME),
+        None => legacy_config_dir(&home_dir()),
+    }
+}
+
 /// The platform's configuration folder, if it has one.
 pub fn platform_config_dir() -> Option<PathBuf> {
     dirs::config_dir()

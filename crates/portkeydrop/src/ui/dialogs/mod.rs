@@ -6,6 +6,7 @@
 
 pub mod host_key;
 pub mod import;
+pub mod migration;
 pub mod properties;
 pub mod settings;
 pub mod site_manager;
@@ -101,6 +102,7 @@ mod tests {
         fn _assert_modules() {
             let _ = super::host_key::TITLE;
             let _ = super::import::TITLE;
+            let _ = super::migration::TITLE;
             let _ = super::properties::TITLE;
             let _ = super::settings::TITLE;
             let _ = super::site_manager::TITLE;
