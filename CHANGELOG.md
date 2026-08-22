@@ -10,13 +10,14 @@ All notable changes to this project will be documented in this file.
 
 - Linux downloads are paused for this release. The build links a system library from an older distribution and will not start on current ones, and the AppImage does not carry its own copy of the desktop toolkit. Windows and macOS are unaffected.
 
-### Changed
 - Settings, sites, and known hosts now live where each system keeps application configuration -- `%APPDATA%\PortkeyDrop` on Windows, `Application Support` on macOS, `~/.config/portkeydrop` on Linux -- rather than a folder in your home directory. Everything is copied across the first time you start, and the old folder is left where it is, so an older version still works. Portable installs are unchanged and keep their data beside the program.
 
 ### Security
 - On Linux and macOS the configuration folder and the encrypted password vault were created with whatever permissions the system defaulted to, commonly leaving them readable by every account on the machine. Since the vault's key is derived from the machine and user name rather than a secret, another local user could read the file and work out its key. The folder and the vault are now owner-only, and opening the app tightens an existing install. Windows already restricted them through the user profile.
 
 ### Added
+- A portable copy started on a computer that also has Portkey Drop installed now offers to bring the installed copy's configuration across on first launch: a list of what to copy -- your sites, known hosts, and settings -- and, separately, your saved passwords. The installed copy is read and left exactly as it is. Passwords need the separate question because an installed copy keeps them in the computer's keyring, which a portable copy on a different machine cannot read, so without copying them into the portable copy's own encrypted vault the sites would arrive with every password blank. Both questions are asked once.
+- The Modified column can show how long ago a file changed -- "3 days ago" rather than a date and time -- which is much shorter to listen to when skimming a folder. The exact stamp is still there for comparing two files; choose between them in Settings.
 - The Site Manager has its Browse button back for choosing a private key file, and it opens where the current path points rather than at your home folder.
 
 ### Fixed
@@ -31,6 +32,9 @@ All notable changes to this project will be documented in this file.
 - Settings, Site Manager, and the import window announced the wrong labels: each field was read out with the previous field's label, spin controls were read as unlabelled, and the first control on every page had no label at all.
 - The update check said a new version was available and then offered only a Close button. It now offers to download and install it, with progress you can hear and a Cancel that stops the download.
 - Release notes shown in the update window are no longer read out with their formatting characters.
+- SFTP connections left idle were dropped without warning by firewalls and by servers that close quiet sessions, and you only found out when the next thing you did failed. Portkey Drop now sends a keepalive every 60 seconds so the connection keeps answering. The interval is in Settings, and 0 turns it off.
+- The spoken detail setting only ever affected transfer progress announcements. It now governs how often progress is spoken as well: minimal stops progress being announced and verbose announces it twice as often. Setting the interval itself to 0 still silences progress whatever the detail level.
+- The default protocol and the "use AUTH SSL" preference were saved but ignored: the quick connect bar always opened on the same protocol with the SSL box clear. It now starts from your defaults, and saving settings moves it onto whichever of the two you changed rather than resetting a protocol or port you had already typed in.
 
 ## [0.6.0] - 2026-07-24
 
