@@ -457,25 +457,34 @@ mod concurrency_tests {
     use super::*;
 
     #[test]
-    fn many_threads_may_start_prism_at_once() {
-        // This crashed the process before `PrismConfig` matched the library:
-        // a regression does not fail a case, it takes the test binary down.
+    fn acquiring_backends_from_many_threads_is_safe() {
+        // Not start-up: `lifecycle_lock` serialises `Context::new` and the
+        // shutdown in `Context`'s drop, so those cannot overlap however many
+        // threads run here. What does overlap is the middle -- acquiring a
+        // backend, initialising it, and freeing it all run unlocked -- and
+        // that is where a shared registry or a backend's own initialise
+        // could race. Eight threads is arbitrary; two would prove the same.
         //
-        // Start-up is the path that crashed, so that is what runs on eight
-        // threads. Nothing is spoken: on a developer machine `Announcer::new`
-        // attaches to whichever screen reader is running, and announcing here
-        // made the suite talk over it eight times on every run.
+        // A regression here does not fail a case, it takes the test binary
+        // down, which is how the short `PrismConfig` announced itself.
+        //
+        // Nothing is spoken: on a developer machine `Announcer::new` attaches
+        // to whichever screen reader is running, and announcing here made the
+        // suite talk over it eight times on every run.
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 std::thread::spawn(|| {
                     let announcer = Announcer::new();
-                    // Touch the backend so acquiring it is exercised too.
+                    // Reaches the backend's feature flags, so a backend
+                    // acquired on this thread is also used on it.
                     let _ = announcer.is_available();
                 })
             })
             .collect();
         for thread in threads {
-            thread.join().expect("starting Prism should not panic");
+            thread
+                .join()
+                .expect("acquiring a Prism backend should not panic");
         }
     }
 
