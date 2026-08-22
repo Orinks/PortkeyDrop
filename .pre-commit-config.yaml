@@ -1,3 +1,6 @@
+# `pre-commit install` sets up both hook types listed here.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -9,6 +12,7 @@ repos:
     -   id: end-of-file-fixer
         exclude: ^crates/prism-sys/vendor/
     -   id: check-yaml
+    -   id: check-merge-conflict
     -   id: check-added-large-files
         # The vendored speech libraries are legitimately large.
         args: [--maxkb=6000]
@@ -18,15 +22,48 @@ repos:
 # the whole workspace rather than only the files being committed.
 -   repo: local
     hooks:
+    # Committing is frequent, so only sub-second checks run here. `--check`
+    # rather than formatting in place: `cargo fmt --all` would rewrite files
+    # nobody staged, quietly mixing unrelated changes into the working tree.
+    # This is the command the Format job runs.
     -   id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt --all --
+        entry: cargo fmt --all --check
         language: system
         types: [rust]
         pass_filenames: false
+
     -   id: ruff-changelog-tools
         name: ruff (release tooling)
         entry: ruff check --fix
         language: system
         files: ^(scripts/|tests/).*\.py$
         pass_filenames: true
+
+    # Clippy and the tests gate the push instead of the commit. They are the
+    # two things CI actually fails on, and a push is the point where CI is
+    # about to run; blocking every mid-work commit on them is how people end
+    # up passing --no-verify, which skips the formatting check as well.
+    #
+    # `-- -D warnings` rather than RUSTFLAGS: the env variable belongs to the
+    # build fingerprint, so setting it here would invalidate every artifact
+    # from a plain `cargo clippy` and back again on the next run.
+    #
+    # Warm, these take about three seconds and one second. Neither covers
+    # `cfg(unix)` code, which Windows compiles out entirely -- run
+    # scripts/linux-check.sh before pushing anything that touches it.
+    -   id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types_or: [rust, toml]
+        pass_filenames: false
+        stages: [pre-push]
+
+    -   id: cargo-test
+        name: cargo test
+        entry: cargo test --workspace
+        language: system
+        types_or: [rust, toml]
+        pass_filenames: false
+        stages: [pre-push]
