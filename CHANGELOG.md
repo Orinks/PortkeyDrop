@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - The Site Manager has its Browse button back for choosing a private key file, and it opens where the current path points rather than at your home folder.
 
 ### Fixed
+- Connecting to an unknown SSH host with "Ask before trusting a new server" (the default) now shows a dialog to reject the key, accept it once, or accept it permanently, instead of refusing every new host. Reject is the default, so Enter and Escape both refuse.
 - Starting Portkey Drop opened an empty terminal window behind it. The program was built as a console application, so Windows gave it a console whether it wanted one or not; it is now built as a windowed application and starts with nothing but its own window. `--version` and `--help` still print to the terminal you run them from.
 - The update offer said "Current: 0.6.0" on a nightly build, which is the version of the release before it and the same for every nightly. It now names the running build the way About does, so you can see which nightly you are on and which one is being offered.
 - Alt+U reached both Duplicate and Username in the Site Manager, and Alt+P reached both Play and Preview in the sound pack window, so neither letter activated anything. Each access key now reaches one control.

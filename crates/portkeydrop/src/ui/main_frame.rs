@@ -17,10 +17,11 @@ use std::sync::Arc;
 
 use wxdragon::prelude::*;
 
-use portkeydrop_core::protocols::{self, ConnectionInfo, HostKeyDecision, HostKeyPolicy, Protocol};
+use portkeydrop_core::protocols::{self, ConnectionInfo, HostKeyPolicy, Protocol};
 use portkeydrop_core::transfer::TransferJob;
 use portkeydrop_core::{local_files, APP_NAME};
 
+use super::dialogs;
 use super::events::{self, AppEvent, EventReceiver, EventSender};
 use super::file_pane::FilePane;
 use super::format;
@@ -708,6 +709,21 @@ impl MainFrame {
             AppEvent::UpdateDownloadDone(outcome) => self.on_download_done(*outcome),
             AppEvent::TrayCommand(id) => self.handle_tray_command(id),
             AppEvent::Log { message } => self.log(&message),
+            AppEvent::HostKeyPrompt {
+                host,
+                algorithm,
+                fingerprint,
+                reply,
+            } => {
+                self.log(&format!(
+                    "{host} offered an unrecognised {algorithm} host key ({fingerprint})."
+                ));
+                let decision =
+                    dialogs::host_key::show(&self.frame, &host, &algorithm, &fingerprint);
+                if reply.send(decision).is_err() {
+                    log::debug!("host key answer dropped: the connect worker has gone");
+                }
+            }
         }
     }
 
@@ -854,22 +870,13 @@ impl MainFrame {
 
         let sender = self.sender.clone();
         let host = info.host.clone();
-        // The host key prompt runs on this worker thread and blocks it, which
-        // is safe: the UI thread is free, and the answer is needed before the
-        // connection can continue.
+        // The prompt posts onto the event pump and blocks this worker until
+        // the UI thread answers. That is safe: the UI thread is free, and
+        // wxWidgets dialogs cannot run anywhere else.
         let prompt_sender = sender.clone();
         let host_key_prompt: protocols::HostKeyPrompt =
             Arc::new(move |host: &str, algorithm: &str, fingerprint: &str| {
-                events::post(
-                    &prompt_sender,
-                    AppEvent::Log {
-                        message: format!(
-                            "{host} offered an unrecognised {algorithm} host key ({fingerprint})."
-                        ),
-                    },
-                );
-                // Without a UI answer the safe choice is to refuse.
-                HostKeyDecision::Reject
+                events::ask_host_key(&prompt_sender, host, algorithm, fingerprint)
             });
 
         std::thread::spawn(move || {
