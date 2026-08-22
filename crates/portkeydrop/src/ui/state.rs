@@ -31,6 +31,12 @@ pub struct AppState {
     pub remote_home: String,
     /// The most recent failed transfer, for Retry Last Failed.
     pub last_failed_transfer: Option<String>,
+    /// Whether event sounds and speech actually reach a device.
+    ///
+    /// Off under test: `Announcer::new()` attaches to whichever screen reader
+    /// is running on the developer's machine, so without this the suite talks
+    /// over NVDA and plays the startup sound on every run.
+    audible: bool,
     /// Progress last announced per job, so each band is announced once.
     pub announced_progress: std::collections::HashMap<String, u8>,
     /// Whether the exit sound has already played, so it plays once.
@@ -40,6 +46,24 @@ pub struct AppState {
 impl AppState {
     /// Build the state for a config directory.
     pub fn new(config_dir: PathBuf, portable: bool) -> Self {
+        Self::build(config_dir, portable, prism::Announcer::new(), true)
+    }
+
+    /// The same state with speech and event sounds turned off.
+    ///
+    /// Everything else behaves identically, so tests still exercise the real
+    /// settings, sites, and sound pack handling.
+    #[cfg(test)]
+    pub fn silent(config_dir: PathBuf, portable: bool) -> Self {
+        Self::build(config_dir, portable, prism::Announcer::disabled(), false)
+    }
+
+    fn build(
+        config_dir: PathBuf,
+        portable: bool,
+        mut announcer: prism::Announcer,
+        audible: bool,
+    ) -> Self {
         let settings = portkeydrop_core::settings::load_settings(&config_dir);
         let sites = SiteManager::open(&config_dir, portable);
 
@@ -52,7 +76,6 @@ impl AppState {
         let transfers = TransferService::new(settings.transfer.concurrent_transfers);
         transfers.set_resume_enabled(settings.transfer.resume_partial);
 
-        let mut announcer = prism::Announcer::new();
         announcer.apply_settings(Some(settings.speech.rate), Some(settings.speech.volume));
 
         Self {
@@ -63,6 +86,7 @@ impl AppState {
             transfers,
             sounds,
             announcer,
+            audible,
             client: None,
             connected_host: String::new(),
             remote_home: "/".to_string(),
@@ -104,6 +128,9 @@ impl AppState {
 
     /// Play an event sound, honouring the audio settings.
     pub fn play_sound(&self, event: &str) {
+        if !self.audible {
+            return;
+        }
         self.sounds.play_event(
             event,
             self.settings.audio.sound_enabled,
@@ -168,7 +195,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn state(dir: &TempDir) -> AppState {
-        AppState::new(dir.path().to_path_buf(), false)
+        AppState::silent(dir.path().to_path_buf(), false)
     }
 
     #[test]
@@ -222,12 +249,13 @@ mod tests {
     }
 
     fn state_from(dir: &std::path::Path) -> AppState {
-        AppState::new(dir.to_path_buf(), false)
+        AppState::silent(dir.to_path_buf(), false)
     }
 
     #[test]
     fn applying_settings_does_not_panic_without_audio_or_speech() {
-        // CI has neither; the app still has to start.
+        // CI has neither, and the test build deliberately has neither either;
+        // the app still has to start.
         let dir = TempDir::new().unwrap();
         let mut state = state(&dir);
         state.apply_settings();

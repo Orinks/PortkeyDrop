@@ -460,11 +460,17 @@ mod concurrency_tests {
     fn many_threads_may_start_prism_at_once() {
         // This crashed the process before `PrismConfig` matched the library:
         // a regression does not fail a case, it takes the test binary down.
+        //
+        // Start-up is the path that crashed, so that is what runs on eight
+        // threads. Nothing is spoken: on a developer machine `Announcer::new`
+        // attaches to whichever screen reader is running, and announcing here
+        // made the suite talk over it eight times on every run.
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 std::thread::spawn(|| {
-                    let mut announcer = Announcer::new();
-                    announcer.announce("concurrent start");
+                    let announcer = Announcer::new();
+                    // Touch the backend so acquiring it is exercised too.
+                    let _ = announcer.is_available();
                 })
             })
             .collect();
