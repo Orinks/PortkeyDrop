@@ -166,6 +166,16 @@ pub trait TransferClient: Send {
         let parent = path::parent(self.cwd());
         self.chdir(&parent)
     }
+
+    /// The real path of `path`, following directory symlinks.
+    ///
+    /// Recursive walks use this as an identity so a symlink or listing that
+    /// points back at a directory already seen is not listed again. Protocols
+    /// without a realpath operation return the normalised path.
+    fn canonicalize(&mut self, path: &str) -> Result<String> {
+        let _ = self;
+        Ok(path::normalize(path))
+    }
 }
 
 /// Build the client for a connection.

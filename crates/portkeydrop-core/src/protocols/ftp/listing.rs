@@ -46,9 +46,14 @@ pub fn parse_mlsd_line(line: &str, parent: &str) -> Option<RemoteFile> {
         }
     }
 
-    // `cdir` and `pdir` are the listed directory and its parent; both are
-    // directories, and the caller filters the self-reference by name.
-    let is_dir = matches!(entry_type.as_str(), "dir" | "cdir" | "pdir");
+    // `cdir` is the directory being listed and `pdir` is its parent. Some
+    // servers name them `.` and `..`; RFC 3659 also allows the real path.
+    // Either way they are not children — walking them as directories loops
+    // until the process runs out of memory.
+    if matches!(entry_type.as_str(), "cdir" | "pdir") {
+        return None;
+    }
+    let is_dir = entry_type == "dir";
 
     Some(RemoteFile {
         name: name.to_string(),
@@ -226,6 +231,16 @@ mod tests {
         assert!(parse_mlsd_line("type=cdir;", "/home").is_none());
         assert!(parse_mlsd_line("type=cdir; .", "/home").is_none());
         assert!(parse_mlsd_line("type=pdir; ..", "/home").is_none());
+    }
+
+    #[test]
+    fn mlsd_cdir_and_pdir_with_real_paths_are_skipped() {
+        // RFC 3659 allows the current and parent directories to be named as
+        // their real paths, not only `.` and `..`. Treating those as children
+        // is what made a folder download walk forever.
+        assert!(parse_mlsd_line("type=cdir; /home/user", "/home/user").is_none());
+        assert!(parse_mlsd_line("type=pdir; /home", "/home/user").is_none());
+        assert!(parse_mlsd_line("type=cdir; user", "/home/user").is_none());
     }
 
     #[test]

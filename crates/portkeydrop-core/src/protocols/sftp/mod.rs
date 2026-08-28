@@ -957,6 +957,18 @@ impl TransferClient for SftpClient {
             &metadata,
         ))
     }
+
+    fn canonicalize(&mut self, remote_path: &str) -> Result<String> {
+        let session = self.session()?;
+        let target = path::resolve(&self.cwd, remote_path);
+        let probe = target.clone();
+        self.block_on(async move {
+            session
+                .canonicalize(probe.clone())
+                .await
+                .map_err(|err| map_sftp_error(err, &probe))
+        })?
+    }
 }
 
 /// Create a remote directory and any missing parents.
