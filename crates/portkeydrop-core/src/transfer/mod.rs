@@ -12,6 +12,7 @@ pub mod job;
 pub mod queue_file;
 pub mod resume;
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -673,6 +674,12 @@ pub struct TransferEntry {
 }
 
 /// Walk a remote directory tree, listing every file to transfer.
+///
+/// Directory identity is the canonical path, so a listing that names itself as
+/// a child — FTP `cdir` with a real path, a WebDAV self-href, an SFTP symlink
+/// back to a parent — is skipped instead of being listed until the process
+/// runs out of memory. The walk is iterative; a deep tree does not grow the
+/// call stack.
 pub fn collect_remote_files(
     client: &mut dyn TransferClient,
     remote_dir: &str,
@@ -680,19 +687,27 @@ pub fn collect_remote_files(
 ) -> Result<Vec<TransferEntry>, ProtocolError> {
     let mut entries = Vec::new();
     let mut stack = vec![(remote_dir.to_string(), local_dir.to_path_buf())];
+    let mut visited = HashSet::new();
 
     while let Some((remote, local)) = stack.pop() {
+        let key = directory_identity(client, &remote);
+        if !visited.insert(key.clone()) {
+            continue;
+        }
         for file in client.list_dir(&remote)? {
-            if file.name == "." || file.name == ".." {
+            if file.name.is_empty() || file.name == "." || file.name == ".." {
                 continue;
             }
-            let local_path = local.join(&file.name);
             if file.is_dir {
-                stack.push((file.path.clone(), local_path));
+                let child_key = directory_identity(client, &file.path);
+                if child_key == key || visited.contains(&child_key) {
+                    continue;
+                }
+                stack.push((file.path.clone(), local.join(&file.name)));
             } else {
                 entries.push(TransferEntry {
                     remote_path: file.path.clone(),
-                    local_path,
+                    local_path: local.join(&file.name),
                     size: file.size,
                 });
             }
@@ -700,6 +715,14 @@ pub fn collect_remote_files(
     }
     entries.sort_by(|a, b| a.remote_path.cmp(&b.remote_path));
     Ok(entries)
+}
+
+/// Identity used to recognise a remote directory already seen in this walk.
+fn directory_identity(client: &mut dyn TransferClient, remote: &str) -> String {
+    match client.canonicalize(remote) {
+        Ok(canonical) => remote_path::normalize(&canonical),
+        Err(_) => remote_path::normalize(remote),
+    }
 }
 
 /// Walk a local directory tree, listing every file to transfer.
@@ -960,5 +983,287 @@ mod tests {
             },
         ];
         assert_eq!(remote_directories("/d", &entries), vec!["/d", "/d/a"]);
+    }
+
+    /// A connected client that serves scripted directory listings.
+    ///
+    /// `list_budget` is the crash detector: without a visited set, a cyclic
+    /// listing would keep calling `list_dir` until the process ran out of
+    /// memory. Hitting the budget fails the test instead of hanging.
+    struct FakeRemote {
+        listings: std::collections::HashMap<String, Vec<crate::protocols::RemoteFile>>,
+        aliases: Vec<(String, String)>,
+        lists: usize,
+        list_budget: usize,
+    }
+
+    impl FakeRemote {
+        fn with_budget(list_budget: usize) -> Self {
+            Self {
+                listings: std::collections::HashMap::new(),
+                aliases: Vec::new(),
+                lists: 0,
+                list_budget,
+            }
+        }
+
+        fn add_dir(&mut self, path: &str, children: Vec<crate::protocols::RemoteFile>) {
+            self.listings.insert(remote_path::normalize(path), children);
+        }
+    }
+
+    impl TransferClient for FakeRemote {
+        fn protocol(&self) -> crate::protocols::Protocol {
+            crate::protocols::Protocol::Sftp
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn cwd(&self) -> &str {
+            "/"
+        }
+
+        fn connect(&mut self) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn disconnect(&mut self) {}
+
+        fn list_dir(
+            &mut self,
+            path: &str,
+        ) -> Result<Vec<crate::protocols::RemoteFile>, ProtocolError> {
+            self.lists += 1;
+            assert!(
+                self.lists <= self.list_budget,
+                "collect_remote_files listed {path} unbounded ({} listings)",
+                self.lists
+            );
+            let key = directory_identity(self, path);
+            self.listings
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| ProtocolError::NotFound(path.to_string()))
+        }
+
+        fn chdir(&mut self, path: &str) -> Result<String, ProtocolError> {
+            Ok(path.to_string())
+        }
+
+        fn download(
+            &mut self,
+            _remote_path: &str,
+            _sink: &mut dyn std::io::Write,
+            _progress: Option<crate::protocols::ProgressFn<'_>>,
+            _offset: u64,
+        ) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn upload(
+            &mut self,
+            _source: &mut dyn std::io::Read,
+            _total_bytes: u64,
+            _remote_path: &str,
+            _progress: Option<crate::protocols::ProgressFn<'_>>,
+        ) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _path: &str) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn rmdir(&mut self, _path: &str) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn mkdir(&mut self, _path: &str) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn rename(&mut self, _old_path: &str, _new_path: &str) -> Result<(), ProtocolError> {
+            Ok(())
+        }
+
+        fn stat(&mut self, path: &str) -> Result<crate::protocols::RemoteFile, ProtocolError> {
+            Err(ProtocolError::NotFound(path.to_string()))
+        }
+
+        fn canonicalize(&mut self, path: &str) -> Result<String, ProtocolError> {
+            let mut current = remote_path::normalize(path);
+            for _ in 0..64 {
+                let mut changed = false;
+                for (from, to) in &self.aliases {
+                    if current == *from {
+                        current = to.clone();
+                        changed = true;
+                        break;
+                    }
+                    let prefix = format!("{from}/");
+                    if let Some(rest) = current.strip_prefix(&prefix) {
+                        current = format!("{to}/{rest}");
+                        changed = true;
+                        break;
+                    }
+                }
+                if !changed {
+                    return Ok(current);
+                }
+            }
+            Ok(current)
+        }
+    }
+
+    #[test]
+    fn a_remote_tree_is_walked_into_matching_local_paths() {
+        let mut client = FakeRemote::with_budget(8);
+        client.add_dir(
+            "/photos",
+            vec![
+                crate::protocols::RemoteFile::file("a.jpg", "/photos/a.jpg", 10),
+                crate::protocols::RemoteFile::dir("album", "/photos/album"),
+            ],
+        );
+        client.add_dir(
+            "/photos/album",
+            vec![crate::protocols::RemoteFile::file(
+                "b.jpg",
+                "/photos/album/b.jpg",
+                20,
+            )],
+        );
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/photos", dir.path()).unwrap();
+        let remote: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry.remote_path.as_str())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert!(remote.contains(&"/photos/a.jpg"));
+        assert!(remote.contains(&"/photos/album/b.jpg"));
+        assert_eq!(entries.iter().map(|entry| entry.size).sum::<u64>(), 30);
+    }
+
+    #[test]
+    fn a_listing_that_names_itself_as_a_child_does_not_loop() {
+        // FTP MLSD `type=cdir` with the real path, or a WebDAV self-href,
+        // would otherwise list the same directory forever until OOM.
+        let mut client = FakeRemote::with_budget(8);
+        client.add_dir(
+            "/photos",
+            vec![
+                crate::protocols::RemoteFile::dir("photos", "/photos"),
+                crate::protocols::RemoteFile::file("a.jpg", "/photos/a.jpg", 4),
+            ],
+        );
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/photos", dir.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].remote_path, "/photos/a.jpg");
+        assert_eq!(client.lists, 1);
+    }
+
+    #[test]
+    fn a_listing_that_points_at_a_parent_does_not_walk_the_server() {
+        // FTP `type=pdir` with an absolute parent path would otherwise climb
+        // to `/` and then cycle through the whole tree.
+        let mut client = FakeRemote::with_budget(8);
+        client.add_dir(
+            "/photos",
+            vec![
+                crate::protocols::RemoteFile::dir("up", "/"),
+                crate::protocols::RemoteFile::file("a.jpg", "/photos/a.jpg", 4),
+            ],
+        );
+        client.add_dir(
+            "/",
+            vec![crate::protocols::RemoteFile::dir("photos", "/photos")],
+        );
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/photos", dir.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].remote_path, "/photos/a.jpg");
+        assert!(client.lists <= 2);
+    }
+
+    #[test]
+    fn a_directory_symlink_back_to_an_ancestor_does_not_loop() {
+        // SFTP treats a symlink-to-dir as a directory. REALPATH collapses the
+        // growing `/tree/link/link/...` path onto `/tree`, which is already
+        // visited.
+        let mut client = FakeRemote::with_budget(8);
+        client.aliases.push(("/tree/link".into(), "/tree".into()));
+        client.add_dir(
+            "/tree",
+            vec![
+                crate::protocols::RemoteFile::dir("link", "/tree/link"),
+                crate::protocols::RemoteFile::file("notes.txt", "/tree/notes.txt", 3),
+            ],
+        );
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/tree", dir.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].remote_path, "/tree/notes.txt");
+        assert_eq!(client.lists, 1);
+    }
+
+    #[test]
+    fn a_large_remote_folder_is_listed_without_unbounded_growth() {
+        // A wide listing must be collected as a finite Vec, not walked as if
+        // each file were another directory, and must not panic on the size.
+        const FILES: usize = 8_000;
+        let mut client = FakeRemote::with_budget(4);
+        let children: Vec<_> = (0..FILES)
+            .map(|i| {
+                crate::protocols::RemoteFile::file(
+                    format!("f{i}.dat"),
+                    format!("/wide/f{i}.dat"),
+                    1,
+                )
+            })
+            .collect();
+        client.add_dir("/wide", children);
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/wide", dir.path()).unwrap();
+        assert_eq!(entries.len(), FILES);
+        assert_eq!(client.lists, 1);
+        assert_eq!(
+            entries.iter().map(|entry| entry.size).sum::<u64>(),
+            FILES as u64
+        );
+    }
+
+    #[test]
+    fn a_deep_remote_tree_does_not_overflow_the_stack() {
+        const DEPTH: usize = 400;
+        let mut client = FakeRemote::with_budget(DEPTH + 4);
+        for level in 0..DEPTH {
+            let path = format!("/d{level}");
+            let mut children = vec![crate::protocols::RemoteFile::file(
+                "leaf.txt",
+                format!("{path}/leaf.txt"),
+                1,
+            )];
+            if level + 1 < DEPTH {
+                children.push(crate::protocols::RemoteFile::dir(
+                    "next",
+                    format!("/d{}", level + 1),
+                ));
+            }
+            client.add_dir(&path, children);
+        }
+
+        let dir = TempDir::new().unwrap();
+        let entries = collect_remote_files(&mut client, "/d0", dir.path()).unwrap();
+        assert_eq!(entries.len(), DEPTH);
+        assert_eq!(client.lists, DEPTH);
     }
 }
