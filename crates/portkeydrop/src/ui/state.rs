@@ -6,7 +6,7 @@
 //! one borrow rather than juggling a dozen `Rc`s.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use portkeydrop_core::protocols::TransferClient;
 use portkeydrop_core::settings::Settings;
@@ -97,11 +97,22 @@ impl AppState {
     }
 
     /// Whether a connection is established.
+    ///
+    /// This runs on the UI thread, so it never waits for the lock. A worker
+    /// holds the client for as long as its operation takes -- a recursive
+    /// listing, or a whole file -- and blocking here froze the window for the
+    /// length of every folder download. A client that is busy is by definition
+    /// still connected, so a contended lock answers the question without
+    /// taking it.
     pub fn is_connected(&self) -> bool {
-        self.client
-            .as_ref()
-            .and_then(|client| client.lock().ok().map(|client| client.is_connected()))
-            .unwrap_or(false)
+        match self.client.as_ref() {
+            None => false,
+            Some(client) => match client.try_lock() {
+                Ok(client) => client.is_connected(),
+                Err(TryLockError::WouldBlock) => true,
+                Err(TryLockError::Poisoned(_)) => false,
+            },
+        }
     }
 
     /// The live connection, for handing to a worker thread.
@@ -116,10 +127,33 @@ impl AppState {
     }
 
     /// Drop the connection, closing it first.
+    ///
+    /// Like [`AppState::is_connected`] this runs on the UI thread -- including
+    /// on the way out of File > Exit -- so it never waits for the lock. A
+    /// transfer worker holds the client for the length of its operation, and
+    /// waiting here froze the window until the transfer finished. When the
+    /// client is busy the goodbye is handed to a background thread, which
+    /// sends it once the worker lets go. If the process exits before that, the
+    /// socket closes with it, which is what a dropped connection looks like
+    /// from the server either way.
     pub fn clear_client(&mut self) {
         if let Some(client) = self.client.take() {
-            if let Ok(mut client) = client.lock() {
-                client.disconnect();
+            // The borrow from `try_lock` has to end before the client can be
+            // moved onto a thread, so the two steps are kept apart.
+            let busy = match client.try_lock() {
+                Ok(mut client) => {
+                    client.disconnect();
+                    false
+                }
+                Err(TryLockError::WouldBlock) => true,
+                Err(TryLockError::Poisoned(_)) => false,
+            };
+            if busy {
+                std::thread::spawn(move || {
+                    if let Ok(mut client) = client.lock() {
+                        client.disconnect();
+                    }
+                });
             }
         }
         self.connected_host.clear();
@@ -206,6 +240,85 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// A client that is connected and records being disconnected.
+    ///
+    /// Only `is_connected` and `disconnect` are reached from the UI thread;
+    /// the rest exist to satisfy the trait.
+    struct StubClient {
+        disconnected: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl portkeydrop_core::protocols::TransferClient for StubClient {
+        fn protocol(&self) -> portkeydrop_core::protocols::Protocol {
+            portkeydrop_core::protocols::Protocol::Sftp
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn cwd(&self) -> &str {
+            "/"
+        }
+        fn connect(&mut self) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn disconnect(&mut self) {
+            self.disconnected
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn list_dir(
+            &mut self,
+            _path: &str,
+        ) -> portkeydrop_core::protocols::Result<Vec<portkeydrop_core::protocols::RemoteFile>>
+        {
+            Ok(Vec::new())
+        }
+        fn chdir(&mut self, path: &str) -> portkeydrop_core::protocols::Result<String> {
+            Ok(path.to_string())
+        }
+        fn download(
+            &mut self,
+            _remote_path: &str,
+            _sink: &mut dyn std::io::Write,
+            _progress: Option<portkeydrop_core::protocols::ProgressFn<'_>>,
+            _offset: u64,
+        ) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn upload(
+            &mut self,
+            _source: &mut dyn std::io::Read,
+            _total_bytes: u64,
+            _remote_path: &str,
+            _progress: Option<portkeydrop_core::protocols::ProgressFn<'_>>,
+        ) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn delete(&mut self, _path: &str) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn rmdir(&mut self, _path: &str) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn mkdir(&mut self, _path: &str) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn rename(
+            &mut self,
+            _old_path: &str,
+            _new_path: &str,
+        ) -> portkeydrop_core::protocols::Result<()> {
+            Ok(())
+        }
+        fn stat(
+            &mut self,
+            _path: &str,
+        ) -> portkeydrop_core::protocols::Result<portkeydrop_core::protocols::RemoteFile> {
+            Err(portkeydrop_core::protocols::ProtocolError::NotFound(
+                "stub".to_string(),
+            ))
+        }
+    }
+
     fn state(dir: &TempDir) -> AppState {
         AppState::silent(dir.path().to_path_buf(), false)
     }
@@ -217,6 +330,91 @@ mod tests {
         assert!(!state.is_connected());
         assert!(state.client().is_none());
         assert_eq!(state.connected_host, "");
+    }
+
+    #[test]
+    fn the_connection_check_does_not_wait_for_a_busy_client() {
+        // A transfer worker holds the client for as long as its operation
+        // takes. This check runs on the UI thread on every queue change, so
+        // waiting for the lock froze the whole window for the length of a
+        // folder download.
+        let dir = TempDir::new().unwrap();
+        let mut state = state(&dir);
+        state.set_client(
+            Box::new(StubClient {
+                disconnected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }),
+            "example.test".to_string(),
+        );
+
+        let client = state.client().expect("a client was just set");
+        let held = std::thread::spawn(move || {
+            let _guard = client.lock().expect("the stub lock is never poisoned");
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        });
+
+        // Give the other thread time to actually take the lock.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let started = std::time::Instant::now();
+        let connected = state.is_connected();
+        let waited = started.elapsed();
+
+        assert!(connected, "a busy client is still a connected one");
+        assert!(
+            waited < std::time::Duration::from_millis(100),
+            "the check waited {waited:?} for a lock it should not have taken"
+        );
+
+        held.join().unwrap();
+    }
+
+    #[test]
+    fn clearing_a_busy_connection_does_not_wait_for_the_transfer() {
+        // File > Exit runs this on the UI thread. A download worker holds the
+        // client until its file is done, and waiting for it here hung the
+        // window on the way out.
+        let dir = TempDir::new().unwrap();
+        let mut state = state(&dir);
+        let disconnected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        state.set_client(
+            Box::new(StubClient {
+                disconnected: Arc::clone(&disconnected),
+            }),
+            "example.test".to_string(),
+        );
+
+        let client = state.client().expect("a client was just set");
+        let held = std::thread::spawn(move || {
+            let _guard = client.lock().expect("the stub lock is never poisoned");
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let started = std::time::Instant::now();
+        state.clear_client();
+        let waited = started.elapsed();
+
+        assert!(
+            waited < std::time::Duration::from_millis(100),
+            "clearing waited {waited:?} for a transfer to finish"
+        );
+        assert!(!state.is_connected());
+        assert_eq!(state.connected_host, "");
+
+        // The goodbye is deferred, not dropped: it goes out once the worker
+        // releases the client.
+        held.join().unwrap();
+        for _ in 0..50 {
+            if disconnected.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            disconnected.load(std::sync::atomic::Ordering::SeqCst),
+            "the connection was never closed"
+        );
     }
 
     #[test]
