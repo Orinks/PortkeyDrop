@@ -111,10 +111,11 @@ pub fn plan_restart(update_path: &Path, context: &ApplyContext) -> RestartPlan {
                 script_path: Some(script_path),
             };
         }
+        let script_path = context.script_dir.join("portkeydrop_installer_update.bat");
         return RestartPlan {
             kind: RestartKind::WindowsInstaller,
-            command: vec![update_path.to_string_lossy().into_owned()],
-            script_path: None,
+            command: vec![script_path.to_string_lossy().into_owned()],
+            script_path: Some(script_path),
         };
     }
 
@@ -178,9 +179,12 @@ set "ZIP_PATH={zip}"
 set "TARGET_DIR={target}"
 set "EXE_PATH={exe}"
 
-rem Wait for Portkey Drop to exit before touching its files.
+rem Wait for Portkey Drop to exit before touching its files. findstr rather
+rem than find: installing Git with its Unix tools puts a find.exe earlier on
+rem PATH, and that one errors here instead of matching, so the loop would fall
+rem straight through and the files would be replaced under the running app.
 :wait
-tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul
+tasklist /FI "PID eq %PID%" /NH 2>nul | findstr /C:"%PID%" >nul
 if not errorlevel 1 (
     timeout /t 1 /nobreak >nul
     goto wait
@@ -202,6 +206,40 @@ del /f /q "%~f0" >nul 2>&1
         zip = zip_path.display(),
         target = target_dir.display(),
         exe = exe_path.display(),
+    )
+}
+
+/// The batch file that runs a Windows installer once this process has gone.
+///
+/// Setup guards itself with `AppMutex`, so launching it from a still-running
+/// app makes it stop and ask the user to close Portkey Drop by hand. Waiting
+/// for the process to exit first means Setup opens straight onto its own first
+/// page. The installer offers to relaunch the app on its last page, so this
+/// does not start it again.
+pub fn build_installer_update_script(installer_path: &Path, process_id: u32) -> String {
+    format!(
+        r#"@echo off
+setlocal
+set "PID={process_id}"
+set "INSTALLER={installer}"
+
+rem Wait for Portkey Drop to exit so Setup does not find its mutex and stop to
+rem ask for it to be closed. findstr rather than find: installing Git with its
+rem Unix tools puts a find.exe earlier on PATH, and that one errors here
+rem instead of matching, so the wait would be skipped and we would be back to
+rem Setup asking for the app to be closed.
+:wait
+tasklist /FI "PID eq %PID%" /NH 2>nul | findstr /C:"%PID%" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait
+)
+
+start "" /wait "%INSTALLER%"
+del /f /q "%INSTALLER%" >nul 2>&1
+del /f /q "%~f0" >nul 2>&1
+"#,
+        installer = installer_path.display(),
     )
 }
 
@@ -317,7 +355,8 @@ pub fn write_plan_script(
                 .unwrap_or_else(|| context.executable.clone());
             build_appimage_update_script(update_path, &appimage, process_id)
         }
-        RestartKind::WindowsInstaller | RestartKind::Manual => return Ok(()),
+        RestartKind::WindowsInstaller => build_installer_update_script(update_path, process_id),
+        RestartKind::Manual => return Ok(()),
     };
 
     if let Some(parent) = script_path.parent() {
@@ -381,15 +420,83 @@ mod tests {
     }
 
     #[test]
-    fn a_windows_install_runs_the_downloaded_installer() {
+    fn a_windows_install_runs_the_installer_from_a_batch_file() {
+        // Not the installer directly: Setup guards itself with AppMutex and
+        // would stop to ask for the running app to be closed.
         let dir = TempDir::new().unwrap();
         let plan = plan_restart(
             Path::new("C:/tmp/Setup.exe"),
             &context("windows", false, &dir),
         );
         assert_eq!(plan.kind, RestartKind::WindowsInstaller);
-        assert_eq!(plan.command, vec!["C:/tmp/Setup.exe"]);
-        assert!(plan.script_path.is_none());
+        let script = plan.script_path.clone().expect("the plan needs a script");
+        assert!(script.ends_with("portkeydrop_installer_update.bat"));
+        assert_eq!(plan.command, vec![script.to_string_lossy().into_owned()]);
+    }
+
+    #[test]
+    fn the_installer_script_waits_for_this_process_before_starting_setup() {
+        let script = build_installer_update_script(Path::new("C:/tmp/Setup.exe"), 4242);
+        assert!(
+            script.contains(r#"set "PID=4242""#),
+            "it knows the process id"
+        );
+        let wait_at = script
+            .find(r#"/FI "PID eq %PID%""#)
+            .expect("it waits on the process id");
+        let start_at = script
+            .find("start \"\" /wait")
+            .expect("it starts the installer");
+        assert!(
+            wait_at < start_at,
+            "setup must not be started until the app has gone"
+        );
+        assert!(script.contains("C:/tmp/Setup.exe"));
+    }
+
+    #[test]
+    fn the_wait_loops_match_with_findstr_not_find() {
+        // Installing Git with its Unix tools puts a find.exe ahead of the
+        // Windows one on PATH; it errors here instead of matching, so the loop
+        // falls straight through and the update runs while the app is still
+        // up, which is the whole thing the wait exists to prevent. Nothing
+        // shadows findstr.
+        for script in [
+            build_installer_update_script(Path::new("C:/tmp/Setup.exe"), 1),
+            build_portable_update_script(
+                Path::new("C:/tmp/p.zip"),
+                Path::new("C:/app"),
+                Path::new("C:/app/portkeydrop.exe"),
+                1,
+            ),
+        ] {
+            assert!(
+                script.contains(r#"findstr /C:"%PID%""#),
+                "the wait does not match with findstr"
+            );
+            assert!(
+                !script.contains("| find "),
+                "the wait uses find, which a Unix find on PATH shadows"
+            );
+        }
+    }
+
+    #[test]
+    fn the_installer_script_does_not_relaunch_the_app() {
+        // Setup's own last page offers that; doing it here too would open two.
+        let script = build_installer_update_script(Path::new("C:/tmp/Setup.exe"), 1);
+        assert!(!script.contains("portkeydrop.exe"));
+    }
+
+    #[test]
+    fn the_installer_script_is_written_before_it_is_launched() {
+        let dir = TempDir::new().unwrap();
+        let context = context("windows", false, &dir);
+        let update = Path::new("C:/tmp/Setup.exe");
+        let plan = plan_restart(update, &context);
+        write_plan_script(&plan, update, &context).unwrap();
+        let written = std::fs::read_to_string(plan.script_path.unwrap()).unwrap();
+        assert!(written.contains("Setup.exe"));
     }
 
     #[test]

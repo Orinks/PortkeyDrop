@@ -1060,7 +1060,18 @@ impl MainFrame {
         match apply_update(path, &context) {
             Ok(true) => {
                 self.log("Restarting to install the update.");
+                // Saves the queue and settings, closes the window, and lets go
+                // of the connection.
                 self.force_exit();
+                // Then leave, without waiting for the event loop to agree.
+                // The helper does not start Setup until this process is gone,
+                // so anything still holding the loop up strands the update
+                // rather than delaying it -- and the download's progress
+                // dialog does exactly that, because destroying a window only
+                // queues it for deletion on an idle cycle that never comes
+                // once the frame has closed. Everything worth keeping has
+                // already been written by `force_exit`.
+                std::process::exit(0);
             }
             Ok(false) => self.report_apply_failure(path, "this install cannot update itself"),
             Err(err) => self.report_apply_failure(path, &err.to_string()),
