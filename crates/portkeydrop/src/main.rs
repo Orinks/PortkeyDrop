@@ -93,7 +93,15 @@ fn init_logging(options: &cli::Options) {
     builder.parse_default_env();
 
     if let Some(path) = options.log_file.as_deref() {
-        match std::fs::File::create(path) {
+        // Appended, not truncated: a second launch pointed at the same file
+        // would otherwise erase the log of the run being investigated, which
+        // is exactly the run worth keeping. Each run writes a startup line, so
+        // the boundary between them stays readable.
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             Ok(file) => {
                 builder.target(env_logger::Target::Pipe(Box::new(file)));
             }
