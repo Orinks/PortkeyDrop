@@ -139,6 +139,14 @@ impl PaneState {
         self.all_files.get(*self.visible.get(row)?)
     }
 
+    /// Whether the last listing included an entry with this name.
+    ///
+    /// Hidden entries count: an upload that would collide with a file the
+    /// list is not showing is still a collision.
+    pub fn contains_name(&self, name: &str) -> bool {
+        self.all_files.iter().any(|file| file.name == name)
+    }
+
     /// The files at the given display rows.
     pub fn files_at(&self, rows: &[usize]) -> Vec<RemoteFile> {
         rows.iter()
@@ -426,6 +434,16 @@ mod tests {
         let mut pane = pane();
         pane.set_filter("hidden");
         assert_eq!(pane.visible_count(), 0);
+    }
+
+    #[test]
+    fn a_listing_knows_whether_a_name_is_already_there() {
+        let pane = pane();
+        assert!(pane.contains_name("docs"));
+        assert!(pane.contains_name("zebra.txt"));
+        // Hidden files still collide, even when the list is not showing them.
+        assert!(pane.contains_name(".hidden"));
+        assert!(!pane.contains_name("notes.txt"));
     }
 
     #[test]

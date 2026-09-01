@@ -132,7 +132,7 @@ impl MainFrame {
             remote_dir
         };
 
-        let destination = protocols::path::join(&remote_dir, &file.name);
+        let mut destination = protocols::path::join(&remote_dir, &file.name);
 
         let size = if file.is_dir {
             0
@@ -142,12 +142,22 @@ impl MainFrame {
                 .unwrap_or(file.size)
         };
 
-        let overwrite = match self.resolve_conflict(overwrite_mode, &file.name, "uploaded", batch) {
-            Conflict::Skip => return false,
-
-            Conflict::Overwrite => true,
-
-            Conflict::Fail => false,
+        // Same gate as downloads: only ask when the destination is already
+        // there. Asking on every upload made the prompt look broken.
+        let overwrite = if self.pane(Side::Remote).contains_name(&file.name) {
+            match self.resolve_conflict(overwrite_mode, &file.name, "uploaded", batch) {
+                Conflict::Skip => return false,
+                Conflict::Overwrite => true,
+                Conflict::Fail => {
+                    let unique = local_files::unique_file_name(&file.name, |name| {
+                        self.pane(Side::Remote).contains_name(name)
+                    });
+                    destination = protocols::path::join(&remote_dir, &unique);
+                    false
+                }
+            }
+        } else {
+            false
         };
 
         self.state.borrow().transfers.submit_upload(

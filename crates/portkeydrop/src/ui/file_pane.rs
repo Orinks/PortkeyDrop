@@ -192,6 +192,12 @@ impl FilePane {
         self.state.borrow().path.clone()
     }
 
+    /// Whether the listing includes an entry with this name, including hidden
+    /// files the list is not showing.
+    pub fn contains_name(&self, name: &str) -> bool {
+        self.state.borrow().contains_name(name)
+    }
+
     /// The path as typed into the path bar.
     pub fn typed_path(&self) -> String {
         self.path_bar.get_value().trim().to_string()
