@@ -3,12 +3,20 @@
 //! Sounds are feedback, never a gate on anything: if the audio device is
 //! missing, busy, or the file will not decode, playback reports `false` and the
 //! app carries on. Nothing here blocks the caller — a transfer must not wait on
-//! a chime.
+//! a chime. The exception is [`wait_for_playback`], used on exit so the closing
+//! sound is not cut off when the process dies.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+
+/// Longest closing will wait for the exit sound before giving up.
+///
+/// Playback is otherwise fire-and-forget; this cap is so a hung audio
+/// device cannot trap the process.
+pub const EXIT_SOUND_TIMEOUT: Duration = Duration::from_secs(8);
 
 use super::{resolve_sound, DEFAULT_PACK};
 
@@ -111,6 +119,27 @@ pub fn play_sound_file(path: &Path, volume: f32) -> bool {
         sinks.push(sink);
     }
     true
+}
+
+/// Wait until every started sound has finished, or `timeout` elapses.
+///
+/// Used on exit so the closing chime is not cut off when the process dies.
+/// Other playback stays fire-and-forget: a transfer must not wait on a chime.
+pub fn wait_for_playback(timeout: Duration) {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        let playing = match active_sinks().lock() {
+            Ok(mut sinks) => {
+                sinks.retain(|sink| !sink.empty());
+                !sinks.is_empty()
+            }
+            Err(_) => return,
+        };
+        if !playing {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Plays event sounds from the active pack.
@@ -290,5 +319,22 @@ mod tests {
         let path = dir.path().join("bogus.ogg");
         std::fs::write(&path, b"definitely not audio").unwrap();
         assert!(!play_sound_file(&path, 1.0));
+    }
+
+    #[test]
+    fn waiting_with_nothing_playing_returns_immediately() {
+        let start = Instant::now();
+        wait_for_playback(Duration::from_secs(5));
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "idle wait took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_exit_wait_is_long_enough_for_a_chime_and_short_enough_not_to_trap() {
+        assert!(EXIT_SOUND_TIMEOUT >= Duration::from_secs(2));
+        assert!(EXIT_SOUND_TIMEOUT <= Duration::from_secs(10));
     }
 }

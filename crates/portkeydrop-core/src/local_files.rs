@@ -165,26 +165,45 @@ pub fn mkdir_local(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
 /// Appends ` (1)`, ` (2)`, ... before the extension, matching what browsers and
 /// file managers do.
 pub fn unique_local_path(path: &Path) -> PathBuf {
-    if !path.exists() {
-        return path.to_path_buf();
-    }
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let extension = path
-        .extension()
-        .map(|s| format!(".{}", s.to_string_lossy()))
-        .unwrap_or_default();
+    parent.join(unique_file_name(&name, |candidate| {
+        parent.join(candidate).exists()
+    }))
+}
 
+/// A file name that does not collide with names `exists` reports as taken.
+///
+/// Same numbering as [`unique_local_path`], so upload-and-keep-both and
+/// download-and-keep-both produce the same kind of name.
+pub fn unique_file_name(name: &str, exists: impl Fn(&str) -> bool) -> String {
+    if !exists(name) {
+        return name.to_string();
+    }
+    let (stem, extension) = split_file_name(name);
     for counter in 1..10_000 {
-        let candidate = parent.join(format!("{stem} ({counter}){extension}"));
-        if !candidate.exists() {
+        let candidate = format!("{stem} ({counter}){extension}");
+        if !exists(&candidate) {
             return candidate;
         }
     }
-    path.to_path_buf()
+    name.to_string()
+}
+
+/// Split `name` into stem and extension, including the dot on the extension.
+///
+/// A leading dot is part of the stem (`.hidden` stays `.hidden (1)`, not
+/// ` (1).hidden`). `Path::file_stem` on Windows treats that as an extension.
+fn split_file_name(name: &str) -> (&str, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && !ext.contains('/') => {
+            (stem, format!(".{ext}"))
+        }
+        _ => (name, String::new()),
+    }
 }
 
 #[cfg(test)]
@@ -319,5 +338,16 @@ mod tests {
         let path = dir.path().join("README");
         std::fs::write(&path, b"x").unwrap();
         assert_eq!(unique_local_path(&path), dir.path().join("README (1)"));
+    }
+
+    #[test]
+    fn a_leading_dot_stays_on_the_stem() {
+        let taken = |name: &str| name == ".hidden";
+        assert_eq!(unique_file_name(".hidden", taken), ".hidden (1)");
+        assert_eq!(unique_file_name("notes.txt", |_| false), "notes.txt");
+        assert_eq!(
+            unique_file_name("notes.txt", |name| name == "notes.txt"),
+            "notes (1).txt"
+        );
     }
 }

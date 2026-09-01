@@ -33,7 +33,7 @@ Portkey Drop includes a built-in default sound pack with short cues for transfer
 | Ctrl+Shift+T | Transfer queue |
 | Ctrl+Enter | Connect using the quick connect bar |
 | Enter | Open directory / download file |
-| Backspace | Parent directory |
+| Backspace, Alt+Left, Alt+Up, Ctrl+Up, Ctrl+[ | Parent directory |
 | Delete | Delete selected |
 | F2 | Rename selected |
 

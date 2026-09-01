@@ -176,6 +176,30 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         section: "Navigation",
+        keys: "Alt+Left",
+        description: "Go to the parent directory",
+        binding: Binding::Control,
+    },
+    Shortcut {
+        section: "Navigation",
+        keys: "Alt+Up",
+        description: "Go to the parent directory",
+        binding: Binding::Control,
+    },
+    Shortcut {
+        section: "Navigation",
+        keys: "Ctrl+Up",
+        description: "Go to the parent directory",
+        binding: Binding::Control,
+    },
+    Shortcut {
+        section: "Navigation",
+        keys: "Ctrl+[",
+        description: "Go to the parent directory",
+        binding: Binding::Control,
+    },
+    Shortcut {
+        section: "Navigation",
         keys: "Ctrl+H",
         description: "Go to the home directory",
         binding: Binding::Menu(ID_HOME_DIR),
@@ -416,7 +440,17 @@ mod tests {
     fn keys_that_must_not_be_frame_wide_are_control_bound() {
         // Delete and F2 as menubar accelerators would fire inside every text
         // field in the window, so they belong to the file lists.
-        for keys in ["Delete", "F2", "Backspace", "Escape", "Shift+F10"] {
+        for keys in [
+            "Delete",
+            "F2",
+            "Backspace",
+            "Alt+Left",
+            "Alt+Up",
+            "Ctrl+Up",
+            "Ctrl+[",
+            "Escape",
+            "Shift+F10",
+        ] {
             let shortcut = SHORTCUTS
                 .iter()
                 .find(|shortcut| shortcut.keys == keys)

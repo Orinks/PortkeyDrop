@@ -279,6 +279,11 @@ impl MainFrame {
                 &ids::labelled("&Home Directory", ids::ID_HOME_DIR),
                 "Go to the home directory",
             )
+            .append_item(
+                ids::ID_PARENT_DIR,
+                "&Parent Directory",
+                "Go to the parent directory (Backspace, Alt+Left, Alt+Up, or Ctrl+Up in a file pane)",
+            )
             .append_check_item(
                 ids::ID_SHOW_HIDDEN,
                 "Show Hi&dden Files",
@@ -559,16 +564,22 @@ impl MainFrame {
         pane.list
             .on_item_activated(move |_| this.activate_selection(side));
 
-        // Delete, F2, and Backspace belong to the list, not to the menubar:
-        // as frame-wide accelerators they would fire inside text fields too.
+        // Delete, F2, and the parent-directory keys belong to the list, not
+        // to the menubar: as frame-wide accelerators they would fire inside
+        // text fields too. Command+Up in a text field is "start of document".
+        //
+        // ListCtrl::on_key_down binds EVT_LIST_KEY_DOWN. That event is not a
+        // wxKeyEvent, so wxDragon's get_key_code() always returns 0 and none
+        // of those keys match. EVT_KEY_DOWN is a real key event; EVT_CHAR is
+        // the fallback when the native list swallows KEY_DOWN for Backspace.
         let this = self.clone();
-        pane.list
-            .on_key_down(move |event| match event.get_key_code().unwrap_or(0) {
-                keys::DELETE => this.delete_selection(),
-                keys::F2 => this.rename_selection(),
-                keys::BACK => this.go_parent_in(side),
-                _ => {}
-            });
+        pane.list.bind_internal(EventType::KEY_DOWN, move |event| {
+            this.handle_pane_key(side, &WindowEventData::new(event));
+        });
+        let this = self.clone();
+        pane.list.bind_internal(EventType::CHAR, move |event| {
+            this.handle_pane_key(side, &WindowEventData::new(event));
+        });
 
         // Announce the row under the cursor; screen readers read the focused
         // row themselves, but the status bar mirrors it for everyone else.
@@ -1109,6 +1120,28 @@ impl MainFrame {
         });
     }
 
+    fn handle_pane_key(&self, side: Side, event: &WindowEventData) {
+        let command = match event {
+            WindowEventData::Keyboard(key) => keys::list_command(
+                key.get_key_code().unwrap_or(0),
+                keys::KeyMods {
+                    alt: key.alt_down(),
+                    cmd: key.cmd_down(),
+                },
+            ),
+            _ => {
+                event.skip(true);
+                return;
+            }
+        };
+        match command {
+            Some(keys::ListCommand::Delete) => self.delete_selection(),
+            Some(keys::ListCommand::Rename) => self.rename_selection(),
+            Some(keys::ListCommand::Parent) => self.go_parent_in(side),
+            None => event.skip(true),
+        }
+    }
+
     fn go_parent(&self) {
         self.go_parent_in(self.active_side());
     }
@@ -1608,6 +1641,12 @@ impl MainFrame {
             state.play_sound("exit");
         }
         state.clear_client();
+        drop(state);
+        // Playback is fire-and-forget, and the audio device dies with the
+        // process. Wait here so the closing chime is not cut off.
+        portkeydrop_core::soundpacks::wait_for_playback(
+            portkeydrop_core::soundpacks::EXIT_SOUND_TIMEOUT,
+        );
     }
 }
 
