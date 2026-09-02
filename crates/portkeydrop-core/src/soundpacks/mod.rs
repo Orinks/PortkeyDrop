@@ -7,6 +7,7 @@
 //! Packs are user-supplied content, so installation is treated as untrusted
 //! input: archives are checked for path traversal before anything is written.
 
+mod builtin;
 mod install;
 mod manifest;
 mod player;
@@ -14,6 +15,7 @@ mod player;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub use builtin::{BuiltinSound, BUILTIN_SOUNDS};
 pub use install::{is_safe_archive_name, InstallError, PackInstaller};
 pub use manifest::{PackManifest, SoundEntry};
 pub use player::{
@@ -199,33 +201,59 @@ pub fn resolve_sound(
 
 /// Ensure the built-in default pack exists in the writable packs directory.
 ///
-/// Existing files are never overwritten: a user who replaced a sound keeps
-/// their version across upgrades.
+/// Every sound in [`BUILTIN_SOUNDS`] that is not already on disk is written,
+/// and the manifest gains an entry for every built-in event it does not name.
+/// Existing files and entries are never overwritten: a user who replaced a
+/// sound keeps their version across upgrades, and a new built-in cue still
+/// reaches them.
 pub fn ensure_default_pack(soundpacks_dir: &Path) -> std::io::Result<PathBuf> {
     let default_dir = soundpacks_dir.join(DEFAULT_PACK);
     std::fs::create_dir_all(&default_dir)?;
 
+    for sound in BUILTIN_SOUNDS {
+        let path = default_dir.join(sound.path);
+        if path.exists() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, sound.bytes)?;
+    }
+
     let manifest_path = default_dir.join(MANIFEST_FILE_NAME);
-    if should_write_default_manifest(&manifest_path) {
-        std::fs::write(&manifest_path, PackManifest::default_pack_json())?;
+    if let Some(text) = default_manifest_update(&manifest_path) {
+        std::fs::write(&manifest_path, text)?;
     }
     Ok(default_dir)
 }
 
-/// Whether the default manifest should be (re)written.
+/// The default manifest text to write, or `None` to leave the file alone.
 ///
-/// An empty `sounds` map is the placeholder an earlier install wrote before any
-/// audio existed; replacing that is safe. A manifest with entries is the user's
-/// and is left alone.
-fn should_write_default_manifest(manifest_path: &Path) -> bool {
+/// A missing manifest gets the built-in one. A readable manifest keeps
+/// everything it has and only gains entries for built-in events it lacks, so
+/// it is rewritten only when that adds something.
+fn default_manifest_update(manifest_path: &Path) -> Option<String> {
     let Ok(text) = std::fs::read_to_string(manifest_path) else {
-        return true;
+        return Some(PackManifest::default_pack_json());
     };
     match PackManifest::from_json(&text) {
-        Ok(manifest) => manifest.sounds.is_empty(),
+        Ok(mut manifest) => {
+            let mut changed = false;
+            for sound in BUILTIN_SOUNDS {
+                if !manifest.sounds.contains_key(sound.event) {
+                    manifest.sounds.insert(
+                        sound.event.to_string(),
+                        SoundEntry::File(sound.path.to_string()),
+                    );
+                    changed = true;
+                }
+            }
+            changed.then(|| manifest.to_json())
+        }
         // Unparseable: leave it alone rather than destroying something the
         // user may be part-way through editing.
-        Err(_) => false,
+        Err(_) => None,
     }
 }
 
@@ -448,23 +476,51 @@ mod tests {
     }
 
     #[test]
-    fn the_default_pack_is_created_when_absent() {
+    fn the_default_pack_is_created_with_every_built_in_sound() {
         let dir = TempDir::new().unwrap();
         let packs = soundpacks_dir(dir.path());
         let default = ensure_default_pack(&packs).unwrap();
-        assert!(default.join(MANIFEST_FILE_NAME).exists());
-        assert!(validate_pack(&default).is_ok());
+
+        let manifest = validate_pack(&default).unwrap();
+        assert_eq!(manifest.sounds.len(), BUILTIN_SOUNDS.len());
+        for sound in BUILTIN_SOUNDS {
+            let written = std::fs::read(default.join(sound.path)).unwrap();
+            assert_eq!(written, sound.bytes, "{} differs on disk", sound.path);
+            assert!(resolve_sound(sound.event, DEFAULT_PACK, &packs).is_some());
+        }
     }
 
     #[test]
-    fn a_user_edited_default_manifest_is_left_alone() {
-        // Overwriting it would silently discard the user's customisation.
+    fn a_users_replacement_sound_is_not_overwritten() {
+        // A user who swapped in their own connect chime keeps it across
+        // upgrades; only files that are missing get written.
+        let dir = TempDir::new().unwrap();
+        let packs = soundpacks_dir(dir.path());
+        let theirs = packs
+            .join(DEFAULT_PACK)
+            .join("connections/connect_success.ogg");
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, b"my chime").unwrap();
+
+        ensure_default_pack(&packs).unwrap();
+
+        assert_eq!(std::fs::read(&theirs).unwrap(), b"my chime");
+        assert!(packs
+            .join(DEFAULT_PACK)
+            .join("connections/disconnect.ogg")
+            .exists());
+    }
+
+    #[test]
+    fn a_user_edited_default_manifest_keeps_its_entries_and_gains_the_rest() {
+        // Overwriting it would silently discard the user's customisation, but
+        // a built-in cue added in a later release still has to reach them.
         let dir = TempDir::new().unwrap();
         let packs = soundpacks_dir(dir.path());
         write_pack(
             &packs,
             DEFAULT_PACK,
-            r#"{"name":"Mine","sounds":{"error":"e.ogg"}}"#,
+            r#"{"name":"Mine","sounds":{"error":{"file":"e.ogg","volume":0.5}}}"#,
             &["e.ogg"],
         );
 
@@ -472,10 +528,30 @@ mod tests {
 
         let manifest = validate_pack(&packs.join(DEFAULT_PACK)).unwrap();
         assert_eq!(manifest.name, "Mine");
+        assert_eq!(manifest.sounds["error"].file_name("error"), "e.ogg");
+        assert_eq!(manifest.sounds["error"].volume(), Some(0.5));
+        assert_eq!(manifest.sounds.len(), BUILTIN_SOUNDS.len());
+        assert!(manifest.sounds.contains_key("connect_waiting"));
     }
 
     #[test]
-    fn an_empty_placeholder_default_manifest_is_replaced() {
+    fn a_complete_default_manifest_is_not_rewritten() {
+        let dir = TempDir::new().unwrap();
+        let packs = soundpacks_dir(dir.path());
+        let manifest_path = packs.join(DEFAULT_PACK).join(MANIFEST_FILE_NAME);
+        std::fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        // Hand-formatted, so a rewrite would be visible.
+        let text = PackManifest::default_pack_json().replace("  ", "\t");
+        std::fs::write(&manifest_path, &text).unwrap();
+
+        ensure_default_pack(&packs).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), text);
+    }
+
+    #[test]
+    fn an_empty_placeholder_default_manifest_is_filled_in() {
+        // Earlier builds wrote a manifest with no sounds at all.
         let dir = TempDir::new().unwrap();
         let packs = soundpacks_dir(dir.path());
         write_pack(
@@ -487,9 +563,8 @@ mod tests {
 
         ensure_default_pack(&packs).unwrap();
 
-        let text =
-            std::fs::read_to_string(packs.join(DEFAULT_PACK).join(MANIFEST_FILE_NAME)).unwrap();
-        assert_eq!(text, PackManifest::default_pack_json());
+        let manifest = validate_pack(&packs.join(DEFAULT_PACK)).unwrap();
+        assert_eq!(manifest.sounds.len(), BUILTIN_SOUNDS.len());
     }
 
     #[test]
