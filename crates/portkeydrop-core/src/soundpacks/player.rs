@@ -7,9 +7,12 @@
 //! sound is not cut off when the process dies.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use rodio::buffer::SamplesBuffer;
+use rodio::source::Source;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
 /// Longest closing will wait for the exit sound before giving up.
@@ -121,6 +124,134 @@ pub fn play_sound_file(path: &Path, volume: f32) -> bool {
     true
 }
 
+/// A running looping sound. Playback stops when this is dropped, or when
+/// [`LoopHandle::stop`] is called.
+///
+/// Looping cues (the "waiting to connect" sound) are deliberately not tracked
+/// by [`wait_for_playback`]: they end only when the app asks them to, so the
+/// exit wait must not block on one.
+pub struct LoopHandle {
+    stop: Arc<AtomicBool>,
+}
+
+impl LoopHandle {
+    /// Stop the loop. Idempotent, and also happens on drop.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Drop for LoopHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Wraps a source and ends it once a shared flag is set, so a looping sound
+/// can be stopped from another thread. The flag is checked per sample, so a
+/// stop takes effect within one audio buffer.
+struct StopFlag<S> {
+    inner: S,
+    stop: Arc<AtomicBool>,
+}
+
+impl<S> Iterator for StopFlag<S>
+where
+    S: Iterator<Item = f32>,
+{
+    type Item = f32;
+
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        if self.stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.inner.next()
+    }
+}
+
+impl<S> Source for StopFlag<S>
+where
+    S: Source<Item = f32>,
+{
+    #[inline]
+    fn current_frame_len(&self) -> Option<usize> {
+        self.inner.current_frame_len()
+    }
+
+    #[inline]
+    fn channels(&self) -> u16 {
+        self.inner.channels()
+    }
+
+    #[inline]
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+
+    #[inline]
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+/// Start playing a sound file on a loop, returning a handle that stops it.
+///
+/// Fire-and-forget like [`play_sound_file`]: a missing device or an
+/// undecodable file yields `None` and the caller carries on. A volume of zero
+/// yields a handle that controls nothing.
+pub fn play_looping_sound_file(path: &Path, volume: f32) -> Option<LoopHandle> {
+    if !path.is_file() {
+        return None;
+    }
+    let volume = volume.clamp(0.0, 1.0);
+    if volume <= 0.0 {
+        return Some(LoopHandle {
+            stop: Arc::new(AtomicBool::new(true)),
+        });
+    }
+
+    let output = audio_output()?;
+    let file = std::fs::File::open(path).ok()?;
+    let decoder = match Decoder::new(std::io::BufReader::new(file)) {
+        Ok(decoder) => decoder,
+        Err(err) => {
+            log::warn!("could not decode {}: {err}", path.display());
+            return None;
+        }
+    };
+
+    // Decode once into memory; the loop repeats the buffer rather than
+    // re-reading the file every pass.
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    if channels == 0 || sample_rate == 0 {
+        return None;
+    }
+    let samples: Vec<f32> = decoder
+        .convert_samples::<f32>()
+        .map(|sample| sample * volume)
+        .collect();
+    if samples.is_empty() {
+        return None;
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let source = StopFlag {
+        inner: SamplesBuffer::new(channels, sample_rate, samples).repeat_infinite(),
+        stop: Arc::clone(&stop),
+    };
+
+    let Ok(output) = output.lock() else {
+        return None;
+    };
+    if let Err(err) = output.handle.play_raw(source) {
+        log::warn!("could not start looping audio playback: {err}");
+        return None;
+    }
+    Some(LoopHandle { stop })
+}
+
 /// Wait until every started sound has finished, or `timeout` elapses.
 ///
 /// Used on exit so the closing chime is not cut off when the process dies.
@@ -194,6 +325,23 @@ impl SoundPlayer {
             return false;
         };
         play_sound_file(&file, volume)
+    }
+
+    /// Start an event sound playing on a loop, returning a handle that stops it.
+    ///
+    /// Returns `None` when the event would not play (audio off or the event
+    /// muted) or the active pack has no sound for it.
+    pub fn play_event_looping(
+        &self,
+        event: &str,
+        enabled: bool,
+        muted: &[String],
+    ) -> Option<LoopHandle> {
+        if !self.would_play(event, enabled, muted) {
+            return None;
+        }
+        let (file, volume) = resolve_sound(event, &self.pack, &self.soundpacks_dir)?;
+        play_looping_sound_file(&file, volume)
     }
 }
 
@@ -319,6 +467,63 @@ mod tests {
         let path = dir.path().join("bogus.ogg");
         std::fs::write(&path, b"definitely not audio").unwrap();
         assert!(!play_sound_file(&path, 1.0));
+    }
+
+    #[test]
+    fn the_stop_flag_ends_the_source_when_set() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut source = StopFlag {
+            inner: SamplesBuffer::new(1, 8000, vec![0.5f32; 100]).repeat_infinite(),
+            stop: Arc::clone(&stop),
+        };
+        // The buffer repeats forever, so without the flag this never ends.
+        assert_eq!(source.next(), Some(0.5));
+        assert_eq!(source.by_ref().take(1000).count(), 1000);
+        stop.store(true, Ordering::SeqCst);
+        assert_eq!(source.next(), None);
+        // Reports its channel layout straight through, so playback is not
+        // folded to mono.
+        assert_eq!(source.channels(), 1);
+        assert_eq!(source.sample_rate(), 8000);
+    }
+
+    #[test]
+    fn a_loop_handle_sets_the_flag_on_stop_and_on_drop() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = LoopHandle {
+            stop: Arc::clone(&stop),
+        };
+        assert!(!stop.load(Ordering::SeqCst));
+        handle.stop();
+        assert!(stop.load(Ordering::SeqCst));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        drop(LoopHandle {
+            stop: Arc::clone(&stop),
+        });
+        assert!(
+            stop.load(Ordering::SeqCst),
+            "drop should also stop the loop"
+        );
+    }
+
+    #[test]
+    fn a_looping_sound_from_a_missing_or_undecodable_file_yields_no_handle() {
+        let dir = TempDir::new().unwrap();
+        assert!(play_looping_sound_file(&dir.path().join("nope.ogg"), 1.0).is_none());
+
+        let bogus = dir.path().join("bogus.ogg");
+        std::fs::write(&bogus, b"definitely not audio").unwrap();
+        assert!(play_looping_sound_file(&bogus, 1.0).is_none());
+    }
+
+    #[test]
+    fn a_silent_looping_sound_yields_an_inert_handle_without_touching_the_device() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("quiet.ogg");
+        std::fs::write(&path, b"not really audio").unwrap();
+        let handle = play_looping_sound_file(&path, 0.0).expect("silence still returns a handle");
+        handle.stop();
     }
 
     #[test]

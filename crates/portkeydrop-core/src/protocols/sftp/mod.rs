@@ -41,6 +41,15 @@ const TRANSFER_CHUNK: usize = 32 * 1024;
 /// Receives `(host, key algorithm, fingerprint)` and returns the decision.
 pub type HostKeyPrompt = Arc<dyn Fn(&str, &str, &str) -> HostKeyDecision + Send + Sync + 'static>;
 
+/// Called once, on the connect worker thread, just before SFTP authentication
+/// asks the SSH agent to sign.
+///
+/// An external agent (Bitwarden, a smartcard) may pop a confirmation dialog at
+/// that point, and for a screen-reader user it can open behind the main
+/// window. The UI uses this to start an audible "waiting" cue; it stops the
+/// cue itself once the connection attempt resolves.
+pub type AgentAuthNotice = Arc<dyn Fn() + Send + Sync + 'static>;
+
 /// What the handler observed about the server's key.
 #[derive(Debug, Default, Clone)]
 struct OfferedKey {
@@ -109,6 +118,7 @@ impl client::Handler for ClientHandler {
 pub struct SftpClient {
     info: ConnectionInfo,
     host_key_prompt: Option<HostKeyPrompt>,
+    agent_notice: Option<AgentAuthNotice>,
     runtime: Option<tokio::runtime::Runtime>,
     session: Option<Arc<SftpSession>>,
     handle: Option<Handle<ClientHandler>>,
@@ -119,9 +129,19 @@ pub struct SftpClient {
 impl SftpClient {
     /// Build a client. No network activity happens until [`TransferClient::connect`].
     pub fn new(info: ConnectionInfo, host_key_prompt: Option<HostKeyPrompt>) -> Self {
+        Self::with_hooks(info, host_key_prompt, None)
+    }
+
+    /// Build a client, also wiring an [`AgentAuthNotice`] callback.
+    pub fn with_hooks(
+        info: ConnectionInfo,
+        host_key_prompt: Option<HostKeyPrompt>,
+        agent_notice: Option<AgentAuthNotice>,
+    ) -> Self {
         Self {
             info,
             host_key_prompt,
+            agent_notice,
             runtime: None,
             session: None,
             handle: None,
@@ -204,6 +224,7 @@ impl SftpClient {
 
         let info = self.info.clone();
         let prompt_used = self.host_key_prompt.is_some();
+        let agent_notice = self.agent_notice.clone();
         let connect_result: Result<(Handle<ClientHandler>, Arc<SftpSession>, String)> = runtime
             .block_on(async move {
                 let handle =
@@ -217,7 +238,7 @@ impl SftpClient {
                         })?
                         .map_err(map_ssh_error)?;
 
-                authenticate(handle, &info, prompt_used).await
+                authenticate(handle, &info, prompt_used, agent_notice).await
             });
 
         let observed = offered
@@ -274,6 +295,7 @@ async fn authenticate(
     mut handle: Handle<ClientHandler>,
     info: &ConnectionInfo,
     _prompt_used: bool,
+    agent_notice: Option<AgentAuthNotice>,
 ) -> Result<(Handle<ClientHandler>, Arc<SftpSession>, String)> {
     let username = if info.username.is_empty() {
         whoami::username()
@@ -303,7 +325,7 @@ async fn authenticate(
         // and it never prompts.
         if ssh_agent::is_agent_available() || cfg!(windows) {
             attempted.push("SSH agent".to_string());
-            match authenticate_with_agent(&mut handle, &username).await {
+            match authenticate_with_agent(&mut handle, &username, agent_notice.as_ref()).await {
                 Ok(true) => authenticated = true,
                 Ok(false) => {}
                 Err(err) => log::debug!("SSH agent authentication unavailable: {err}"),
@@ -364,9 +386,14 @@ async fn authenticate(
 }
 
 /// Try every identity the SSH agent holds.
+///
+/// `notice`, if given, is called once immediately before the first signature
+/// request: that is when an external agent (Bitwarden, a smartcard) may put up
+/// a confirmation dialog.
 async fn authenticate_with_agent(
     handle: &mut Handle<ClientHandler>,
     username: &str,
+    notice: Option<&AgentAuthNotice>,
 ) -> Result<bool> {
     #[cfg(unix)]
     let mut agent = russh::keys::agent::client::AgentClient::connect_env()
@@ -384,10 +411,17 @@ async fn authenticate_with_agent(
         .await
         .map_err(|err| ProtocolError::Other(err.to_string()))?;
 
+    let mut notified = false;
     for identity in identities {
         let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = identity else {
             continue;
         };
+        if !notified {
+            if let Some(notice) = notice {
+                notice();
+            }
+            notified = true;
+        }
         let hash_alg = hash_alg_for_algorithm(key.algorithm().as_str());
         match handle
             .authenticate_publickey_with(username, key, hash_alg, &mut agent)

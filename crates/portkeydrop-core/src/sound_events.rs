@@ -35,6 +35,7 @@ pub const SOUND_EVENT_SECTIONS: &[SoundEventSection] = &[
         title: "Connections",
         description: "Server connection lifecycle sounds.",
         events: &[
+            ("connect_waiting", "Waiting to connect"),
             ("connect_success", "Connected"),
             ("connect_failed", "Connection failed"),
             ("disconnect", "Disconnected"),
@@ -133,6 +134,7 @@ mod tests {
     #[test]
     fn the_catalogue_covers_the_documented_events() {
         assert!(is_known_sound_event("transfer_complete"));
+        assert!(is_known_sound_event("connect_waiting"));
         assert!(is_known_sound_event("connect_failed"));
         assert!(is_known_sound_event("folder_create_failed"));
         assert!(is_known_sound_event("exit"));

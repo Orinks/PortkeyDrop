@@ -18,7 +18,7 @@ pub use model::{
     ConnectionInfo, HostKeyDecision, HostKeyPolicy, Protocol, RemoteFile, UnknownProtocol,
     SUPPORTED_PROTOCOL_VALUES,
 };
-pub use sftp::{HostKeyPrompt, SftpClient};
+pub use sftp::{AgentAuthNotice, HostKeyPrompt, SftpClient};
 pub use webdav::WebdavClient;
 
 /// Errors any protocol client can raise.
@@ -185,9 +185,14 @@ pub trait TransferClient: Send {
 pub fn create_client(
     info: ConnectionInfo,
     host_key_prompt: Option<HostKeyPrompt>,
+    agent_notice: Option<AgentAuthNotice>,
 ) -> Result<Box<dyn TransferClient>> {
     match info.protocol {
-        Protocol::Sftp => Ok(Box::new(SftpClient::new(info, host_key_prompt))),
+        Protocol::Sftp => Ok(Box::new(SftpClient::with_hooks(
+            info,
+            host_key_prompt,
+            agent_notice,
+        ))),
         Protocol::Ftp | Protocol::Ftps => Ok(Box::new(FtpClient::new(info))),
         Protocol::Webdav => Ok(Box::new(WebdavClient::new(info))),
         Protocol::Scp => Err(ProtocolError::Unsupported(
@@ -206,7 +211,7 @@ mod tests {
             protocol: Protocol::Scp,
             ..Default::default()
         };
-        let Err(error) = create_client(info, None) else {
+        let Err(error) = create_client(info, None, None) else {
             panic!("scp should not build a client");
         };
         assert!(matches!(error, ProtocolError::Unsupported(_)));
@@ -221,7 +226,7 @@ mod tests {
                 host: "example.com".into(),
                 ..Default::default()
             };
-            let client = create_client(info, None).expect("client for {name}");
+            let client = create_client(info, None, None).expect("client for {name}");
             // A freshly built client has not connected yet.
             assert!(!client.is_connected());
         }
@@ -234,7 +239,7 @@ mod tests {
                 protocol,
                 ..Default::default()
             };
-            let client = create_client(info, None).unwrap();
+            let client = create_client(info, None, None).unwrap();
             assert_eq!(client.protocol(), protocol);
         }
     }

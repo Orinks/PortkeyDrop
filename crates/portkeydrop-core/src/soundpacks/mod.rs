@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 pub use install::{is_safe_archive_name, InstallError, PackInstaller};
 pub use manifest::{PackManifest, SoundEntry};
-pub use player::{can_decode, play_sound_file, wait_for_playback, SoundPlayer, EXIT_SOUND_TIMEOUT};
+pub use player::{
+    can_decode, play_looping_sound_file, play_sound_file, wait_for_playback, LoopHandle,
+    SoundPlayer, EXIT_SOUND_TIMEOUT,
+};
 
 /// Directory name of the built-in pack.
 pub const DEFAULT_PACK: &str = "default";
