@@ -1,8 +1,9 @@
 # PortkeyDrop — AI Agent Guidelines
 
 Cross-platform file transfer client (SFTP, FTP, FTPS, WebDAV) with screen
-reader accessibility. Written in Rust; the UI uses wxDragon. Config dir:
-`~/.portkeydrop`, or `<exe dir>/data` in portable mode.
+reader accessibility. Written in Rust; the UI uses wxDragon. Config lives in
+the platform's config folder (`%APPDATA%\PortkeyDrop`, `~/Library/Application
+Support`, `~/.config/portkeydrop`), or `<exe dir>/data` in portable mode.
 
 ## Quick Reference
 
