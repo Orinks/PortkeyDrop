@@ -677,14 +677,27 @@ impl MainFrame {
                     state.remote_home = cwd.clone();
                 }
                 self.log(&format!("Connected to {host}."));
-                self.state.borrow_mut().play_sound("connect_success");
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.stop_waiting_sound();
+                    state.play_sound("connect_success");
+                }
                 self.announce(&format!("Connected to {host}"));
                 self.update_status();
                 self.hide_quick_connect();
                 self.refresh_remote(&cwd);
             }
+            AppEvent::ConnectAwaitingAgent => {
+                self.log("Waiting for SSH key approval...");
+                self.state.borrow_mut().start_waiting_sound();
+                self.announce("Waiting for SSH key approval");
+            }
             AppEvent::ConnectFailed { message } => {
-                self.state.borrow_mut().clear_client();
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.stop_waiting_sound();
+                    state.clear_client();
+                }
                 self.log(&message);
                 self.state.borrow_mut().play_sound("connect_failed");
                 self.announce("Connection failed");
@@ -939,9 +952,15 @@ impl MainFrame {
             Arc::new(move |host: &str, algorithm: &str, fingerprint: &str| {
                 events::ask_host_key(&prompt_sender, host, algorithm, fingerprint)
             });
+        // SFTP auth talks to the SSH agent on this worker; an external agent
+        // can then put up a dialog behind the window. This tells the UI to
+        // start the "waiting to connect" cue.
+        let notice_sender = sender.clone();
+        let agent_notice: protocols::AgentAuthNotice =
+            Arc::new(move || events::notify_awaiting_agent(&notice_sender));
 
         std::thread::spawn(move || {
-            let result = protocols::create_client(info, Some(host_key_prompt))
+            let result = protocols::create_client(info, Some(host_key_prompt), Some(agent_notice))
                 .and_then(|mut client| client.connect().map(|()| client));
             match result {
                 Ok(client) => {
@@ -983,7 +1002,9 @@ impl MainFrame {
     }
 
     pub(super) fn disconnect_quietly(&self) {
-        self.state.borrow_mut().clear_client();
+        let mut state = self.state.borrow_mut();
+        state.stop_waiting_sound();
+        state.clear_client();
     }
 
     // ---------------------------------------------------------------
@@ -1636,6 +1657,7 @@ impl MainFrame {
         let mut state = self.state.borrow_mut();
         state.save_queue();
         state.save_settings();
+        state.stop_waiting_sound();
         if !state.exit_sound_played {
             state.exit_sound_played = true;
             state.play_sound("exit");

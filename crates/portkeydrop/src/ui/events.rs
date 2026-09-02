@@ -19,6 +19,11 @@ pub enum AppEvent {
     Connected { host: String, cwd: String },
     /// A connection attempt failed.
     ConnectFailed { message: String },
+    /// SFTP authentication is about to ask the SSH agent to sign, which can
+    /// make an external agent (Bitwarden, a smartcard) pop a dialog behind the
+    /// window. The UI starts the "waiting to connect" cue; `Connected` or
+    /// `ConnectFailed` stops it.
+    ConnectAwaitingAgent,
     /// A remote listing finished.
     RemoteListed {
         path: String,
@@ -115,6 +120,14 @@ pub fn post(sender: &EventSender, event: AppEvent) {
 /// Drain every event currently waiting, without blocking.
 pub fn drain(receiver: &EventReceiver) -> Vec<AppEvent> {
     receiver.try_iter().collect()
+}
+
+/// Tell the UI thread that SFTP auth is about to contact the SSH agent.
+///
+/// Fire-and-forget: unlike [`ask_host_key`] the worker does not wait for a
+/// reply, it just carries on trying to authenticate.
+pub fn notify_awaiting_agent(sender: &EventSender) {
+    post(sender, AppEvent::ConnectAwaitingAgent);
 }
 
 /// Ask the UI thread what to do about an untrusted host key.
@@ -222,6 +235,16 @@ mod tests {
 
         let events = drain(&receiver);
         assert!(matches!(events.first(), Some(AppEvent::Connected { .. })));
+    }
+
+    #[test]
+    fn an_agent_notice_is_posted_without_waiting_for_a_reply() {
+        let (sender, receiver) = channel();
+        notify_awaiting_agent(&sender);
+        assert!(matches!(
+            drain(&receiver).first(),
+            Some(AppEvent::ConnectAwaitingAgent)
+        ));
     }
 
     #[test]

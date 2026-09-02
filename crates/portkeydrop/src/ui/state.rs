@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 use portkeydrop_core::protocols::TransferClient;
 use portkeydrop_core::settings::Settings;
 use portkeydrop_core::sites::SiteManager;
-use portkeydrop_core::soundpacks::SoundPlayer;
+use portkeydrop_core::soundpacks::{LoopHandle, SoundPlayer};
 use portkeydrop_core::transfer::{SharedClient, TransferService};
 
 /// The application's non-widget state.
@@ -22,6 +22,9 @@ pub struct AppState {
     pub sites: SiteManager,
     pub transfers: Arc<TransferService>,
     pub sounds: SoundPlayer,
+    /// The looping "waiting to connect" cue, while a connection attempt is
+    /// stalled on an external SSH-agent dialog. Dropping it stops the sound.
+    waiting_sound: Option<LoopHandle>,
     pub announcer: prism::Announcer,
     /// The live connection, if any.
     client: Option<SharedClient>,
@@ -85,6 +88,7 @@ impl AppState {
             sites,
             transfers,
             sounds,
+            waiting_sound: None,
             announcer,
             audible,
             client: None,
@@ -170,6 +174,27 @@ impl AppState {
             self.settings.audio.sound_enabled,
             &self.settings.audio.muted_sound_events,
         );
+    }
+
+    /// Start the looping "waiting to connect" cue, if it is not already going.
+    ///
+    /// Called when a connection attempt stalls on an external SSH-agent
+    /// dialog; [`AppState::stop_waiting_sound`] ends it once the attempt
+    /// resolves.
+    pub fn start_waiting_sound(&mut self) {
+        if !self.audible || self.waiting_sound.is_some() {
+            return;
+        }
+        self.waiting_sound = self.sounds.play_event_looping(
+            "connect_waiting",
+            self.settings.audio.sound_enabled,
+            &self.settings.audio.muted_sound_events,
+        );
+    }
+
+    /// Stop the looping "waiting to connect" cue if it is playing.
+    pub fn stop_waiting_sound(&mut self) {
+        self.waiting_sound = None;
     }
 
     /// Speak a message, if speech is available.
@@ -471,6 +496,17 @@ mod tests {
         state.apply_settings();
         state.play_sound("startup");
         state.announce("hello");
+    }
+
+    #[test]
+    fn the_waiting_sound_is_a_no_op_when_the_state_is_silent() {
+        let dir = TempDir::new().unwrap();
+        let mut state = state(&dir);
+        state.start_waiting_sound();
+        assert!(state.waiting_sound.is_none(), "silent state plays nothing");
+        // Stopping when nothing is playing is fine, and idempotent.
+        state.stop_waiting_sound();
+        state.stop_waiting_sound();
     }
 
     #[test]
