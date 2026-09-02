@@ -7,10 +7,13 @@
 //! sound is not cut off when the process dies.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::buffer::SamplesBuffer;
+use rodio::source::Done;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Source};
 
 /// Longest closing will wait for the exit sound before giving up.
 ///
@@ -23,7 +26,8 @@ use super::{resolve_sound, DEFAULT_PACK};
 /// The process-wide audio output.
 ///
 /// Held in a `OnceLock` because opening the device is expensive and some
-/// backends allow only one stream per process. `Sink`s are created per sound.
+/// backends allow only one stream per process. Each sound is mixed in through
+/// the shared handle.
 struct AudioOutput {
     // The stream must stay alive for the handle to work, even though nothing
     // reads it directly.
@@ -51,10 +55,14 @@ fn audio_output() -> Option<&'static Mutex<AudioOutput>> {
         .as_ref()
 }
 
-/// Sinks for sounds still playing, so they are not dropped mid-playback.
-fn active_sinks() -> &'static Mutex<Vec<Sink>> {
-    static SINKS: OnceLock<Mutex<Vec<Sink>>> = OnceLock::new();
-    SINKS.get_or_init(|| Mutex::new(Vec::new()))
+/// How many sounds are still playing.
+///
+/// [`play_sound_file`] bumps this and hands the source to rodio wrapped in
+/// [`Done`], which drops it back to zero when the sound ends.
+/// [`wait_for_playback`] polls it so the exit sound is not cut off.
+fn active_sounds() -> &'static Arc<AtomicUsize> {
+    static COUNT: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
+    COUNT.get_or_init(|| Arc::new(AtomicUsize::new(0)))
 }
 
 /// Whether the audio backend can actually decode a file.
@@ -68,6 +76,44 @@ pub fn can_decode(path: &Path) -> bool {
         return false;
     };
     Decoder::new(std::io::BufReader::new(file)).is_ok()
+}
+
+/// Decode a whole sound file into an in-memory buffer, scaled by `volume`.
+///
+/// Playing from one `SamplesBuffer` is deliberate. A rodio `Sink` wraps its
+/// queue in a channel converter the moment it is built, while the queue is
+/// still empty, and an empty queue reports a single channel. The first ~11 ms
+/// of whatever plays next is then folded to mono and slightly time-stretched
+/// before the converter re-reads the real channel count. These cues are short
+/// and their stereo image lives in the opening transient, so that is exactly
+/// where the fold is audible. A `SamplesBuffer` carries its true channel count
+/// from the first sample, so nothing is folded.
+///
+/// Returns `None` if the file will not open, will not decode, or holds no
+/// samples.
+fn decode_to_buffer(path: &Path, volume: f32) -> Option<SamplesBuffer<f32>> {
+    let file = std::fs::File::open(path).ok()?;
+    let decoder = match Decoder::new(std::io::BufReader::new(file)) {
+        Ok(decoder) => decoder,
+        Err(err) => {
+            log::warn!("could not decode {}: {err}", path.display());
+            return None;
+        }
+    };
+
+    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate();
+    if channels == 0 || sample_rate == 0 {
+        return None;
+    }
+    let samples: Vec<f32> = decoder
+        .convert_samples::<f32>()
+        .map(|sample| sample * volume)
+        .collect();
+    if samples.is_empty() {
+        return None;
+    }
+    Some(SamplesBuffer::new(channels, sample_rate, samples))
 }
 
 /// Play a sound file, returning whether playback started.
@@ -86,37 +132,28 @@ pub fn play_sound_file(path: &Path, volume: f32) -> bool {
     let Some(output) = audio_output() else {
         return false;
     };
-    let Ok(file) = std::fs::File::open(path) else {
+    let Some(source) = decode_to_buffer(path, volume) else {
         return false;
     };
-    let source = match Decoder::new(std::io::BufReader::new(file)) {
-        Ok(source) => source,
-        Err(err) => {
-            log::warn!("could not decode {}: {err}", path.display());
+
+    // Count this sound as playing until rodio drains it. `Done` decrements the
+    // counter when the buffer ends; the manual paths below cover the cases
+    // where playback never starts.
+    let playing = active_sounds().clone();
+    playing.fetch_add(1, Ordering::SeqCst);
+    let source = Done::new(source, playing.clone());
+
+    let play_result = match output.lock() {
+        Ok(output) => output.handle.play_raw(source),
+        Err(_) => {
+            playing.fetch_sub(1, Ordering::SeqCst);
             return false;
         }
     };
-
-    let sink = {
-        let Ok(output) = output.lock() else {
-            return false;
-        };
-        match Sink::try_new(&output.handle) {
-            Ok(sink) => sink,
-            Err(err) => {
-                log::warn!("could not start audio playback: {err}");
-                return false;
-            }
-        }
-    };
-    sink.set_volume(volume);
-    sink.append(source);
-
-    // Keep the sink alive until it finishes, and clear out ones that already
-    // have. Without this the sound is cut off the moment `sink` drops.
-    if let Ok(mut sinks) = active_sinks().lock() {
-        sinks.retain(|existing| !existing.empty());
-        sinks.push(sink);
+    if let Err(err) = play_result {
+        log::warn!("could not start audio playback: {err}");
+        playing.fetch_sub(1, Ordering::SeqCst);
+        return false;
     }
     true
 }
@@ -127,15 +164,9 @@ pub fn play_sound_file(path: &Path, volume: f32) -> bool {
 /// Other playback stays fire-and-forget: a transfer must not wait on a chime.
 pub fn wait_for_playback(timeout: Duration) {
     let started = Instant::now();
+    let playing = active_sounds();
     while started.elapsed() < timeout {
-        let playing = match active_sinks().lock() {
-            Ok(mut sinks) => {
-                sinks.retain(|sink| !sink.empty());
-                !sinks.is_empty()
-            }
-            Err(_) => return,
-        };
-        if !playing {
+        if playing.load(Ordering::SeqCst) == 0 {
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -311,6 +342,89 @@ mod tests {
         wav.extend_from_slice(&data_len.to_le_bytes());
         wav.extend_from_slice(&samples);
         wav
+    }
+
+    /// A 48 kHz 16-bit *stereo* WAV whose two channels never match: left ramps
+    /// up, right ramps down. Folding it to mono would leave the two channels
+    /// equal, which is what the regression tests below check for.
+    fn stereo_wav(frames: u32) -> Vec<u8> {
+        let mut data = Vec::with_capacity(frames as usize * 4);
+        for i in 0..frames {
+            let left = ((i % 2000) as i16).wrapping_sub(1000) * 16;
+            let right = -left;
+            data.extend_from_slice(&left.to_le_bytes());
+            data.extend_from_slice(&right.to_le_bytes());
+        }
+        let data_len = data.len() as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&2u16.to_le_bytes()); // stereo
+        wav.extend_from_slice(&48_000u32.to_le_bytes()); // sample rate
+        wav.extend_from_slice(&(48_000u32 * 4).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&4u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.extend_from_slice(&data);
+        wav
+    }
+
+    #[test]
+    fn a_stereo_sound_is_buffered_without_being_folded_to_mono() {
+        // Guards the connect-sound regression: the decode step must hand rodio a
+        // buffer that still knows it has two channels and still has distinct
+        // left/right samples. The old `Sink` path collapsed the opening frames.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("stereo.wav");
+        std::fs::write(&path, stereo_wav(24_000)).unwrap();
+
+        let buffer = decode_to_buffer(&path, 1.0).expect("stereo WAV should decode");
+        assert_eq!(buffer.channels(), 2, "channel count must survive decoding");
+        assert_eq!(buffer.sample_rate(), 48_000);
+
+        let samples: Vec<f32> = buffer.collect();
+        assert_eq!(samples.len(), 24_000 * 2, "every frame should be present");
+        // Left and right must still differ - a mono fold would make them equal.
+        let stereo_frames = samples
+            .chunks_exact(2)
+            .filter(|frame| (frame[0] - frame[1]).abs() > f32::EPSILON)
+            .count();
+        assert!(
+            stereo_frames > 20_000,
+            "expected a wide stereo image, only {stereo_frames} frames differ"
+        );
+    }
+
+    #[test]
+    fn volume_scales_the_buffered_samples() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("stereo.wav");
+        std::fs::write(&path, stereo_wav(4_000)).unwrap();
+
+        let full: Vec<f32> = decode_to_buffer(&path, 1.0).unwrap().collect();
+        let half: Vec<f32> = decode_to_buffer(&path, 0.5).unwrap().collect();
+        assert_eq!(full.len(), half.len());
+        let loudest = full.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(loudest > 0.1, "test signal should be audible");
+        for (f, h) in full.iter().zip(&half) {
+            assert!(
+                (f * 0.5 - h).abs() < 1e-6,
+                "half volume should be half amplitude"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_length_sound_is_not_played() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("empty.wav");
+        std::fs::write(&path, stereo_wav(0)).unwrap();
+        assert!(decode_to_buffer(&path, 1.0).is_none());
+        assert!(!play_sound_file(&path, 1.0));
     }
 
     #[test]
