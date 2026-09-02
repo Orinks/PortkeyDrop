@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - The Site Manager has its Browse button back for choosing a private key file, and it opens where the current path points rather than at your home folder.
 
 ### Fixed
+- Sound cues played in mono, most audibly the connect sound. The opening fraction of a second of every cue was folded to a single channel and slightly stretched before playback settled into stereo, and the short cues carry their stereo image right at the start. Cues now play in full stereo from the first sample.
 - Backspace, Alt+Left, and Alt+Up in a file pane now go to the parent directory. Those keys were bound to a list event that never reported which key was pressed, so they did nothing in either pane. Ctrl+Up and Ctrl+[ do the same (Command+Up and Command+[ on a Mac, matching Finder).
 - The exit sound was cut off as the program closed. Closing now waits for it to finish.
 - Uploading a file always asked whether to replace it, even when nothing of that name was on the server. The prompt now appears only when the remote folder already has that name, matching downloads.
