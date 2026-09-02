@@ -15,3 +15,6 @@ crates/prism-sys/vendor/**/*.dll binary
 crates/prism-sys/vendor/**/*.dylib binary
 crates/prism-sys/vendor/**/*.so binary
 crates/prism-sys/vendor/**/*.lib binary
+
+# Bundled sound pack audio.
+crates/portkeydrop-core/assets/**/*.ogg binary

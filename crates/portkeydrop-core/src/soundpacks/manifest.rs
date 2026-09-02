@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::builtin::BUILTIN_SOUNDS;
 use super::PackError;
 
 /// One sound in a manifest.
@@ -18,9 +19,9 @@ pub enum SoundEntry {
     File(String),
     /// `"transfer_complete": {"file": "done.ogg", "volume": 0.5}`
     Detailed {
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         file: Option<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         volume: Option<f64>,
     },
 }
@@ -61,7 +62,7 @@ pub struct PackManifest {
     #[serde(default)]
     pub sounds: BTreeMap<String, SoundEntry>,
     /// Fallback volumes, for entries written as a bare file name.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub volumes: BTreeMap<String, f64>,
 }
 
@@ -124,17 +125,36 @@ impl PackManifest {
         }
     }
 
+    /// Serialise as pretty-printed JSON with a trailing newline.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("a manifest always serialises") + "\n"
+    }
+
+    /// The manifest for the built-in default pack, listing every sound in
+    /// [`BUILTIN_SOUNDS`].
+    pub fn default_pack_manifest() -> Self {
+        PackManifest {
+            name: "Default".into(),
+            author: "Portkey Drop".into(),
+            description:
+                "Built-in Portkey Drop sound pack with short, gentle transfer and app cues.".into(),
+            version: "1.0.0".into(),
+            sounds: BUILTIN_SOUNDS
+                .iter()
+                .map(|sound| {
+                    (
+                        sound.event.to_string(),
+                        SoundEntry::File(sound.path.to_string()),
+                    )
+                })
+                .collect(),
+            volumes: BTreeMap::new(),
+        }
+    }
+
     /// The manifest written for a freshly created default pack.
     pub fn default_pack_json() -> String {
-        serde_json::to_string_pretty(&serde_json::json!({
-            "name": "Default",
-            "author": "Portkey Drop",
-            "description": "Default sound pack.",
-            "version": "1.0.0",
-            "sounds": {},
-        }))
-        .expect("a literal JSON object always serialises")
-            + "\n"
+        Self::default_pack_manifest().to_json()
     }
 }
 
@@ -266,9 +286,29 @@ mod tests {
     }
 
     #[test]
-    fn the_generated_default_manifest_is_valid_and_empty() {
+    fn the_generated_default_manifest_lists_every_built_in_sound() {
         let manifest = PackManifest::from_json(&PackManifest::default_pack_json()).unwrap();
         assert_eq!(manifest.name, "Default");
-        assert!(manifest.sounds.is_empty());
+        assert_eq!(manifest.sounds.len(), BUILTIN_SOUNDS.len());
+        for sound in BUILTIN_SOUNDS {
+            assert_eq!(
+                manifest.sounds[sound.event].file_name(sound.event),
+                sound.path
+            );
+        }
+    }
+
+    #[test]
+    fn a_manifest_round_trips_through_json_without_null_fields() {
+        // The default pack setup rewrites a user's manifest to add missing
+        // entries, so what it writes back must be as clean as what it read.
+        let manifest = PackManifest::from_json(
+            r#"{"name":"P","sounds":{"error":{"volume":0.5},"exit":"x.ogg"}}"#,
+        )
+        .unwrap();
+        let text = manifest.to_json();
+        assert!(!text.contains("null"), "{text}");
+        assert!(!text.contains("volumes"), "{text}");
+        assert_eq!(PackManifest::from_json(&text).unwrap(), manifest);
     }
 }
