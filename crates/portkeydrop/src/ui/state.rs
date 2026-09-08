@@ -130,35 +130,15 @@ impl AppState {
         self.client = Some(Arc::new(Mutex::new(client)));
     }
 
-    /// Drop the connection, closing it first.
-    ///
-    /// Like [`AppState::is_connected`] this runs on the UI thread -- including
-    /// on the way out of File > Exit -- so it never waits for the lock. A
-    /// transfer worker holds the client for the length of its operation, and
-    /// waiting here froze the window until the transfer finished. When the
-    /// client is busy the goodbye is handed to a background thread, which
-    /// sends it once the worker lets go. If the process exits before that, the
-    /// socket closes with it, which is what a dropped connection looks like
-    /// from the server either way.
+    /// Release the connection without waiting on network shutdown on the UI.
+    /// Even an idle session can block while FTP QUIT or SSH shutdown runs.
     pub fn clear_client(&mut self) {
         if let Some(client) = self.client.take() {
-            // The borrow from `try_lock` has to end before the client can be
-            // moved onto a thread, so the two steps are kept apart.
-            let busy = match client.try_lock() {
-                Ok(mut client) => {
+            std::thread::spawn(move || {
+                if let Ok(mut client) = client.lock() {
                     client.disconnect();
-                    false
                 }
-                Err(TryLockError::WouldBlock) => true,
-                Err(TryLockError::Poisoned(_)) => false,
-            };
-            if busy {
-                std::thread::spawn(move || {
-                    if let Ok(mut client) = client.lock() {
-                        client.disconnect();
-                    }
-                });
-            }
+            });
         }
         self.connected_host.clear();
         self.remote_home = "/".to_string();
@@ -271,6 +251,7 @@ mod tests {
     /// the rest exist to satisfy the trait.
     struct StubClient {
         disconnected: Arc<std::sync::atomic::AtomicBool>,
+        disconnect_thread: Option<std::sync::mpsc::Sender<std::thread::ThreadId>>,
     }
 
     impl portkeydrop_core::protocols::TransferClient for StubClient {
@@ -287,6 +268,9 @@ mod tests {
             Ok(())
         }
         fn disconnect(&mut self) {
+            if let Some(sender) = &self.disconnect_thread {
+                let _ = sender.send(std::thread::current().id());
+            }
             self.disconnected
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -368,6 +352,7 @@ mod tests {
         state.set_client(
             Box::new(StubClient {
                 disconnected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                disconnect_thread: None,
             }),
             "example.test".to_string(),
         );
@@ -405,6 +390,7 @@ mod tests {
         state.set_client(
             Box::new(StubClient {
                 disconnected: Arc::clone(&disconnected),
+                disconnect_thread: None,
             }),
             "example.test".to_string(),
         );
@@ -440,6 +426,26 @@ mod tests {
             disconnected.load(std::sync::atomic::Ordering::SeqCst),
             "the connection was never closed"
         );
+    }
+
+    #[test]
+    fn idle_disconnect_runs_off_the_ui_thread() {
+        let dir = TempDir::new().unwrap();
+        let mut state = state(&dir);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        state.set_client(
+            Box::new(StubClient {
+                disconnected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                disconnect_thread: Some(sender),
+            }),
+            "example.test".into(),
+        );
+        state.clear_client();
+        let thread = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_ne!(thread, std::thread::current().id());
+        assert!(!state.is_connected());
     }
 
     #[test]

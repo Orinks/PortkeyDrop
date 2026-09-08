@@ -15,7 +15,7 @@ pub mod resume;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError, Weak};
 use std::time::Duration;
 
 pub use job::{format_bytes, format_transfer_detail, Direction, Status, StoredJob, TransferJob};
@@ -132,11 +132,12 @@ impl TransferService {
 
         for _ in 0..count {
             let stop = Arc::new(AtomicBool::new(false));
-            let service = Arc::clone(self);
+            let service = Arc::downgrade(self);
+            let receiver = Arc::clone(&self.receiver);
             let worker_stop = Arc::clone(&stop);
             let handle = std::thread::Builder::new()
                 .name("portkeydrop-transfer".to_string())
-                .spawn(move || service.worker_loop(worker_stop))
+                .spawn(move || Self::worker_loop(service, receiver, worker_stop))
                 .expect("spawning a transfer worker");
             workers.push(Worker { handle, stop });
         }
@@ -322,13 +323,17 @@ impl TransferService {
         jobs.iter().find(|job| job.id == job_id).map(read)
     }
 
-    fn worker_loop(&self, stop: Arc<AtomicBool>) {
+    fn worker_loop(
+        service: Weak<Self>,
+        receiver: Arc<Mutex<Receiver<QueuedWork>>>,
+        stop: Arc<AtomicBool>,
+    ) {
         loop {
             if stop.load(Ordering::SeqCst) {
                 return;
             }
             let work = {
-                let Ok(receiver) = self.receiver.lock() else {
+                let Ok(receiver) = receiver.lock() else {
                     return;
                 };
                 match receiver.recv_timeout(WORKER_POLL) {
@@ -338,12 +343,16 @@ impl TransferService {
                 }
             };
 
+            let Some(service) = service.upgrade() else {
+                return;
+            };
+
             // A worker asked to stop puts the job back rather than dropping it.
             if stop.load(Ordering::SeqCst) {
-                let _ = self.sender.send(work);
+                let _ = service.sender.send(work);
                 return;
             }
-            self.run_job(work);
+            service.run_job(work);
         }
     }
 
@@ -389,7 +398,11 @@ impl TransferService {
     fn execute(&self, job_id: &str, client: &SharedClient) -> Result<(), ProtocolError> {
         // Only workers may wait for the connection. Release its guard before
         // updating the queue or notifying observers.
-        let protocol = lock_client(client)?.protocol().as_str().to_string();
+        let protocol = self
+            .lock_client(job_id, client)?
+            .protocol()
+            .as_str()
+            .to_string();
         self.with_job(job_id, |job| job.protocol = protocol);
         // Cancellation may have arrived while this worker waited for another
         // transfer to release the connection.
@@ -410,6 +423,32 @@ impl TransferService {
             (Direction::Download, true) => self.run_recursive_download(job_id, client),
             (Direction::Upload, false) => self.run_upload(job_id, client),
             (Direction::Upload, true) => self.run_recursive_upload(job_id, client),
+        }
+    }
+
+    /// Wait for a busy session without stranding a cancelled job.
+    fn lock_client<'a>(
+        &self,
+        job_id: &str,
+        client: &'a SharedClient,
+    ) -> Result<std::sync::MutexGuard<'a, Box<dyn TransferClient>>, ProtocolError> {
+        let cancel = self
+            .read_job(job_id, TransferJob::cancel_flag)
+            .ok_or(ProtocolError::Cancelled)?;
+        loop {
+            check_cancelled(&cancel)?;
+            match client.try_lock() {
+                Ok(client) => {
+                    check_cancelled(&cancel)?;
+                    return Ok(client);
+                }
+                Err(TryLockError::WouldBlock) => std::thread::sleep(WORKER_POLL),
+                Err(TryLockError::Poisoned(_)) => {
+                    return Err(ProtocolError::Connection(
+                        "the connection was left in an unusable state by an earlier error".into(),
+                    ))
+                }
+            }
         }
     }
 
@@ -454,7 +493,7 @@ impl TransferService {
         };
 
         let remote = {
-            let mut client = lock_client(client)?;
+            let mut client = self.lock_client(job_id, client)?;
             client
                 .stat(&source)
                 .ok()
@@ -502,9 +541,9 @@ impl TransferService {
             }
         };
 
+        let mut client = self.lock_client(job_id, client)?;
         let mut file = open_download_target(&destination, offset, overwrite, recorded_bytes > 0)?;
         let mut report = self.progress_reporter(job_id, offset);
-        let mut client = lock_client(client)?;
         client.download(&source, &mut file, Some(&mut report), offset)
     }
 
@@ -523,7 +562,7 @@ impl TransferService {
         });
 
         let mut report = self.progress_reporter(job_id, 0);
-        let mut client = lock_client(client)?;
+        let mut client = self.lock_client(job_id, client)?;
         client.upload(&mut file, total, &destination, Some(&mut report))
     }
 
@@ -542,9 +581,17 @@ impl TransferService {
             return Ok(());
         };
 
+        let cancel = self
+            .read_job(job_id, TransferJob::cancel_flag)
+            .ok_or(ProtocolError::Cancelled)?;
         let files = {
-            let mut client = lock_client(client)?;
-            collect_remote_files(&mut **client, &source, std::path::Path::new(&destination))?
+            let mut client = self.lock_client(job_id, client)?;
+            collect_remote_files_cancellable(
+                &mut **client,
+                &source,
+                std::path::Path::new(&destination),
+                || check_cancelled(&cancel),
+            )?
         };
         let total: u64 = files.iter().map(|entry| entry.size).sum();
         self.with_job(job_id, |job| {
@@ -561,14 +608,11 @@ impl TransferService {
             {
                 return Err(ProtocolError::Cancelled);
             }
-            if let Some(parent) = entry.local_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut file =
-                open_download_target(&entry.local_path.to_string_lossy(), 0, overwrite, false)?;
             let mut report = self.progress_reporter(job_id, base);
             {
-                let mut client = lock_client(client)?;
+                let mut client = self.lock_client(job_id, client)?;
+                let mut file =
+                    open_download_target(&entry.local_path.to_string_lossy(), 0, overwrite, false)?;
                 client.download(&entry.remote_path, &mut file, Some(&mut report), 0)?;
             }
             base = self
@@ -589,7 +633,13 @@ impl TransferService {
             return Ok(());
         };
 
-        let files = collect_local_files(std::path::Path::new(&source), &destination)?;
+        let cancel = self
+            .read_job(job_id, TransferJob::cancel_flag)
+            .ok_or(ProtocolError::Cancelled)?;
+        let files =
+            collect_local_files_cancellable(std::path::Path::new(&source), &destination, || {
+                check_cancelled(&cancel)
+            })?;
         let total: u64 = files.iter().map(|entry| entry.size).sum();
         self.with_job(job_id, |job| {
             job.total_bytes = total;
@@ -600,12 +650,14 @@ impl TransferService {
         // Create the destination tree first, deepest last, so every parent
         // exists before its children.
         {
-            let mut client = lock_client(client)?;
+            let mut client = self.lock_client(job_id, client)?;
             for directory in remote_directories(&destination, &files) {
+                check_cancelled(&cancel)?;
                 // An existing directory is the expected case for every level
                 // above the one actually missing.
                 let _ = client.mkdir(&directory);
             }
+            check_cancelled(&cancel)?;
         }
 
         let mut base = 0u64;
@@ -619,7 +671,7 @@ impl TransferService {
             let mut file = std::fs::File::open(&entry.local_path)?;
             let mut report = self.progress_reporter(job_id, base);
             {
-                let mut client = lock_client(client)?;
+                let mut client = self.lock_client(job_id, client)?;
                 client.upload(&mut file, entry.size, &entry.remote_path, Some(&mut report))?;
             }
             base = self
@@ -630,15 +682,25 @@ impl TransferService {
     }
 }
 
-/// Lock a shared client, reporting a poisoned lock as a lost connection.
-fn lock_client(
-    client: &SharedClient,
-) -> Result<std::sync::MutexGuard<'_, Box<dyn TransferClient>>, ProtocolError> {
-    client.lock().map_err(|_| {
-        ProtocolError::Connection(
-            "the connection was left in an unusable state by an earlier error".to_string(),
-        )
-    })
+impl Drop for TransferService {
+    fn drop(&mut self) {
+        let workers = self
+            .workers
+            .get_mut()
+            .unwrap_or_else(|err| err.into_inner());
+        for worker in workers.iter() {
+            worker.stop.store(true, Ordering::SeqCst);
+        }
+        // Dropping handles detaches; never join a network worker on the UI.
+    }
+}
+
+fn check_cancelled(cancel: &AtomicBool) -> Result<(), ProtocolError> {
+    if cancel.load(Ordering::SeqCst) {
+        Err(ProtocolError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// Open the local file a download writes into.
@@ -701,16 +763,30 @@ pub fn collect_remote_files(
     remote_dir: &str,
     local_dir: &std::path::Path,
 ) -> Result<Vec<TransferEntry>, ProtocolError> {
+    collect_remote_files_cancellable(client, remote_dir, local_dir, || Ok(()))
+}
+
+fn collect_remote_files_cancellable(
+    client: &mut dyn TransferClient,
+    remote_dir: &str,
+    local_dir: &std::path::Path,
+    check_cancel: impl Fn() -> Result<(), ProtocolError>,
+) -> Result<Vec<TransferEntry>, ProtocolError> {
     let mut entries = Vec::new();
     let mut stack = vec![(remote_dir.to_string(), local_dir.to_path_buf())];
     let mut visited = HashSet::new();
 
     while let Some((remote, local)) = stack.pop() {
+        check_cancel()?;
         let key = directory_identity(client, &remote);
         if !visited.insert(key.clone()) {
             continue;
         }
-        for file in client.list_dir(&remote)? {
+        check_cancel()?;
+        let files = client.list_dir(&remote)?;
+        check_cancel()?;
+        for file in files {
+            check_cancel()?;
             if file.name.is_empty() || file.name == "." || file.name == ".." {
                 continue;
             }
@@ -729,6 +805,7 @@ pub fn collect_remote_files(
             }
         }
     }
+    check_cancel()?;
     entries.sort_by(|a, b| a.remote_path.cmp(&b.remote_path));
     Ok(entries)
 }
@@ -746,11 +823,21 @@ pub fn collect_local_files(
     local_dir: &std::path::Path,
     remote_dir: &str,
 ) -> Result<Vec<TransferEntry>, ProtocolError> {
+    collect_local_files_cancellable(local_dir, remote_dir, || Ok(()))
+}
+
+fn collect_local_files_cancellable(
+    local_dir: &std::path::Path,
+    remote_dir: &str,
+    check_cancel: impl Fn() -> Result<(), ProtocolError>,
+) -> Result<Vec<TransferEntry>, ProtocolError> {
     let mut entries = Vec::new();
     let mut stack = vec![(local_dir.to_path_buf(), remote_path::normalize(remote_dir))];
 
     while let Some((local, remote)) = stack.pop() {
+        check_cancel()?;
         for entry in std::fs::read_dir(&local)? {
+            check_cancel()?;
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let remote_child = remote_path::join(&remote, &name);
@@ -769,6 +856,7 @@ pub fn collect_local_files(
             // the user selected, or loop forever.
         }
     }
+    check_cancel()?;
     entries.sort_by(|a, b| a.local_path.cmp(&b.local_path));
     Ok(entries)
 }
@@ -1001,6 +1089,121 @@ mod tests {
         assert_eq!(remote_directories("/d", &entries), vec!["/d", "/d/a"]);
     }
 
+    #[test]
+    fn cancellation_finishes_while_connection_is_still_busy() {
+        let service = manual_service();
+        let client: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+        let held = client.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("target");
+        let id = service.submit_download(
+            Arc::clone(&client),
+            "/file",
+            &path.to_string_lossy(),
+            1,
+            false,
+            false,
+        );
+        let work = service.receiver.lock().unwrap().try_recv().unwrap();
+        let (started, starting) = std::sync::mpsc::channel();
+        service.set_change_callback(Some(Arc::new(move || {
+            let _ = started.send(());
+        })));
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker_service = Arc::clone(&service);
+        let worker = std::thread::spawn(move || {
+            worker_service.run_job(work);
+            done.send(()).unwrap();
+        });
+        starting.recv_timeout(Duration::from_secs(2)).unwrap();
+        service.cancel(&id);
+        let stopped = finished.recv_timeout(Duration::from_secs(1));
+        drop(held);
+        worker.join().unwrap();
+        assert!(
+            stopped.is_ok(),
+            "cancellation waited for another transfer's lock"
+        );
+        assert_eq!(service.job(&id).unwrap().status, Status::Cancelled);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn cancellation_stops_remote_scan_before_child_listing() {
+        let service = manual_service();
+        let dir = TempDir::new().unwrap();
+        let mut job = TransferJob::new(Direction::Download, "/tree", dir.path().to_string_lossy());
+        job.recursive = true;
+        let id = job.id.clone();
+        let mut remote = FakeRemote::with_budget(2);
+        remote.cancel_on_list = Some(job.cancel_flag());
+        let lists = Arc::clone(&remote.observed_lists);
+        remote.add_dir(
+            "/tree",
+            vec![crate::protocols::RemoteFile::dir("child", "/tree/child")],
+        );
+        remote.add_dir("/tree/child", vec![]);
+        service.restore_jobs(vec![job]);
+        let client: SharedClient = Arc::new(Mutex::new(Box::new(remote)));
+        assert!(matches!(
+            service.run_recursive_download(&id, &client),
+            Err(ProtocolError::Cancelled)
+        ));
+        assert_eq!(lists.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cancellation_stops_upload_directory_creation() {
+        let service = manual_service();
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("child/grandchild")).unwrap();
+        std::fs::write(dir.path().join("child/grandchild/file"), b"test").unwrap();
+        let mut job = TransferJob::new(Direction::Upload, dir.path().to_string_lossy(), "/tree");
+        job.recursive = true;
+        let id = job.id.clone();
+        let mut remote = FakeRemote::with_budget(0);
+        remote.cancel_on_mkdir = Some(job.cancel_flag());
+        let count = Arc::clone(&remote.mkdir_count);
+        service.restore_jobs(vec![job]);
+        let client: SharedClient = Arc::new(Mutex::new(Box::new(remote)));
+        assert!(matches!(
+            service.run_recursive_upload(&id, &client),
+            Err(ProtocolError::Cancelled)
+        ));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cancelled_upload_does_not_start_local_scan() {
+        let service = manual_service();
+        let dir = TempDir::new().unwrap();
+        let mut job = TransferJob::new(
+            Direction::Upload,
+            dir.path().join("missing").to_string_lossy(),
+            "/tree",
+        );
+        job.recursive = true;
+        job.request_cancel();
+        let id = job.id.clone();
+        service.restore_jobs(vec![job]);
+        let client: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+        assert!(matches!(
+            service.run_recursive_upload(&id, &client),
+            Err(ProtocolError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn idle_workers_release_the_service() {
+        let service = TransferService::new(2);
+        let weak = Arc::downgrade(&service);
+        drop(service);
+        assert!(
+            weak.upgrade().is_none(),
+            "idle workers retained the service"
+        );
+    }
+
     // No background workers: tests explicitly run queued work after releasing
     // the connection, so contention and cleanup do not depend on scheduling.
     fn manual_service() -> Arc<TransferService> {
@@ -1111,6 +1314,10 @@ mod tests {
         aliases: Vec<(String, String)>,
         lists: usize,
         list_budget: usize,
+        cancel_on_list: Option<Arc<AtomicBool>>,
+        observed_lists: Arc<std::sync::atomic::AtomicUsize>,
+        cancel_on_mkdir: Option<Arc<AtomicBool>>,
+        mkdir_count: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl FakeRemote {
@@ -1120,6 +1327,10 @@ mod tests {
                 aliases: Vec::new(),
                 lists: 0,
                 list_budget,
+                cancel_on_list: None,
+                observed_lists: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                cancel_on_mkdir: None,
+                mkdir_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             }
         }
 
@@ -1152,6 +1363,10 @@ mod tests {
             path: &str,
         ) -> Result<Vec<crate::protocols::RemoteFile>, ProtocolError> {
             self.lists += 1;
+            self.observed_lists.fetch_add(1, Ordering::SeqCst);
+            if let Some(flag) = &self.cancel_on_list {
+                flag.store(true, Ordering::SeqCst);
+            }
             assert!(
                 self.lists <= self.list_budget,
                 "collect_remote_files listed {path} unbounded ({} listings)",
@@ -1197,6 +1412,10 @@ mod tests {
         }
 
         fn mkdir(&mut self, _path: &str) -> Result<(), ProtocolError> {
+            self.mkdir_count.fetch_add(1, Ordering::SeqCst);
+            if let Some(flag) = &self.cancel_on_mkdir {
+                flag.store(true, Ordering::SeqCst);
+            }
             Ok(())
         }
 

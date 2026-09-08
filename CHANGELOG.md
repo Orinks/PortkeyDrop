@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 - A "Waiting to connect" cue now loops while an SFTP connection is held up waiting for your SSH agent to approve the key. Agents such as Bitwarden show that approval in a box that can open behind the Portkey Drop window with nothing to say it is there; the sound fills that gap and stops the moment the connection succeeds or fails. Give it a sound by adding a `connect_waiting` entry to a sound pack, and mute it in Settings like any other cue.
 
 ### Fixed
+- Cancelling a transfer now also stops jobs waiting for a busy connection and interrupts folder scans and upload directory creation between operations.
+- Transfer progress no longer floods the window with duplicate updates. Disconnecting an idle session also runs off the window thread, keeping keyboard commands and closing responsive when a server is slow.
+- Idle transfer workers no longer keep the queue and its callbacks alive after their service is released.
+- FTPS transfers and listings no longer stall on servers that wait for the transfer command before starting data TLS. Failed data TLS closes the unusable session so queued work cannot consume stale replies.
 - Queueing multiple files or folders no longer freezes the window while another transfer is scanning or copying. This also applies to mixed selections and uploads.
 - A fresh install made no sound at all. The default sound pack was written with an empty list and none of its audio, so only people upgrading from the Python version, whose old pack was carried across, heard any cues. The twenty default sounds now ship inside the program and are written out on first start, including the new "Waiting to connect" cue, which is also added to an existing default pack without touching any sound you have replaced.
 - Sound cues played in mono, most audibly the connect sound. The opening fraction of a second of every cue was folded to a single channel and slightly stretched before playback settled into stereo, and the short cues carry their stereo image right at the start. Cues now play in full stereo from the first sample.
