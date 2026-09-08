@@ -18,6 +18,12 @@ the corresponding fixes. The FTPS cleanup regression was also observed failing
 with handshake ordering fixed but cleanup absent. Tests use controlled locks,
 cancellation flags, and loopback servers, not live account credentials.
 
+The `concurrent_ftp_transfers` integration tests run the real protocol factory,
+FTP client, worker pool, recursive scanning, and local file writes against a
+loopback FTP server. They stall the first folder's listing, verify that the
+second can be queued or cancelled while the first owns the session, and compare
+successful downloads byte-for-byte. They run headlessly on Linux and Windows.
+
 Validation commands:
 
 - `cargo fmt --all --check`
