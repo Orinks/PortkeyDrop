@@ -7,7 +7,9 @@
 //! frame drains it.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use portkeydrop_core::protocols::{HostKeyDecision, RemoteFile};
 use portkeydrop_core::updater::UpdateInfo;
@@ -97,14 +99,34 @@ pub enum DownloadOutcome {
 }
 
 /// The sending half, handed to background threads.
-pub type EventSender = Sender<AppEvent>;
+#[derive(Clone)]
+pub struct EventSender {
+    sender: Sender<AppEvent>,
+    transfers_pending: Arc<AtomicBool>,
+}
 
 /// The receiving half, drained by the UI timer.
-pub type EventReceiver = Receiver<AppEvent>;
+pub struct EventReceiver {
+    receiver: Receiver<AppEvent>,
+    transfers_pending: Arc<AtomicBool>,
+}
+
+const EVENTS_PER_TICK: usize = 256;
 
 /// Create a channel for background events.
 pub fn channel() -> (EventSender, EventReceiver) {
-    std::sync::mpsc::channel()
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let transfers_pending = Arc::new(AtomicBool::new(false));
+    (
+        EventSender {
+            sender,
+            transfers_pending: Arc::clone(&transfers_pending),
+        },
+        EventReceiver {
+            receiver,
+            transfers_pending,
+        },
+    )
 }
 
 /// Send an event, ignoring a closed channel.
@@ -112,14 +134,33 @@ pub fn channel() -> (EventSender, EventReceiver) {
 /// A closed channel means the window has gone; that is not an error worth
 /// propagating out of a worker thread.
 pub fn post(sender: &EventSender, event: AppEvent) {
-    if sender.send(event).is_err() {
+    // A transfer event requests a current snapshot, not a per-chunk update.
+    let transfer_change = matches!(event, AppEvent::TransfersChanged);
+    if transfer_change && sender.transfers_pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if sender.sender.send(event).is_err() {
+        if transfer_change {
+            sender.transfers_pending.store(false, Ordering::Release);
+        }
         log::debug!("dropping a background event: the window has closed");
     }
 }
 
-/// Drain every event currently waiting, without blocking.
+/// Take a bounded batch; yield to keyboard events even with busy producers.
 pub fn drain(receiver: &EventReceiver) -> Vec<AppEvent> {
-    receiver.try_iter().collect()
+    receiver
+        .receiver
+        .try_iter()
+        .take(EVENTS_PER_TICK)
+        .inspect(|event| {
+            if matches!(event, AppEvent::TransfersChanged) {
+                // Reset before reading the UI snapshot, so concurrent changes
+                // either appear in that snapshot or queue another notification.
+                receiver.transfers_pending.store(false, Ordering::Release);
+            }
+        })
+        .collect()
 }
 
 /// Tell the UI thread that SFTP auth is about to contact the SSH agent.
@@ -156,6 +197,47 @@ pub fn ask_host_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_notifications_coalesce_and_allow_later_wakeups() {
+        let (sender, receiver) = channel();
+        for _ in 0..10_000 {
+            post(&sender, AppEvent::TransfersChanged);
+        }
+        post(&sender, AppEvent::TrayCommand(42));
+        let batch = drain(&receiver);
+        assert_eq!(batch.len(), 2);
+        assert!(matches!(batch[0], AppEvent::TransfersChanged));
+        assert!(matches!(batch[1], AppEvent::TrayCommand(42)));
+        post(&sender, AppEvent::TransfersChanged);
+        assert_eq!(drain(&receiver).len(), 1);
+    }
+
+    #[test]
+    fn event_drain_yields_to_keyboard_and_preserves_remaining_order() {
+        let (sender, receiver) = channel();
+        for id in 0..10_000 {
+            post(&sender, AppEvent::TrayCommand(id));
+        }
+        let first = drain(&receiver);
+        assert!(!first.is_empty() && first.len() < 10_000);
+        let mut next = 0;
+        for event in first {
+            assert!(matches!(event, AppEvent::TrayCommand(id) if id == next));
+            next += 1;
+        }
+        loop {
+            let batch = drain(&receiver);
+            if batch.is_empty() {
+                break;
+            }
+            for event in batch {
+                assert!(matches!(event, AppEvent::TrayCommand(id) if id == next));
+                next += 1;
+            }
+        }
+        assert_eq!(next, 10_000);
+    }
 
     #[test]
     fn events_arrive_in_the_order_they_were_sent() {
@@ -257,7 +339,7 @@ mod tests {
             ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
         });
 
-        match receiver.recv().expect("the prompt is posted") {
+        match receiver.receiver.recv().expect("the prompt is posted") {
             AppEvent::HostKeyPrompt {
                 host,
                 algorithm,
@@ -289,7 +371,7 @@ mod tests {
             ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
         });
 
-        let event = receiver.recv().expect("the prompt is posted");
+        let event = receiver.receiver.recv().expect("the prompt is posted");
         drop(event);
 
         assert_eq!(

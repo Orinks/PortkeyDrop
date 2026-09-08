@@ -147,7 +147,7 @@ impl FtpClient {
     ///
     /// `EPSV` is tried first because it works over IPv6 and behind NAT; servers
     /// that reject it fall back to `PASV`.
-    fn open_data_connection(&mut self) -> Result<Stream> {
+    fn open_data_connection(&mut self) -> Result<TcpStream> {
         let (host, port) = match self.command("EPSV") {
             Ok(reply) if reply.is_positive() => match reply::parse_epsv(&reply.text) {
                 // EPSV returns only a port: reuse the control connection's host.
@@ -157,17 +157,34 @@ impl FtpClient {
             _ => self.passive_endpoint()?,
         };
 
-        let socket = connect_timeout(&host, port, self.info.timeout)?;
-        if self.protect_data {
-            let session = tls_connector()?
-                .connect(&self.info.host, socket)
-                .map_err(|err| {
-                    ProtocolError::Connection(format!("data channel TLS failed: {err}"))
-                })?;
-            Ok(Stream::Tls(Box::new(session)))
-        } else {
-            Ok(Stream::Plain(socket))
+        connect_timeout(&host, port, self.info.timeout)
+    }
+
+    /// Servers may wait for RETR/STOR/LIST before starting data TLS.
+    fn protect_data_connection(&mut self, socket: TcpStream) -> Result<Stream> {
+        if !self.protect_data {
+            return Ok(Stream::Plain(socket));
         }
+        let result = tls_connector().and_then(|connector| {
+            connector
+                .connect(&self.info.host, socket)
+                .map(|session| Stream::Tls(Box::new(session)))
+                .map_err(|err| ProtocolError::Connection(format!("data channel TLS failed: {err}")))
+        });
+        if result.is_err() {
+            // The transfer command was accepted, so its final reply may still
+            // be pending. Do not let another job reuse a desynchronised control
+            // channel, and do not wait for QUIT on this failed connection.
+            self.connected = false;
+            self.protect_data = false;
+            if let Some(control) = self.control.take() {
+                let _ = control
+                    .get_ref()
+                    .socket()
+                    .shutdown(std::net::Shutdown::Both);
+            }
+        }
+        result
     }
 
     /// Fall back to `PASV` for the data endpoint.
@@ -198,12 +215,13 @@ impl FtpClient {
 
     /// Read a whole data-channel response as text (used by `LIST` and `MLSD`).
     fn read_data_text(&mut self, command: &str) -> Result<String> {
-        let mut data = self.open_data_connection()?;
+        let socket = self.open_data_connection()?;
         let reply = self.command(command)?;
         if !reply.is_positive() && !reply.is_preliminary() {
             return Err(map_reply_error(&reply, command));
         }
 
+        let mut data = self.protect_data_connection(socket)?;
         let mut body = Vec::new();
         data.read_to_end(&mut body)?;
         drop(data);
@@ -605,7 +623,7 @@ impl TransferClient for FtpClient {
             .and_then(|reply| reply::parse_size(&reply.text))
             .unwrap_or(0);
 
-        let mut data = self.open_data_connection()?;
+        let socket = self.open_data_connection()?;
 
         // REST must immediately precede RETR, after the data connection exists.
         if offset > 0 {
@@ -623,6 +641,7 @@ impl TransferClient for FtpClient {
             return Err(map_reply_error(&reply, &format!("RETR {target}")));
         }
 
+        let mut data = self.protect_data_connection(socket)?;
         // Progress counts the resumed portion only, so subtract the offset.
         let remaining = total.saturating_sub(offset);
         let result = pump(&mut data, sink, remaining, progress);
@@ -650,13 +669,14 @@ impl TransferClient for FtpClient {
         progress: Option<ProgressFn<'_>>,
     ) -> Result<()> {
         let target = path::resolve(&self.cwd, remote_path);
-        let mut data = self.open_data_connection()?;
+        let socket = self.open_data_connection()?;
 
         let reply = self.command(&format!("STOR {target}"))?;
         if !reply.is_positive() && !reply.is_preliminary() {
             return Err(map_reply_error(&reply, &format!("STOR {target}")));
         }
 
+        let mut data = self.protect_data_connection(socket)?;
         let result = pump(source, &mut data, total_bytes, progress);
         // Closing the data channel is what signals end-of-file to the server.
         let _ = data.shutdown_write();
@@ -793,6 +813,113 @@ impl Drop for FtpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The server withholds data TLS until a transfer command arrives.
+    // Rejection exercises ordering without weakening certificate verification;
+    // accepting then closing data exercises failed TLS cleanup.
+    fn check_data_tls_order(command: &'static str, offset: u64, accept: bool) {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let socket = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let (control, _) = listener.accept().unwrap();
+        let server = std::thread::spawn(move || {
+            control
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut control = BufReader::new(control);
+            let data = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut seen = false;
+            loop {
+                let mut line = String::new();
+                if control.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                let reply = if line.starts_with("SIZE ") {
+                    "213 8\r\n".to_string()
+                } else if line.starts_with("EPSV") {
+                    format!(
+                        "229 Entering Extended Passive Mode (|||{}|)\r\n",
+                        data.local_addr().unwrap().port()
+                    )
+                } else if line.starts_with("REST ") {
+                    "350 restart accepted\r\n".to_string()
+                } else if line.starts_with(command) {
+                    seen = true;
+                    control
+                        .get_mut()
+                        .write_all(if accept {
+                            b"150 opening data\r\n"
+                        } else {
+                            b"550 unavailable\r\n"
+                        })
+                        .unwrap();
+                    if accept {
+                        let (stream, _) = data.accept().unwrap();
+                        stream.shutdown(std::net::Shutdown::Both).unwrap();
+                        let _ = control.get_mut().write_all(b"426 TLS failed\r\n");
+                    }
+                    break;
+                } else {
+                    panic!("unexpected command {line}")
+                };
+                control.get_mut().write_all(reply.as_bytes()).unwrap();
+            }
+            seen
+        });
+        let mut client = FtpClient::new(ConnectionInfo {
+            host: "localhost".into(),
+            timeout: 1,
+            ..Default::default()
+        });
+        client.control = Some(BufReader::new(Stream::Plain(socket)));
+        client.connected = true;
+        client.protect_data = true;
+        let result = match command {
+            "RETR" => client.download("/file", &mut Vec::new(), None, offset),
+            "STOR" => client.upload(&mut &b"test"[..], 4, "/file", None),
+            _ => client.read_data_text("MLSD /folder").map(|_| ()),
+        };
+        let still_connected = client.connected;
+        let retained_control = client.control.is_some();
+        client.connected = false; // Old behavior must not hang in Drop/QUIT.
+        assert!(
+            server.join().unwrap(),
+            "transfer command did not precede TLS"
+        );
+        assert!(result.is_err());
+        if accept {
+            assert!(
+                !still_connected && !retained_control,
+                "failed TLS left a stale transfer reply on a reusable connection"
+            );
+        }
+    }
+
+    #[test]
+    fn ftps_download_command_precedes_tls() {
+        check_data_tls_order("RETR", 0, false);
+    }
+    #[test]
+    fn ftps_resumed_download_command_precedes_tls() {
+        check_data_tls_order("RETR", 2, false);
+    }
+    #[test]
+    fn ftps_upload_command_precedes_tls() {
+        check_data_tls_order("STOR", 0, false);
+    }
+    #[test]
+    fn ftps_listing_command_precedes_tls() {
+        check_data_tls_order("MLSD", 0, false);
+    }
+    #[test]
+    fn ftps_failed_data_tls_discards_control_connection() {
+        check_data_tls_order("RETR", 0, true);
+    }
 
     fn info(protocol: Protocol, explicit_ssl: bool) -> ConnectionInfo {
         ConnectionInfo {
