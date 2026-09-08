@@ -156,8 +156,11 @@ impl TransferService {
         job.total_bytes = total_bytes;
         job.recursive = recursive;
         job.overwrite_existing = overwrite_existing;
+        // Submission runs on the UI thread. An active transfer may hold the
+        // client for a whole scan or file; let the worker fill this in later
+        // rather than blocking the next item in a multi-selection.
         job.protocol = client
-            .lock()
+            .try_lock()
             .map(|client| client.protocol().as_str().to_string())
             .unwrap_or_default();
         self.enqueue(job, client)
@@ -177,8 +180,9 @@ impl TransferService {
         job.total_bytes = total_bytes;
         job.recursive = recursive;
         job.overwrite_existing = overwrite_existing;
+        // As with downloads, protocol metadata must not stall UI submission.
         job.protocol = client
-            .lock()
+            .try_lock()
             .map(|client| client.protocol().as_str().to_string())
             .unwrap_or_default();
         self.enqueue(job, client)
@@ -383,6 +387,18 @@ impl TransferService {
 
     /// Run one job to completion.
     fn execute(&self, job_id: &str, client: &SharedClient) -> Result<(), ProtocolError> {
+        // Only workers may wait for the connection. Release its guard before
+        // updating the queue or notifying observers.
+        let protocol = lock_client(client)?.protocol().as_str().to_string();
+        self.with_job(job_id, |job| job.protocol = protocol);
+        // Cancellation may have arrived while this worker waited for another
+        // transfer to release the connection.
+        if self
+            .read_job(job_id, TransferJob::is_cancelled)
+            .unwrap_or(true)
+        {
+            return Err(ProtocolError::Cancelled);
+        }
         let Some((direction, recursive)) =
             self.read_job(job_id, |job| (job.direction, job.recursive))
         else {
