@@ -155,24 +155,39 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Install Rust
+      id: rust
       uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
 
-    # wxdragon-sys downloads wxWidgets and builds it with CMake, which is
-    # nearly all of a cold build. Two settings matter more than they look:
-    #
-    # cache-on-failure keeps that work when a later step fails. Without it
-    # a run that dies packaging the installer throws away forty minutes of
-    # C++ compilation, and the next attempt starts from nothing again.
-    #
-    # shared-key lets this job reuse what CI built on the same OS instead
-    # of each workflow keeping its own copy.
+    # This preserves Cargo dependencies, but rust-cache's cleanup deletes
+    # wxdragon-sys 0.9.18's extra directories at the target/profile level.
+    # Preserve those separately below, before the post-job cleanup runs.
     - name: Cache cargo artifacts
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
         shared-key: ${{ runner.os }}
+
+    - name: Identify native build environment
+      id: native-env
+      shell: pwsh
+      run: |
+        if (-not $env:ImageVersion) { throw 'Missing runner image version' }
+        "image=$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
+    # Exact matches only: CMake trees contain compiler paths and build flags.
+    # Include the runner image, Rust, dependency/features and this workflow.
+    # Keep the source tree too: the CMake trees refer to its absolute path.
+    - name: Restore wxWidgets build
+      id: native-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          target/debug/wxWidgets
+          target/debug/wxwidgets_cmake_build
+          target/debug/wxdragon_sys_cmake_build
+        key: windows-wx-v1-${{ runner.arch }}-${{ steps.native-env.outputs.image }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config*', '.github/workflows/ci.yml') }}
 
     # The full workspace, including the wxWidgets front end. One platform
     # rather than three: wxdragon-sys builds wxWidgets from source, so a
@@ -181,6 +196,18 @@ jobs:
     # surfaces.
     - name: Clippy
       run: cargo clippy --workspace --all-targets
+
+    # Save immediately after a successful native build. A later test failure
+    # must not lose it, and rust-cache's post-job cleanup must not erase it.
+    - name: Save wxWidgets build
+      if: steps.native-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          target/debug/wxWidgets
+          target/debug/wxwidgets_cmake_build
+          target/debug/wxdragon_sys_cmake_build
+        key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
     - name: Test
       run: cargo test --workspace
