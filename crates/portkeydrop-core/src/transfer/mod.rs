@@ -985,6 +985,106 @@ mod tests {
         assert_eq!(remote_directories("/d", &entries), vec!["/d", "/d/a"]);
     }
 
+    // No background workers: tests explicitly run queued work after releasing
+    // the connection, so contention and cleanup do not depend on scheduling.
+    fn manual_service() -> Arc<TransferService> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        Arc::new(TransferService {
+            jobs: Arc::new(Mutex::new(Vec::new())),
+            sender,
+            receiver: Arc::new(Mutex::new(receiver)),
+            workers: Mutex::new(Vec::new()),
+            on_change: Arc::new(Mutex::new(None)),
+            resume_enabled: Arc::new(AtomicBool::new(true)),
+        })
+    }
+
+    fn assert_busy_batch_queues(direction: Direction, recursive: [bool; 2]) {
+        let service = manual_service();
+        let mut remote = FakeRemote::with_budget(2);
+        remote.add_dir("/first", Vec::new());
+        remote.add_dir("/second", Vec::new());
+        let client: SharedClient = Arc::new(Mutex::new(Box::new(remote)));
+        let directory = tempfile::tempdir().unwrap();
+        let paths = [
+            directory.path().join("first"),
+            directory.path().join("second"),
+        ];
+        if direction == Direction::Upload {
+            for (path, is_dir) in paths.iter().zip(recursive) {
+                if is_dir {
+                    std::fs::create_dir(path).unwrap();
+                } else {
+                    std::fs::write(path, b"upload").unwrap();
+                }
+            }
+        }
+        let busy = client.lock().unwrap();
+        let queued_service = Arc::clone(&service);
+        let queued_client = Arc::clone(&client);
+        let (sent, received) = std::sync::mpsc::channel();
+        let submitter = std::thread::spawn(move || {
+            let mut ids = Vec::new();
+            for (index, remote_path) in ["/first", "/second"].iter().enumerate() {
+                let local_path = paths[index].to_string_lossy();
+                ids.push(match direction {
+                    Direction::Download => queued_service.submit_download(
+                        Arc::clone(&queued_client),
+                        remote_path,
+                        &local_path,
+                        0,
+                        recursive[index],
+                        false,
+                    ),
+                    Direction::Upload => queued_service.submit_upload(
+                        Arc::clone(&queued_client),
+                        &local_path,
+                        remote_path,
+                        0,
+                        recursive[index],
+                        false,
+                    ),
+                });
+            }
+            sent.send(ids).unwrap();
+        });
+        let queued = received.recv_timeout(Duration::from_secs(2));
+        // Release before asserting or joining, so the broken implementation
+        // fails with a bounded timeout instead of leaving a hung test process.
+        drop(busy);
+        submitter.join().unwrap();
+        let ids = queued.expect("batch submission waited for the busy connection");
+        assert_eq!(service.active_count(), 2);
+        for id in ids {
+            let work = service.receiver.lock().unwrap().try_recv().unwrap();
+            assert_eq!(work.job_id, id);
+            service.run_job(work);
+            let job = service.job(&id).unwrap();
+            assert_eq!(job.status, Status::Complete, "{:?}", job.error);
+            assert_eq!(job.protocol, "sftp");
+        }
+    }
+
+    #[test]
+    fn busy_connection_does_not_block_multiple_file_downloads() {
+        assert_busy_batch_queues(Direction::Download, [false, false]);
+    }
+
+    #[test]
+    fn busy_connection_does_not_block_multiple_folder_downloads() {
+        assert_busy_batch_queues(Direction::Download, [true, true]);
+    }
+
+    #[test]
+    fn busy_connection_does_not_block_mixed_downloads() {
+        assert_busy_batch_queues(Direction::Download, [false, true]);
+    }
+
+    #[test]
+    fn busy_connection_does_not_block_mixed_uploads() {
+        assert_busy_batch_queues(Direction::Upload, [false, true]);
+    }
+
     /// A connected client that serves scripted directory listings.
     ///
     /// `list_budget` is the crash detector: without a visited set, a cyclic
